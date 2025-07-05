@@ -17,46 +17,40 @@ def index():
 @login_required
 @first_login_required
 def add():
+    server = VpsServer(port=22)
+    
     if request.method == 'POST':
-        name = request.form.get('name')
-        host = request.form.get('host')
-        port = request.form.get('port', 22, type=int)
-        username = request.form.get('username')
-        ssh_key_content = request.form.get('ssh_key_content')
+        server.name = request.form.get('name')
+        server.host = request.form.get('host')
+        server.port = request.form.get('port', 22, type=int)
+        server.username = request.form.get('username')
+        server.ssh_key_content = request.form.get('ssh_key_content')
         
-        if not ssh_key_content.strip():
+        if not server.ssh_key_content.strip():
             flash('SSH key content cannot be empty', 'danger')
-            return render_template('servers/add.html')
+            return render_template('servers/add.html', server=server)
         
         # Test SSH connection
-        connection_ok = test_ssh_connection(
-            host=host,
-            port=port,
-            username=username,
-            ssh_key_content=ssh_key_content
-        )
-        
-        if not connection_ok:
-            flash('Failed to connect to the server. Please check your settings.', 'danger')
-            return render_template('servers/add.html')
+        if request.form.get('test_connection') == 'yes' or True:  # Always test on add
+            connection_ok = test_ssh_connection(
+                host=server.host,
+                port=server.port,
+                username=server.username,
+                ssh_key_content=server.ssh_key_content
+            )
+            
+            if not connection_ok:
+                flash('Failed to connect to the server. Please check your settings.', 'danger')
+                return render_template('servers/add.html', server=server)
         
         # Create server record
-        server = VpsServer(
-            name=name,
-            host=host,
-            port=port,
-            username=username,
-            ssh_key_content=ssh_key_content,
-            ssh_key_path=None
-        )
-        
         db.session.add(server)
         db.session.commit()
         
         flash('Server added successfully', 'success')
         return redirect(url_for('servers.index'))
     
-    return render_template('servers/add.html')
+    return render_template('servers/add.html', server=server)
 
 @servers_bp.route('/edit/<int:id>', methods=['GET', 'POST'])
 @login_required
@@ -64,15 +58,13 @@ def add():
 def edit(id):
     server = VpsServer.query.get_or_404(id)
     
-    # For existing servers that might have ssh_key_path set but no ssh_key_content
+    # Load SSH key content if available
     if server.ssh_key_path and not server.ssh_key_content:
         try:
-            # Try to read the key file content if it exists
             if os.path.isfile(server.ssh_key_path):
                 with open(server.ssh_key_path, 'r') as f:
                     server.ssh_key_content = f.read()
         except Exception:
-            # If we can't read the file, just leave ssh_key_content empty
             pass
     
     if request.method == 'POST':
@@ -80,13 +72,12 @@ def edit(id):
         server.host = request.form.get('host')
         server.port = request.form.get('port', 22, type=int)
         server.username = request.form.get('username')
-        ssh_key_content = request.form.get('ssh_key_content')
+        server.ssh_key_content = request.form.get('ssh_key_content')
         
-        if not ssh_key_content.strip():
+        if not server.ssh_key_content.strip():
             flash('SSH key content cannot be empty', 'danger')
             return render_template('servers/edit.html', server=server)
             
-        server.ssh_key_content = ssh_key_content
         server.ssh_key_path = None
             
         # Only test connection if requested
@@ -113,10 +104,8 @@ def edit(id):
 @first_login_required
 def delete(id):
     server = VpsServer.query.get_or_404(id)
-    
     db.session.delete(server)
     db.session.commit()
-    
     flash('Server deleted successfully', 'success')
     return redirect(url_for('servers.index'))
 

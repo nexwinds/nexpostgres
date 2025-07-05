@@ -20,25 +20,18 @@ def create_app(config_class=Config):
     # Initialize extensions
     Config.init_app(app)
     init_db(app)
-    init_session(app)  # Use our custom session interface
+    init_session(app)
     
     # Create app_backups directory
     os.makedirs(os.path.join(app.root_path, 'app_backups'), exist_ok=True)
     
     # Set up logging
-    logging.basicConfig(
-        level=getattr(logging, app.config['LOG_LEVEL']),
-        format=app.config['LOG_FORMAT']
-    )
+    logging.basicConfig(level=getattr(logging, app.config['LOG_LEVEL']), format=app.config['LOG_FORMAT'])
     
     # Register blueprints
-    app.register_blueprint(auth_bp)
-    app.register_blueprint(servers_bp)
-    app.register_blueprint(databases_bp)
-    app.register_blueprint(backups_bp)
-    app.register_blueprint(dashboard_bp)
-    app.register_blueprint(app_backup_bp)
-    app.register_blueprint(s3_storage_bp)
+    blueprints = [auth_bp, servers_bp, databases_bp, backups_bp, dashboard_bp, app_backup_bp, s3_storage_bp]
+    for bp in blueprints:
+        app.register_blueprint(bp)
     
     # Redirect root URL to dashboard
     @app.route('/')

@@ -5,8 +5,24 @@ from app.utils.postgres_manager import PostgresManager
 from app.utils.scheduler import schedule_backup_job, execute_manual_backup
 from app.routes.auth import login_required, first_login_required
 from datetime import datetime, timedelta
+import functools
 
 backups_bp = Blueprint('backups', __name__, url_prefix='/backups')
+
+# Helper function to create SSH and PostgreSQL manager
+def get_managers(server):
+    ssh = SSHManager(
+        host=server.host,
+        port=server.port,
+        username=server.username,
+        ssh_key_path=server.ssh_key_path,
+        ssh_key_content=server.ssh_key_content
+    )
+    
+    if not ssh.connect():
+        return None, None
+    
+    return ssh, PostgresManager(ssh)
 
 @backups_bp.route('/')
 @login_required
@@ -39,17 +55,16 @@ def add():
         
         # Validate data
         database = PostgresDatabase.query.get(database_id)
+        s3_storage = S3Storage.query.get(s3_storage_id)
+        
         if not database:
             flash('Selected database does not exist', 'danger')
             return render_template('backups/add.html', databases=databases, s3_storages=s3_storages)
         
-        # Validate S3 storage
-        s3_storage = S3Storage.query.get(s3_storage_id)
         if not s3_storage:
             flash('Selected S3 storage configuration does not exist', 'danger')
             return render_template('backups/add.html', databases=databases, s3_storages=s3_storages)
         
-        # Check backup type
         if backup_type not in ['full', 'incr']:
             flash('Invalid backup type', 'danger')
             return render_template('backups/add.html', databases=databases, s3_storages=s3_storages)
@@ -96,17 +111,16 @@ def edit(id):
         
         # Validate data
         database = PostgresDatabase.query.get(database_id)
+        s3_storage = S3Storage.query.get(s3_storage_id)
+        
         if not database:
             flash('Selected database does not exist', 'danger')
             return render_template('backups/edit.html', backup_job=backup_job, databases=databases, s3_storages=s3_storages)
         
-        # Validate S3 storage
-        s3_storage = S3Storage.query.get(s3_storage_id)
         if not s3_storage:
             flash('Selected S3 storage configuration does not exist', 'danger')
             return render_template('backups/edit.html', backup_job=backup_job, databases=databases, s3_storages=s3_storages)
         
-        # Check backup type
         if backup_type not in ['full', 'incr']:
             flash('Invalid backup type', 'danger')
             return render_template('backups/edit.html', backup_job=backup_job, databases=databases, s3_storages=s3_storages)
@@ -141,10 +155,8 @@ def edit(id):
 @first_login_required
 def delete(id):
     backup_job = BackupJob.query.get_or_404(id)
-    
     db.session.delete(backup_job)
     db.session.commit()
-    
     flash('Backup job deleted successfully', 'success')
     return redirect(url_for('backups.index'))
 
@@ -156,17 +168,12 @@ def execute(id):
     
     try:
         success, message = execute_manual_backup(backup_job.id)
-        
-        if success:
-            flash('Backup executed successfully', 'success')
-        else:
-            flash(f'Backup failed: {message}', 'danger')
-            
-        return redirect(url_for('backups.logs', job_id=backup_job.id))
-        
+        flash('Backup executed successfully' if success else f'Backup failed: {message}', 
+              'success' if success else 'danger')
     except Exception as e:
         flash(f'Error executing backup: {str(e)}', 'danger')
-        return redirect(url_for('backups.index'))
+    
+    return redirect(url_for('backups.logs', job_id=backup_job.id))
 
 @backups_bp.route('/setup/<int:id>', methods=['POST'])
 @login_required
@@ -178,111 +185,71 @@ def setup(id):
     s3_storage = backup_job.s3_storage
     
     try:
-        # Connect to server via SSH
-        ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_path=server.ssh_key_path,
-            ssh_key_content=server.ssh_key_content
-        )
-        
-        if not ssh.connect():
+        ssh, pg_manager = get_managers(server)
+        if not ssh:
             flash('Failed to connect to server via SSH', 'danger')
             return redirect(url_for('backups.index'))
         
-        # Initialize PostgreSQL manager
-        pg_manager = PostgresManager(ssh)
-        
-        # Check PostgreSQL installation
+        # Check prerequisites
         if not pg_manager.check_postgres_installed():
             flash('PostgreSQL is not installed on the server', 'danger')
             ssh.disconnect()
             return redirect(url_for('backups.index'))
         
-        # Check pgBackRest installation
         if not pg_manager.check_pgbackrest_installed():
             flash('pgBackRest is not installed on the server', 'danger')
             ssh.disconnect()
             return redirect(url_for('backups.index'))
         
         # Configure pgBackRest
-        success = pg_manager.setup_pgbackrest_config(
-            database.name,
-            s3_storage.bucket,
-            s3_storage.region,
-            s3_storage.access_key,
-            s3_storage.secret_key
-        )
-        
-        if not success:
+        if not pg_manager.setup_pgbackrest_config(
+            database.name, s3_storage.bucket, s3_storage.region,
+            s3_storage.access_key, s3_storage.secret_key
+        ):
             flash('Failed to configure pgBackRest', 'danger')
             ssh.disconnect()
             return redirect(url_for('backups.index'))
         
-        # Setup cron job for scheduled backups
-        success = pg_manager.setup_cron_job(
-            database.name,
-            backup_job.backup_type,
-            backup_job.cron_expression
-        )
-        
-        if not success:
+        # Setup cron job
+        if not pg_manager.setup_cron_job(
+            database.name, backup_job.backup_type, backup_job.cron_expression
+        ):
             flash('Failed to setup cron job', 'danger')
             ssh.disconnect()
             return redirect(url_for('backups.index'))
         
-        # Disconnect from server
         ssh.disconnect()
-        
         flash('pgBackRest configuration and cron job setup completed successfully', 'success')
-        return redirect(url_for('backups.index'))
         
     except Exception as e:
         flash(f'Error setting up backup: {str(e)}', 'danger')
-        return redirect(url_for('backups.index'))
+    
+    return redirect(url_for('backups.index'))
 
 @backups_bp.route('/verify-config/<int:id>', methods=['GET', 'POST'])
 @login_required
 @first_login_required
 def verify_config(id):
     backup_job = BackupJob.query.get_or_404(id)
-    database = backup_job.database
-    server = backup_job.server
     
     try:
-        # Connect to server via SSH
-        ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_path=server.ssh_key_path,
-            ssh_key_content=server.ssh_key_content
-        )
-        
-        if not ssh.connect():
+        ssh, pg_manager = get_managers(backup_job.server)
+        if not ssh:
             flash('Failed to connect to server via SSH', 'danger')
             return redirect(url_for('backups.index'))
         
-        # Initialize PostgreSQL manager
-        pg_manager = PostgresManager(ssh)
-        
         # Verify and fix PostgreSQL configuration
-        success, message = pg_manager.verify_and_fix_postgres_config(database.name)
-        
-        # Disconnect from server
+        success, message = pg_manager.verify_and_fix_postgres_config(backup_job.database.name)
         ssh.disconnect()
         
-        if success:
-            flash(f'PostgreSQL configuration verified: {message}', 'success')
-        else:
-            flash(f'Failed to verify PostgreSQL configuration: {message}', 'danger')
-        
-        return redirect(url_for('backups.logs', job_id=backup_job.id))
+        flash(f'PostgreSQL configuration verified: {message}' if success else
+              f'Failed to verify PostgreSQL configuration: {message}',
+              'success' if success else 'danger')
         
     except Exception as e:
         flash(f'Error verifying configuration: {str(e)}', 'danger')
-        return redirect(url_for('backups.index'))
+    
+    return redirect(url_for('backups.logs', job_id=backup_job.id))
 
 @backups_bp.route('/check-pg-version/<int:id>', methods=['GET'])
 @login_required
@@ -290,38 +257,22 @@ def verify_config(id):
 def check_pg_version(id):
     """Debug route to check PostgreSQL version detection"""
     backup_job = BackupJob.query.get_or_404(id)
-    database = backup_job.database
-    server = backup_job.server
-    
     debug_info = []
     
     try:
-        # Connect to server via SSH
-        ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_path=server.ssh_key_path,
-            ssh_key_content=server.ssh_key_content
-        )
-        
-        if not ssh.connect():
+        ssh, pg_manager = get_managers(backup_job.server)
+        if not ssh:
             debug_info.append("Failed to connect to server via SSH")
             return jsonify({'success': False, 'debug_info': debug_info})
         
         debug_info.append("Connected to server via SSH")
         
-        # Initialize PostgreSQL manager
-        pg_manager = PostgresManager(ssh)
-        
         # Try to get PostgreSQL version
         version = pg_manager.get_postgres_version()
-        if version:
-            debug_info.append(f"PostgreSQL version detected: {version}")
-        else:
-            debug_info.append("Could not detect PostgreSQL version")
+        debug_info.append(f"PostgreSQL version detected: {version}" if version 
+                         else "Could not detect PostgreSQL version")
         
-        # Run some diagnostic commands
+        # Run diagnostic commands
         debug_commands = [
             "which psql",
             "sudo -u postgres psql --version",
@@ -334,9 +285,9 @@ def check_pg_version(id):
         
         for cmd in debug_commands:
             result = ssh.execute_command(cmd)
-            stdout = result['stdout'].strip() if 'stdout' in result else ''
-            stderr = result['stderr'].strip() if 'stderr' in result else ''
-            exit_code = result['exit_code'] if 'exit_code' in result else -1
+            stdout = result.get('stdout', '').strip()
+            stderr = result.get('stderr', '').strip()
+            exit_code = result.get('exit_code', -1)
             
             debug_info.append(f"Command: {cmd}")
             debug_info.append(f"Exit code: {exit_code}")
@@ -356,9 +307,7 @@ def check_pg_version(id):
                 for line in stderr_lines:
                     debug_info.append(f"> {line}")
         
-        # Disconnect from server
         ssh.disconnect()
-        
         return jsonify({'success': True, 'debug_info': debug_info})
         
     except Exception as e:
@@ -369,52 +318,34 @@ def check_pg_version(id):
 @login_required
 @first_login_required
 def fix_backup(id):
-    """Route to fix backup configuration issues, especially for incremental backups"""
+    """Fix backup configuration issues, especially for incremental backups"""
     backup_job = BackupJob.query.get_or_404(id)
-    database = backup_job.database
-    server = backup_job.server
     
     try:
-        # Connect to server via SSH
-        ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_path=server.ssh_key_path,
-            ssh_key_content=server.ssh_key_content
-        )
-        
-        if not ssh.connect():
+        ssh, pg_manager = get_managers(backup_job.server)
+        if not ssh:
             flash('Failed to connect to server via SSH', 'danger')
             return redirect(url_for('backups.logs', job_id=backup_job.id))
         
-        # Initialize PostgreSQL manager
-        pg_manager = PostgresManager(ssh)
-        
         # First ensure archive_command is correctly set
-        success, message = pg_manager.verify_and_fix_postgres_config(database.name)
-        
+        success, message = pg_manager.verify_and_fix_postgres_config(backup_job.database.name)
         if not success:
             flash(f'Failed to verify PostgreSQL configuration: {message}', 'danger')
             ssh.disconnect()
             return redirect(url_for('backups.logs', job_id=backup_job.id))
         
-        # Now fix incremental backup configuration
-        success, message = pg_manager.fix_incremental_backup_config(database.name)
-        
-        # Disconnect from server
+        # Fix incremental backup configuration
+        success, message = pg_manager.fix_incremental_backup_config(backup_job.database.name)
         ssh.disconnect()
         
-        if success:
-            flash(f'Backup configuration fixed: {message}', 'success')
-        else:
-            flash(f'Failed to fix backup configuration: {message}', 'danger')
-        
-        return redirect(url_for('backups.logs', job_id=backup_job.id))
+        flash(f'Backup configuration fixed: {message}' if success else
+              f'Failed to fix backup configuration: {message}',
+              'success' if success else 'danger')
         
     except Exception as e:
         flash(f'Error fixing backup configuration: {str(e)}', 'danger')
-        return redirect(url_for('backups.logs', job_id=backup_job.id))
+    
+    return redirect(url_for('backups.logs', job_id=backup_job.id))
 
 @backups_bp.route('/logs')
 @login_required
@@ -465,16 +396,16 @@ def restore():
     if request.method == 'POST':
         database_id = request.form.get('database_id', type=int)
         backup_id = request.form.get('backup_id', type=int)
-        use_pitr = request.form.get('use_pitr') == 'true'
         restore_time = None
         
-        if use_pitr:
+        # Handle point-in-time recovery if requested
+        if request.form.get('use_pitr') == 'true':
             restore_date = request.form.get('restore_date')
-            restore_time = request.form.get('restore_time')
+            restore_time_str = request.form.get('restore_time')
             
-            if restore_date and restore_time:
-                restore_time = f"{restore_date} {restore_time}"
-            
+            if restore_date and restore_time_str:
+                restore_time = f"{restore_date} {restore_time_str}"
+        
         # Validate data
         database = PostgresDatabase.query.get(database_id)
         if not database:
@@ -493,37 +424,23 @@ def restore():
         db.session.commit()
         
         try:
-            # Connect to server via SSH
-            ssh = SSHManager(
-                host=database.server.host,
-                port=database.server.port,
-                username=database.server.username,
-                ssh_key_path=database.server.ssh_key_path,
-                ssh_key_content=database.server.ssh_key_content
-            )
-            
-            if not ssh.connect():
+            ssh, pg_manager = get_managers(database.server)
+            if not ssh:
                 raise Exception('Failed to connect to server via SSH')
             
-            # Initialize PostgreSQL manager
-            pg_manager = PostgresManager(ssh)
-            
-            # Check PostgreSQL and pgBackRest installation
+            # Check prerequisites
             if not pg_manager.check_postgres_installed() or not pg_manager.check_pgbackrest_installed():
                 raise Exception('PostgreSQL or pgBackRest is not installed on the server')
             
-            # Execute restore
+            # Get backup name if specific backup was selected
             backup_name = None
             if backup_id:
-                backup_log = BackupLog.query.get(backup_id)
-                if backup_log:
-                    # Get the backup name by parsing the log output (actual implementation might vary)
-                    pass
+                # In a real implementation, get the backup name from the log
+                pass
             
+            # Execute restore
             success, log_output = pg_manager.restore_backup(
-                database.name,
-                backup_name,
-                restore_time
+                database.name, backup_name, restore_time
             )
             
             # Update restore log
@@ -532,17 +449,11 @@ def restore():
             restore_log.log_output = log_output
             
             db.session.commit()
-            
-            # Disconnect from server
             ssh.disconnect()
             
-            if success:
-                flash('Database restored successfully', 'success')
-            else:
-                flash('Database restore failed', 'danger')
-            
-            return redirect(url_for('backups.restore_logs'))
-            
+            flash('Database restored successfully' if success else 'Database restore failed',
+                  'success' if success else 'danger')
+                  
         except Exception as e:
             restore_log.status = 'failed'
             restore_log.end_time = datetime.utcnow()
@@ -551,6 +462,8 @@ def restore():
             
             flash(f'Error restoring database: {str(e)}', 'danger')
             return redirect(url_for('backups.restore'))
+            
+        return redirect(url_for('backups.restore_logs'))
     
     return render_template('backups/restore.html', databases=databases)
 

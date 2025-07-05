@@ -4,6 +4,13 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 db = SQLAlchemy()
 
+# Base model with common fields
+class BaseModel(db.Model):
+    __abstract__ = True
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -16,99 +23,86 @@ class User(db.Model):
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
-class FlaskSession(db.Model):
-    """Model for storing Flask session data in the database"""
-    id = db.Column(db.String(255), primary_key=True)
-    user_id = db.Column(db.Integer, nullable=True)  # To link sessions to users for deletion
-    data = db.Column(db.LargeBinary, nullable=False)
-    expiry = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-class VpsServer(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    host = db.Column(db.String(255), nullable=False)
+class VpsServer(BaseModel):
+    name = db.Column(db.String(80), nullable=False)
+    host = db.Column(db.String(120), nullable=False)
     port = db.Column(db.Integer, default=22)
-    username = db.Column(db.String(100), nullable=False)
-    ssh_key_path = db.Column(db.Text, nullable=True)
-    ssh_key_content = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    username = db.Column(db.String(80), nullable=False)
+    ssh_key_path = db.Column(db.String(255))
+    ssh_key_content = db.Column(db.Text)
     
-    # Relationship
+    # Relationships
     databases = db.relationship('PostgresDatabase', backref='server', lazy=True, cascade="all, delete-orphan")
     backup_jobs = db.relationship('BackupJob', backref='server', lazy=True, cascade="all, delete-orphan")
 
-class PostgresDatabase(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
+class PostgresDatabase(BaseModel):
+    name = db.Column(db.String(80), nullable=False)
+    vps_server_id = db.Column(db.Integer, db.ForeignKey('vps_server.id', ondelete='CASCADE'), nullable=False)
     port = db.Column(db.Integer, default=5432)
-    username = db.Column(db.String(100), nullable=False)
-    password = db.Column(db.String(100), nullable=False)
-    vps_server_id = db.Column(db.Integer, db.ForeignKey('vps_server.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    username = db.Column(db.String(80), default='postgres')
+    password = db.Column(db.String(128))
+    size = db.Column(db.String(20))
     
-    # Relationship
+    # Relationships
     backup_jobs = db.relationship('BackupJob', backref='database', lazy=True, cascade="all, delete-orphan")
+    restore_logs = db.relationship('RestoreLog', backref='database', lazy=True, cascade="all, delete-orphan")
 
-class S3Storage(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    bucket = db.Column(db.String(255), nullable=False)
+class S3Storage(BaseModel):
+    name = db.Column(db.String(80), nullable=False)
+    bucket = db.Column(db.String(120), nullable=False)
     region = db.Column(db.String(50), nullable=False)
-    access_key = db.Column(db.String(100), nullable=False)
-    secret_key = db.Column(db.String(100), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    access_key = db.Column(db.String(120), nullable=False)
+    secret_key = db.Column(db.String(120), nullable=False)
     
-    # Relationship
+    # Relationships
     backup_jobs = db.relationship('BackupJob', backref='s3_storage', lazy=True)
-    
-    def __repr__(self):
-        return f"<S3Storage {self.name}>"
 
-class BackupJob(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    vps_server_id = db.Column(db.Integer, db.ForeignKey('vps_server.id'), nullable=False)
-    database_id = db.Column(db.Integer, db.ForeignKey('postgres_database.id'), nullable=False)
-    backup_type = db.Column(db.String(20), nullable=False)  # full, incremental
-    cron_expression = db.Column(db.String(100), nullable=False)
+class BackupJob(BaseModel):
+    name = db.Column(db.String(80), nullable=False)
+    database_id = db.Column(db.Integer, db.ForeignKey('postgres_database.id', ondelete='CASCADE'), nullable=False)
+    vps_server_id = db.Column(db.Integer, db.ForeignKey('vps_server.id', ondelete='CASCADE'), nullable=False)
+    backup_type = db.Column(db.String(20), default='full')  # full or incr
+    cron_expression = db.Column(db.String(50), nullable=False)
     enabled = db.Column(db.Boolean, default=True)
-    
-    # S3 configuration - reference to S3Storage
     s3_storage_id = db.Column(db.Integer, db.ForeignKey('s3_storage.id'), nullable=False)
     
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # Relationship
-    backup_logs = db.relationship('BackupLog', backref='job', lazy=True, cascade="all, delete-orphan")
+    # Relationships
+    logs = db.relationship('BackupLog', backref='backup_job', lazy=True, cascade="all, delete-orphan")
 
-class BackupLog(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    backup_job_id = db.Column(db.Integer, db.ForeignKey('backup_job.id'), nullable=False)
-    status = db.Column(db.String(20), nullable=False)  # success, failed, in_progress
-    backup_type = db.Column(db.String(20), nullable=False)  # full, incremental
+class BackupLog(BaseModel):
+    backup_job_id = db.Column(db.Integer, db.ForeignKey('backup_job.id', ondelete='CASCADE'), nullable=False)
     start_time = db.Column(db.DateTime, default=datetime.utcnow)
-    end_time = db.Column(db.DateTime, nullable=True)
-    log_output = db.Column(db.Text, nullable=True)
-    size_bytes = db.Column(db.BigInteger, nullable=True)
-    is_manual = db.Column(db.Boolean, default=False)
+    end_time = db.Column(db.DateTime)
+    status = db.Column(db.String(20))  # success, failed, in_progress
+    backup_type = db.Column(db.String(20))  # full or incr
+    size_bytes = db.Column(db.BigInteger)
+    log_output = db.Column(db.Text)
+    manual = db.Column(db.Boolean, default=False)
+    
+    # Relationships
+    restore_logs = db.relationship('RestoreLog', backref='backup_log', lazy=True)
 
-class RestoreLog(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
+class RestoreLog(BaseModel):
     backup_log_id = db.Column(db.Integer, db.ForeignKey('backup_log.id'), nullable=True)
-    database_id = db.Column(db.Integer, db.ForeignKey('postgres_database.id'), nullable=False)
-    status = db.Column(db.String(20), nullable=False)  # success, failed, in_progress
+    database_id = db.Column(db.Integer, db.ForeignKey('postgres_database.id', ondelete='CASCADE'), nullable=False)
     start_time = db.Column(db.DateTime, default=datetime.utcnow)
-    end_time = db.Column(db.DateTime, nullable=True)
-    log_output = db.Column(db.Text, nullable=True)
-    restore_point = db.Column(db.DateTime, nullable=True)  # For PITR
+    end_time = db.Column(db.DateTime)
+    status = db.Column(db.String(20))  # success, failed, in_progress
+    log_output = db.Column(db.Text)
+    restore_point = db.Column(db.DateTime, nullable=True)  # For point-in-time recovery
+
+class FlaskSession(db.Model):
+    id = db.Column(db.String(255), primary_key=True)
+    session_data = db.Column(db.LargeBinary)
+    expiry = db.Column(db.DateTime)
+    user_id = db.Column(db.Integer)
     
-    database = db.relationship('PostgresDatabase')
-    backup = db.relationship('BackupLog')
+    @property
+    def is_expired(self):
+        return self.expiry is not None and datetime.utcnow() > self.expiry
+    
+    def __repr__(self):
+        return f'<Session: {self.id}>'
 
 def init_db(app):
     db.init_app(app)

@@ -2,7 +2,6 @@ import paramiko
 import os
 import tempfile
 import logging
-from io import StringIO
 
 class SSHManager:
     def __init__(self, host, port, username, ssh_key_path=None, ssh_key_content=None):
@@ -20,7 +19,7 @@ class SSHManager:
             self.client = paramiko.SSHClient()
             self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
-            # If we have SSH key content, write it to a temporary file
+            # Handle SSH key from content if provided
             temp_key_file = None
             if self.ssh_key_content and not self.ssh_key_path:
                 temp_key_file = tempfile.NamedTemporaryFile(delete=False)
@@ -28,7 +27,6 @@ class SSHManager:
                 temp_key_file.close()
                 self.ssh_key_path = temp_key_file.name
             
-            # Connect to the server
             self.client.connect(
                 hostname=self.host,
                 port=self.port,
@@ -36,7 +34,6 @@ class SSHManager:
                 key_filename=self.ssh_key_path
             )
             
-            # Clean up temp file if used
             if temp_key_file:
                 os.unlink(temp_key_file.name)
             
@@ -46,7 +43,6 @@ class SSHManager:
         except Exception as e:
             self.logger.error(f"Failed to connect to {self.username}@{self.host}:{self.port}: {str(e)}")
             
-            # Clean up temp file if exception occurred
             if temp_key_file:
                 os.unlink(temp_key_file.name)
                 
@@ -72,7 +68,6 @@ class SSHManager:
             stdout_content = stdout.read().decode('utf-8')
             stderr_content = stderr.read().decode('utf-8')
             
-            self.logger.debug(f"Command exit code: {exit_code}")
             if stderr_content:
                 self.logger.debug(f"Command stderr: {stderr_content}")
                 
@@ -89,39 +84,45 @@ class SSHManager:
                 'stderr': str(e)
             }
 
+    def check_path_exists(self, path, is_dir=False):
+        """Check if a file or directory exists on the remote server"""
+        test_type = "-d" if is_dir else "-f"
+        result = self.execute_command(f"test {test_type} {path} && echo 'EXISTS' || echo 'NOT_EXISTS'")
+        return result['stdout'].strip() == 'EXISTS'
+        
     def check_file_exists(self, path):
         """Check if a file exists on the remote server"""
-        result = self.execute_command(f"test -f {path} && echo 'EXISTS' || echo 'NOT_EXISTS'")
-        return result['stdout'].strip() == 'EXISTS'
+        return self.check_path_exists(path, is_dir=False)
     
     def check_directory_exists(self, path):
         """Check if a directory exists on the remote server"""
-        result = self.execute_command(f"test -d {path} && echo 'EXISTS' || echo 'NOT_EXISTS'")
-        return result['stdout'].strip() == 'EXISTS'
+        return self.check_path_exists(path, is_dir=True)
     
-    def upload_file(self, local_path, remote_path):
-        """Upload a file to the remote server"""
+    def transfer_file(self, local_path, remote_path, direction="upload"):
+        """Transfer a file to or from the remote server"""
         try:
             sftp = self.client.open_sftp()
-            sftp.put(local_path, remote_path)
+            
+            if direction == "upload":
+                sftp.put(local_path, remote_path)
+                self.logger.info(f"Uploaded {local_path} to {remote_path}")
+            else:
+                sftp.get(remote_path, local_path)
+                self.logger.info(f"Downloaded {remote_path} to {local_path}")
+                
             sftp.close()
-            self.logger.info(f"Uploaded {local_path} to {remote_path}")
             return True
         except Exception as e:
-            self.logger.error(f"Failed to upload {local_path} to {remote_path}: {str(e)}")
+            self.logger.error(f"Failed to {direction} {local_path} <-> {remote_path}: {str(e)}")
             return False
+            
+    def upload_file(self, local_path, remote_path):
+        """Upload a file to the remote server"""
+        return self.transfer_file(local_path, remote_path, direction="upload")
     
     def download_file(self, remote_path, local_path):
         """Download a file from the remote server"""
-        try:
-            sftp = self.client.open_sftp()
-            sftp.get(remote_path, local_path)
-            sftp.close()
-            self.logger.info(f"Downloaded {remote_path} to {local_path}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to download {remote_path} to {local_path}: {str(e)}")
-            return False
+        return self.transfer_file(local_path, remote_path, direction="download")
             
     def write_file_content(self, remote_path, content):
         """Write content to a file on the remote server"""
