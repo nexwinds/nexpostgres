@@ -325,6 +325,9 @@ def check(id):
         # Get PostgreSQL version
         pg_version = pg_manager.get_postgres_version()
         
+        # Check if the installed PostgreSQL is the latest version
+        is_latest, installed_version, latest_version = pg_manager.check_latest_postgres_version()
+        
         # Check pgBackRest installation
         pgbackrest_installed = pg_manager.check_pgbackrest_installed()
         
@@ -334,6 +337,9 @@ def check(id):
         return jsonify({
             'success': True,
             'postgres_version': pg_version,
+            'is_latest_version': is_latest,
+            'latest_version': latest_version,
+            'needs_upgrade': not is_latest,
             'pgbackrest_installed': pgbackrest_installed
         })
         
@@ -430,6 +436,61 @@ def install_pgbackrest(id):
                 'success': False,
                 'message': 'Failed to install pgBackRest'
             })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        })
+
+@databases_bp.route('/upgrade-postgres/<int:id>', methods=['POST'])
+@login_required
+@first_login_required
+def upgrade_postgres(id):
+    database = PostgresDatabase.query.get_or_404(id)
+    server = database.server
+    
+    try:
+        # Connect to server via SSH
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_path=server.ssh_key_path,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            return jsonify({
+                'success': False,
+                'message': 'Failed to connect to server via SSH'
+            })
+        
+        # Upgrade PostgreSQL to latest version
+        pg_manager = PostgresManager(ssh)
+        success, old_version, new_version = pg_manager.upgrade_postgres_to_latest()
+        
+        # Disconnect
+        ssh.disconnect()
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'PostgreSQL upgraded successfully from {old_version} to {new_version}',
+                'old_version': old_version,
+                'new_version': new_version
+            })
+        else:
+            if old_version == new_version:
+                return jsonify({
+                    'success': False,
+                    'message': f'Failed to upgrade PostgreSQL. Version remains at {old_version}.'
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': f'PostgreSQL upgrade from {old_version} to {new_version} may be incomplete or has issues.'
+                })
         
     except Exception as e:
         return jsonify({

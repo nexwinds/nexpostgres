@@ -1050,26 +1050,279 @@ class PostgresManager:
         """Install PostgreSQL on the remote server"""
         self.logger.info("Installing PostgreSQL")
         
-        # Update package lists
-        self.ssh.execute_command("sudo apt-get update")
+        # Detect OS type
+        result = self.ssh.execute_command("cat /etc/os-release")
+        is_debian_based = "debian" in result['stdout'].lower() or "ubuntu" in result['stdout'].lower()
+        is_rhel_based = "rhel" in result['stdout'].lower() or "centos" in result['stdout'].lower() or "fedora" in result['stdout'].lower() or "rocky" in result['stdout'].lower() or "alma" in result['stdout'].lower()
         
-        # Install PostgreSQL
-        result = self.ssh.execute_command("sudo apt-get install -y postgresql postgresql-contrib")
+        if is_debian_based:
+            # Install prerequisites for adding repository
+            self.ssh.execute_command("sudo apt-get update")
+            self.ssh.execute_command("sudo apt-get install -y curl ca-certificates gnupg lsb-release")
+            
+            # Add PostgreSQL repository - this gets the latest version
+            self.logger.info("Adding PostgreSQL repository for latest version")
+            self.ssh.execute_command("curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /usr/share/keyrings/postgresql-keyring.gpg")
+            
+            # Detect OS version
+            lsb_result = self.ssh.execute_command("lsb_release -cs")
+            codename = lsb_result['stdout'].strip() if lsb_result['exit_code'] == 0 else "focal"  # Default to focal if detection fails
+            
+            # Add repository that contains latest PostgreSQL version
+            repo_cmd = f'echo "deb [signed-by=/usr/share/keyrings/postgresql-keyring.gpg] http://apt.postgresql.org/pub/repos/apt/ {codename}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list'
+            self.ssh.execute_command(repo_cmd)
+            
+            # Update package lists
+            self.ssh.execute_command("sudo apt-get update")
+            
+            # Find latest available PostgreSQL version
+            find_latest = self.ssh.execute_command("apt-cache search 'postgresql-[0-9]+$' | grep -oP 'postgresql-\\K[0-9]+' | sort -V | tail -1")
+            if find_latest['exit_code'] == 0 and find_latest['stdout'].strip():
+                pg_version = find_latest['stdout'].strip()
+                self.logger.info(f"Latest PostgreSQL version found: {pg_version}")
+                
+                # Install specific PostgreSQL version and contrib
+                result = self.ssh.execute_command(f"sudo apt-get install -y postgresql-{pg_version} postgresql-contrib-{pg_version}")
+            else:
+                # Fallback to installing generic "postgresql" package which should get the latest
+                self.logger.warning("Could not determine latest version, installing generic postgresql package")
+                result = self.ssh.execute_command("sudo apt-get install -y postgresql postgresql-contrib")
+                
+        elif is_rhel_based:
+            # Install PostgreSQL repository for RHEL/CentOS
+            self.logger.info("Adding PostgreSQL repository for RHEL-based system")
+            self.ssh.execute_command("sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-$(rpm -E %rhel)-x86_64/pgdg-redhat-repo-latest.noarch.rpm")
+            
+            # Find latest available PostgreSQL version
+            find_latest = self.ssh.execute_command("sudo dnf list postgresql*-server | grep -v 'client\|devel\|docs\|libs' | grep -oP 'postgresql\\K[0-9]+' | sort -V | tail -1")
+            if find_latest['exit_code'] == 0 and find_latest['stdout'].strip():
+                pg_version = find_latest['stdout'].strip()
+                self.logger.info(f"Latest PostgreSQL version found: {pg_version}")
+                
+                # Install specific PostgreSQL version
+                result = self.ssh.execute_command(f"sudo dnf install -y postgresql{pg_version}-server postgresql{pg_version}-contrib")
+                
+                # Initialize database (required on RHEL/CentOS)
+                self.ssh.execute_command(f"sudo /usr/pgsql-{pg_version}/bin/postgresql-{pg_version}-setup initdb")
+            else:
+                # Fallback
+                self.logger.warning("Could not determine latest version, installing generic postgresql package")
+                result = self.ssh.execute_command("sudo dnf install -y postgresql-server postgresql-contrib")
+                self.ssh.execute_command("sudo postgresql-setup initdb")
+        else:
+            # Generic fallback for other OS types
+            self.logger.warning("Unsupported OS detected, attempting generic PostgreSQL installation")
+            result = self.ssh.execute_command("sudo apt-get update && sudo apt-get install -y postgresql postgresql-contrib")
         
         if result['exit_code'] != 0:
             self.logger.error(f"Failed to install PostgreSQL: {result['stderr']}")
             return False
         
         # Enable and start PostgreSQL service
-        self.ssh.execute_command("sudo systemctl enable postgresql")
-        self.ssh.execute_command("sudo systemctl start postgresql")
+        self.logger.info("Enabling and starting PostgreSQL service")
+        if is_rhel_based:
+            self.ssh.execute_command("sudo systemctl enable postgresql")
+            self.ssh.execute_command("sudo systemctl start postgresql")
+        else:
+            self.ssh.execute_command("sudo systemctl enable postgresql")
+            self.ssh.execute_command("sudo systemctl start postgresql")
         
-        return self.check_postgres_installed()
+        # Verify installation
+        is_installed = self.check_postgres_installed()
+        if is_installed:
+            pg_version = self.get_postgres_version()
+            self.logger.info(f"PostgreSQL {pg_version} installed successfully")
+        
+        return is_installed
     
     def check_pgbackrest_installed(self):
         """Check if pgBackRest is installed on the remote server"""
         result = self.ssh.execute_command("which pgbackrest")
         return result['exit_code'] == 0
+    
+    def check_latest_postgres_version(self):
+        """
+        Checks if the installed PostgreSQL version is the latest available.
+        Returns a tuple (bool, str, str): (is_latest, installed_version, latest_version)
+        """
+        self.logger.info("Checking if installed PostgreSQL version is the latest")
+        
+        # Get the installed PostgreSQL version
+        installed_version = self.get_postgres_version()
+        if not installed_version:
+            self.logger.error("PostgreSQL is not installed")
+            return False, None, None
+            
+        # Detect OS type
+        result = self.ssh.execute_command("cat /etc/os-release")
+        is_debian_based = "debian" in result['stdout'].lower() or "ubuntu" in result['stdout'].lower()
+        is_rhel_based = "rhel" in result['stdout'].lower() or "centos" in result['stdout'].lower() or "fedora" in result['stdout'].lower() or "rocky" in result['stdout'].lower() or "alma" in result['stdout'].lower()
+        
+        latest_version = None
+        
+        if is_debian_based:
+            # Ensure the PostgreSQL repository is present
+            repo_check = self.ssh.execute_command("ls /etc/apt/sources.list.d/pgdg.list 2>/dev/null || echo 'not found'")
+            if 'not found' in repo_check['stdout']:
+                # Add PostgreSQL repository if not present
+                self.ssh.execute_command("sudo apt-get update && sudo apt-get install -y curl ca-certificates gnupg lsb-release")
+                self.ssh.execute_command("curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /usr/share/keyrings/postgresql-keyring.gpg")
+                
+                lsb_result = self.ssh.execute_command("lsb_release -cs")
+                codename = lsb_result['stdout'].strip() if lsb_result['exit_code'] == 0 else "focal"
+                
+                repo_cmd = f'echo "deb [signed-by=/usr/share/keyrings/postgresql-keyring.gpg] http://apt.postgresql.org/pub/repos/apt/ {codename}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list'
+                self.ssh.execute_command(repo_cmd)
+                
+                # Update packages list
+                self.ssh.execute_command("sudo apt-get update")
+            
+            # Find latest PostgreSQL version available in repo
+            find_latest = self.ssh.execute_command("apt-cache search 'postgresql-[0-9]+$' | grep -oP 'postgresql-\\K[0-9]+' | sort -V | tail -1")
+            if find_latest['exit_code'] == 0 and find_latest['stdout'].strip():
+                latest_version = find_latest['stdout'].strip()
+                self.logger.info(f"Latest PostgreSQL version available: {latest_version}")
+            
+        elif is_rhel_based:
+            # Ensure the PostgreSQL repository is present
+            repo_check = self.ssh.execute_command("ls /etc/yum.repos.d/pgdg-redhat-all.repo 2>/dev/null || echo 'not found'")
+            if 'not found' in repo_check['stdout']:
+                # Add PostgreSQL repository if not present
+                self.ssh.execute_command("sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-$(rpm -E %rhel)-x86_64/pgdg-redhat-repo-latest.noarch.rpm")
+                self.ssh.execute_command("sudo dnf clean all")
+            
+            # Find latest PostgreSQL version available in repo
+            find_latest = self.ssh.execute_command("sudo dnf list postgresql*-server | grep -v 'client\|devel\|docs\|libs' | grep -oP 'postgresql\\K[0-9]+' | sort -V | tail -1")
+            if find_latest['exit_code'] == 0 and find_latest['stdout'].strip():
+                latest_version = find_latest['stdout'].strip()
+                self.logger.info(f"Latest PostgreSQL version available: {latest_version}")
+        
+        # If we can't determine the latest version, use online sources
+        if not latest_version:
+            self.logger.warning("Could not determine latest version from repositories, checking online sources")
+            
+            # Try to get latest version from the PostgreSQL website
+            result = self.ssh.execute_command("curl -s https://www.postgresql.org/ | grep -oP 'PostgreSQL\\s+\\K[0-9]+\\.[0-9]+' | head -1")
+            if result['exit_code'] == 0 and result['stdout'].strip():
+                latest_version = result['stdout'].strip().split('.')[0]  # Get major version
+        
+        if not latest_version:
+            self.logger.error("Could not determine latest PostgreSQL version")
+            return False, installed_version, None
+        
+        # Compare versions
+        installed_major_version = installed_version.split('.')[0]
+        is_latest = installed_major_version >= latest_version
+        
+        return is_latest, installed_version, latest_version
+    
+    def upgrade_postgres_to_latest(self):
+        """
+        Upgrades PostgreSQL to the latest version.
+        Returns a tuple (bool, str, str): (success, old_version, new_version)
+        """
+        self.logger.info("Checking if PostgreSQL upgrade is needed")
+        
+        # Check current version against latest
+        is_latest, installed_version, latest_version = self.check_latest_postgres_version()
+        
+        if is_latest:
+            self.logger.info(f"PostgreSQL version {installed_version} is already the latest")
+            return True, installed_version, latest_version
+        
+        # Detect OS type
+        result = self.ssh.execute_command("cat /etc/os-release")
+        is_debian_based = "debian" in result['stdout'].lower() or "ubuntu" in result['stdout'].lower()
+        is_rhel_based = "rhel" in result['stdout'].lower() or "centos" in result['stdout'].lower() or "fedora" in result['stdout'].lower() or "rocky" in result['stdout'].lower() or "alma" in result['stdout'].lower()
+        
+        self.logger.info(f"Attempting to upgrade PostgreSQL from version {installed_version} to {latest_version}")
+        
+        if is_debian_based:
+            # Back up the database first
+            backup_cmd = "sudo -u postgres pg_dumpall > /tmp/postgres_backup_before_upgrade.sql"
+            backup_result = self.ssh.execute_command(backup_cmd)
+            if backup_result['exit_code'] != 0:
+                self.logger.error(f"Failed to back up PostgreSQL databases: {backup_result['stderr']}")
+                return False, installed_version, latest_version
+                
+            # Stop the PostgreSQL service
+            self.ssh.execute_command("sudo systemctl stop postgresql")
+            
+            # Install the latest PostgreSQL version alongside the existing one
+            install_cmd = f"sudo apt-get install -y postgresql-{latest_version} postgresql-contrib-{latest_version}"
+            result = self.ssh.execute_command(install_cmd)
+            
+            if result['exit_code'] != 0:
+                self.logger.error(f"Failed to install PostgreSQL {latest_version}: {result['stderr']}")
+                # Restart the original PostgreSQL service
+                self.ssh.execute_command("sudo systemctl start postgresql")
+                return False, installed_version, latest_version
+            
+            # Find the data directories
+            old_data_dir = f"/var/lib/postgresql/{installed_version.split('.')[0]}/main"
+            new_data_dir = f"/var/lib/postgresql/{latest_version}/main"
+            
+            # Use pg_upgrade if available
+            check_pg_upgrade = self.ssh.execute_command(f"which pg_upgrade")
+            if check_pg_upgrade['exit_code'] == 0:
+                # Set up a temporary directory for the upgrade
+                self.ssh.execute_command("sudo mkdir -p /tmp/pg_upgrade")
+                self.ssh.execute_command("sudo chown postgres:postgres /tmp/pg_upgrade")
+                
+                # Run pg_upgrade as the postgres user
+                upgrade_cmd = f"sudo -u postgres pg_upgrade -b /usr/lib/postgresql/{installed_version.split('.')[0]}/bin -B /usr/lib/postgresql/{latest_version}/bin -d {old_data_dir} -D {new_data_dir} -j 2 -k -v"
+                upgrade_result = self.ssh.execute_command(upgrade_cmd)
+                
+                if upgrade_result['exit_code'] != 0:
+                    self.logger.error(f"pg_upgrade failed: {upgrade_result['stderr']}")
+                    # Restart the original PostgreSQL service
+                    self.ssh.execute_command("sudo systemctl start postgresql")
+                    return False, installed_version, latest_version
+            else:
+                # If pg_upgrade is not available, try to restore from the backup
+                # Initialize the new database cluster first
+                self.ssh.execute_command(f"sudo -u postgres /usr/lib/postgresql/{latest_version}/bin/initdb -D {new_data_dir}")
+                
+                # Start the new PostgreSQL version
+                self.ssh.execute_command(f"sudo systemctl start postgresql@{latest_version}-main")
+                
+                # Restore from backup
+                restore_cmd = f"cat /tmp/postgres_backup_before_upgrade.sql | sudo -u postgres psql"
+                restore_result = self.ssh.execute_command(restore_cmd)
+                
+                if restore_result['exit_code'] != 0:
+                    self.logger.error(f"Failed to restore PostgreSQL databases: {restore_result['stderr']}")
+                    # Restart the original PostgreSQL service
+                    self.ssh.execute_command("sudo systemctl start postgresql")
+                    return False, installed_version, latest_version
+            
+            # Update the default PostgreSQL version
+            self.ssh.execute_command(f"sudo update-alternatives --set postgresql /usr/lib/postgresql/{latest_version}/bin/psql")
+            
+            # Start and enable the new PostgreSQL service
+            self.ssh.execute_command(f"sudo systemctl enable postgresql@{latest_version}-main")
+            self.ssh.execute_command(f"sudo systemctl start postgresql@{latest_version}-main")
+            
+        elif is_rhel_based:
+            self.logger.warning("Direct in-place upgrade on RHEL-based systems is complex. Recommending backup and reinstallation.")
+            # For RHEL systems, a more complex strategy would be needed
+            # This would involve backing up data, installing new version, and restoring data
+            # This is a simplified approach that just notifies the admin
+            return False, installed_version, latest_version
+        else:
+            self.logger.warning("PostgreSQL upgrade on this OS type is not supported")
+            return False, installed_version, latest_version
+        
+        # Verify the new version
+        self.ssh.execute_command("sudo systemctl restart postgresql")
+        new_version = self.get_postgres_version()
+        
+        if new_version and new_version.split('.')[0] == latest_version:
+            self.logger.info(f"Successfully upgraded PostgreSQL from {installed_version} to {new_version}")
+            return True, installed_version, new_version
+        else:
+            self.logger.error(f"Upgrade verification failed. Current version: {new_version}")
+            return False, installed_version, new_version
     
     def install_pgbackrest(self):
         """Install pgBackRest on the remote server"""
