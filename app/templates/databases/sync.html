@@ -8,18 +8,62 @@
         <ol class="breadcrumb">
             <li class="breadcrumb-item"><a href="{{ url_for('dashboard.index') }}">Dashboard</a></li>
             <li class="breadcrumb-item"><a href="{{ url_for('servers.index') }}">Servers</a></li>
+            {% if server %}
             <li class="breadcrumb-item"><a href="{{ url_for('databases.by_server', server_id=server.id) }}">{{ server.name }}</a></li>
+            {% endif %}
             <li class="breadcrumb-item active">Sync Databases</li>
         </ol>
     </nav>
 
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1>Sync Databases from {{ server.name }}</h1>
-        <a href="{{ url_for('databases.by_server', server_id=server.id) }}" class="btn btn-outline-secondary">
-            <i class="fas fa-arrow-left me-1"></i> Back
-        </a>
+        <h1>{% if server %}Sync Databases from {{ server.name }}{% else %}Sync Databases{% endif %}</h1>
+        <div>
+            {% if server %}
+            <a href="{{ url_for('databases.by_server', server_id=server.id) }}" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left me-1"></i> Back to Server
+            </a>
+            {% else %}
+            <a href="{{ url_for('databases.index') }}" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left me-1"></i> Back to Databases
+            </a>
+            {% endif %}
+        </div>
     </div>
 
+    {% if not server %}
+    <!-- Server Selection Form -->
+    <div class="card shadow mb-4">
+        <div class="card-header bg-light">
+            <h5 class="mb-0">Select a Server</h5>
+        </div>
+        <div class="card-body">
+            {% if servers %}
+                <p>Please select a server to scan for new databases:</p>
+                <form method="post">
+                    <div class="mb-3">
+                        <label for="server_id" class="form-label">Server</label>
+                        <select class="form-select" id="server_id" name="server_id" required>
+                            <option value="">-- Select a Server --</option>
+                            {% for server in servers %}
+                            <option value="{{ server.id }}">{{ server.name }} ({{ server.host }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="d-flex justify-content-end mt-3">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-search me-1"></i> Scan for Databases
+                        </button>
+                    </div>
+                </form>
+            {% else %}
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-1"></i> No servers found. Please <a href="{{ url_for('servers.add') }}">add a server</a> first.
+                </div>
+            {% endif %}
+        </div>
+    </div>
+    {% else %}
+    <!-- Database Listing -->
     <div class="card shadow">
         <div class="card-header bg-light">
             <h5 class="mb-0">Databases Found on Server</h5>
@@ -77,6 +121,7 @@
             {% endif %}
         </div>
     </div>
+    {% endif %}
 </div>
 {% endblock %}
 

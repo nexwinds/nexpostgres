@@ -9,9 +9,9 @@
         <a href="{{ url_for('databases.add') }}" class="btn btn-primary">
             <i class="fas fa-plus me-1"></i> Add Database
         </a>
-        <button id="syncAllDatabases" class="btn btn-success">
-            <i class="fas fa-sync me-1"></i> Sync All Databases
-        </button>
+        <a href="{{ url_for('databases.sync') }}" class="btn btn-success">
+            <i class="fas fa-sync me-1"></i> Sync Databases
+        </a>
     </div>
 </div>
 
@@ -308,79 +308,6 @@
                         installPgBackRest(databaseId, this);
                     });
                 });
-        }
-        
-        // Setup sync all databases button
-        const syncAllDatabasesButton = document.getElementById('syncAllDatabases');
-        if (syncAllDatabasesButton) {
-            syncAllDatabasesButton.addEventListener('click', function() {
-                const originalContent = syncAllDatabasesButton.innerHTML;
-                
-                // Show loading state
-                syncAllDatabasesButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing...';
-                syncAllDatabasesButton.disabled = true;
-                
-                // Send AJAX request
-                fetch('{{ url_for('databases.sync_all_servers') }}', {
-                    method: 'POST'
-                })
-                    .then(response => response.json())
-                    .then(data => {
-                        // Reset button
-                        syncAllDatabasesButton.innerHTML = originalContent;
-                        syncAllDatabasesButton.disabled = false;
-                        
-                        if (data.success) {
-                            // Show success message
-                            const alertDiv = document.createElement('div');
-                            alertDiv.className = 'alert alert-success alert-dismissible fade show';
-                            alertDiv.innerHTML = `
-                                <i class="fas fa-check-circle me-1"></i> ${data.message}
-                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                            `;
-                            
-                            // Insert alert before the card
-                            const card = document.querySelector('.card.shadow');
-                            card.parentNode.insertBefore(alertDiv, card);
-                            
-                            // Reload page if databases were imported
-                            if (data.imported_count > 0) {
-                                setTimeout(() => {
-                                    window.location.reload();
-                                }, 2000);
-                            }
-                        } else {
-                            // Show error message
-                            const alertDiv = document.createElement('div');
-                            alertDiv.className = 'alert alert-danger alert-dismissible fade show';
-                            alertDiv.innerHTML = `
-                                <i class="fas fa-times-circle me-1"></i> Error: ${data.message}
-                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                            `;
-                            
-                            // Insert alert before the card
-                            const card = document.querySelector('.card.shadow');
-                            card.parentNode.insertBefore(alertDiv, card);
-                        }
-                    })
-                    .catch(error => {
-                        // Reset button
-                        syncAllDatabasesButton.innerHTML = originalContent;
-                        syncAllDatabasesButton.disabled = false;
-                        
-                        // Show error message
-                        const alertDiv = document.createElement('div');
-                        alertDiv.className = 'alert alert-danger alert-dismissible fade show';
-                        alertDiv.innerHTML = `
-                            <i class="fas fa-times-circle me-1"></i> Error: ${error.message}
-                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                        `;
-                        
-                        // Insert alert before the card
-                        const card = document.querySelector('.card.shadow');
-                        card.parentNode.insertBefore(alertDiv, card);
-                    });
-            });
         }
     });
 </script>

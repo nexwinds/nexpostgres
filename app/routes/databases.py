@@ -21,6 +21,28 @@ def by_server(server_id):
     databases = PostgresDatabase.query.filter_by(vps_server_id=server_id).all()
     return render_template('databases/by_server.html', server=server, databases=databases)
 
+@databases_bp.route('/sync', methods=['GET', 'POST'])
+@login_required
+@first_login_required
+def sync():
+    """First step of sync process - let user select a server"""
+    servers = VpsServer.query.all()
+    
+    if not servers:
+        flash('You need to add a server first', 'warning')
+        return redirect(url_for('servers.add'))
+    
+    if request.method == 'POST':
+        server_id = request.form.get('server_id', type=int)
+        if not server_id:
+            flash('Please select a server', 'warning')
+            return render_template('databases/sync.html', servers=servers)
+        
+        # Redirect to the server-specific sync page
+        return redirect(url_for('databases.sync_databases', server_id=server_id))
+    
+    return render_template('databases/sync.html', servers=servers)
+
 @databases_bp.route('/sync/<int:server_id>', methods=['GET', 'POST'])
 @login_required
 @first_login_required
