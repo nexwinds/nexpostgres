@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Add Database - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Add PostgreSQL Database</h1>
+    <a href="{{ url_for('databases.index') }}" class="btn btn-secondary">
+        <i class="fas fa-arrow-left me-1"></i> Back to Databases
+    </a>
+</div>
+
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">Database Details</h5>
+    </div>
+    <div class="card-body">
+        <form method="post">
+            <div class="mb-3">
+                <label for="server_id" class="form-label">Server</label>
+                <select class="form-select" id="server_id" name="server_id" required>
+                    <option value="" selected disabled>Select a server</option>
+                    {% for server in servers %}
+                    <option value="{{ server.id }}">{{ server.name }} ({{ server.host }})</option>
+                    {% endfor %}
+                </select>
+                <div class="form-text">The server where the PostgreSQL database is located</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="name" class="form-label">Database Name</label>
+                <input type="text" class="form-control" id="name" name="name" required>
+                <div class="form-text">The name of the PostgreSQL database to backup</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="port" class="form-label">PostgreSQL Port</label>
+                <input type="number" class="form-control" id="port" name="port" value="5432" required>
+                <div class="form-text">The port where PostgreSQL is running (default: 5432)</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="username" class="form-label">Database Username</label>
+                <input type="text" class="form-control" id="username" name="username" required>
+                <div class="form-text">The PostgreSQL user with access to the database</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="password" class="form-label">Database Password</label>
+                <input type="password" class="form-control" id="password" name="password" required>
+                <div class="form-text">The password for the PostgreSQL user</div>
+            </div>
+            
+            <div class="d-flex justify-content-end">
+                <a href="{{ url_for('databases.index') }}" class="btn btn-secondary me-2">Cancel</a>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-save me-1"></i> Save Database
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="alert alert-info mt-4">
+    <h5><i class="fas fa-info-circle me-2"></i> Note</h5>
+    <p class="mb-0">
+        After adding the database, you can check its status and install PostgreSQL or pgBackRest if needed from the database list.
+    </p>
+</div>
+{% endblock %} 

@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}Restore Logs - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Restore Logs</h1>
+    <div>
+        <a href="{{ url_for('backups.restore') }}" class="btn btn-success me-2">
+            <i class="fas fa-undo me-1"></i> New Restore
+        </a>
+        <a href="{{ url_for('backups.index') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left me-1"></i> Back to Backup Jobs
+        </a>
+    </div>
+</div>
+
+<!-- Filter Form -->
+<div class="card shadow mb-4">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">Filters</h5>
+    </div>
+    <div class="card-body">
+        <form method="get" class="row g-3">
+            <div class="col-md-4">
+                <label for="database_id" class="form-label">Target Database</label>
+                <select class="form-select" id="database_id" name="database_id">
+                    <option value="">All Databases</option>
+                    {% for db in databases %}
+                    <option value="{{ db.id }}" {% if request.args.get('database_id')|int == db.id %}selected{% endif %}>
+                        {{ db.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="col-md-4">
+                <label for="status" class="form-label">Status</label>
+                <select class="form-select" id="status" name="status">
+                    <option value="">All Statuses</option>
+                    <option value="success" {% if request.args.get('status') == 'success' %}selected{% endif %}>Success</option>
+                    <option value="failed" {% if request.args.get('status') == 'failed' %}selected{% endif %}>Failed</option>
+                    <option value="running" {% if request.args.get('status') == 'running' %}selected{% endif %}>Running</option>
+                </select>
+            </div>
+            
+            <div class="col-md-4">
+                <label for="days" class="form-label">Time Range</label>
+                <select class="form-select" id="days" name="days">
+                    <option value="1" {% if request.args.get('days') == '1' %}selected{% endif %}>Last 24 hours</option>
+                    <option value="7" {% if request.args.get('days') == '7' or not request.args.get('days') %}selected{% endif %}>Last 7 days</option>
+                    <option value="30" {% if request.args.get('days') == '30' %}selected{% endif %}>Last 30 days</option>
+                    <option value="90" {% if request.args.get('days') == '90' %}selected{% endif %}>Last 90 days</option>
+                    <option value="all" {% if request.args.get('days') == 'all' %}selected{% endif %}>All time</option>
+                </select>
+            </div>
+            
+            <div class="col-12">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-filter me-1"></i> Apply Filters
+                </button>
+                <a href="{{ url_for('backups.restore_logs') }}" class="btn btn-outline-secondary">
+                    <i class="fas fa-times me-1"></i> Clear Filters
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Logs Table -->
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">Restore Logs</h5>
+    </div>
+    <div class="card-body">
+        {% if logs %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Start Time</th>
+                        <th>Source Backup</th>
+                        <th>Target Database</th>
+                        <th>Duration</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td>{{ log.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                        <td>
+                            {% if log.backup_log %}
+                            <a href="{{ url_for('backups.view_log', id=log.backup_log_id) }}">
+                                {{ log.backup_log.job.name }} ({{ log.backup_log.start_time.strftime('%Y-%m-%d %H:%M') }})
+                            </a>
+                            {% else %}
+                            <span class="text-muted">Unknown</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{{ url_for('databases.edit', id=log.database_id) }}">
+                                {{ log.database.name }}
+                            </a>
+                            on
+                            <a href="{{ url_for('servers.edit', id=log.database.vps_server_id) }}">
+                                {{ log.database.server.name }}
+                            </a>
+                        </td>
+                        <td>
+                            {% if log.end_time %}
+                            {{ (log.end_time - log.start_time).total_seconds()|round|int }} seconds
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if log.status == 'success' %}
+                            <span class="badge bg-success">Success</span>
+                            {% elif log.status == 'failed' %}
+                            <span class="badge bg-danger">Failed</span>
+                            {% elif log.status == 'running' %}
+                            <span class="badge bg-info">Running</span>
+                            {% else %}
+                            <span class="badge bg-secondary">{{ log.status }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{{ url_for('backups.view_restore_log', id=log.id) }}" class="btn btn-sm btn-outline-info">
+                                <i class="fas fa-file-alt"></i> Details
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert alert-info">
+            No restore logs found matching the current filters.
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %} 

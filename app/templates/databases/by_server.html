@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+
+{% block title %}Databases on {{ server.name }} - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Databases on {{ server.name }}</h1>
+    <div>
+        <a href="{{ url_for('databases.index') }}" class="btn btn-secondary me-2">
+            <i class="fas fa-arrow-left me-1"></i> Back to All Databases
+        </a>
+        <a href="{{ url_for('databases.sync', server_id=server.id) }}" class="btn btn-success me-2">
+            <i class="fas fa-sync me-1"></i> Sync Databases
+        </a>
+        <a href="{{ url_for('databases.add') }}" class="btn btn-primary">
+            <i class="fas fa-plus me-1"></i> Add Database
+        </a>
+    </div>
+</div>
+
+<div class="card shadow mb-4">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">Server Details</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6">
+                <p><strong>Host:</strong> {{ server.host }}</p>
+                <p><strong>Port:</strong> {{ server.port }}</p>
+            </div>
+            <div class="col-md-6">
+                <p><strong>Username:</strong> {{ server.username }}</p>
+                <p>
+                    <strong>SSH Key:</strong> 
+                    {% if server.ssh_key_path %}
+                    <span class="badge bg-info">Key File</span>
+                    {% elif server.ssh_key_content %}
+                    <span class="badge bg-success">Stored Key</span>
+                    {% else %}
+                    <span class="badge bg-warning">None</span>
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">Database List</h5>
+    </div>
+    <div class="card-body">
+        {% if databases %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Port</th>
+                        <th>Username</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for database in databases %}
+                    <tr>
+                        <td>{{ database.name }}</td>
+                        <td>{{ database.port }}</td>
+                        <td>{{ database.username }}</td>
+                        <td>
+                            <span class="status-indicator" data-database-id="{{ database.id }}">
+                                <span class="badge bg-secondary">Unknown</span>
+                            </span>
+                        </td>
+                        <td>
+                            <div class="btn-group" role="group">
+                                <button type="button" class="btn btn-sm btn-outline-info check-database" data-database-id="{{ database.id }}">
+                                    <i class="fas fa-sync-alt"></i> Check
+                                </button>
+                                <a href="{{ url_for('databases.edit', id=database.id) }}" class="btn btn-sm btn-outline-primary">
+                                    <i class="fas fa-edit"></i> Edit
+                                </a>
+                                <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteDatabaseModal{{ database.id }}">
+                                    <i class="fas fa-trash"></i> Delete
+                                </button>
+                            </div>
+                            
+                            <!-- Delete Modal -->
+                            <div class="modal fade" id="deleteDatabaseModal{{ database.id }}" tabindex="-1" aria-labelledby="deleteDatabaseModalLabel" aria-hidden="true">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title" id="deleteDatabaseModalLabel">Confirm Deletion</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            Are you sure you want to delete the database <strong>{{ database.name }}</strong>?
+                                            <div class="alert alert-warning mt-3">
+                                                <i class="fas fa-exclamation-triangle me-1"></i> This will also delete all backup jobs associated with this database.
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                            <form action="{{ url_for('databases.delete', id=database.id) }}" method="post">
+                                                <button type="submit" class="btn btn-danger">Delete</button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert alert-info">
+            No databases found on this server. Click the "Add Database" button to add your first PostgreSQL database.
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Setup check buttons
+        document.querySelectorAll('.check-database').forEach(function(button) {
+            button.addEventListener('click', function() {
+                const databaseId = this.getAttribute('data-database-id');
+                const statusIndicator = document.querySelector(`.status-indicator[data-database-id="${databaseId}"]`);
+                const originalContent = button.innerHTML;
+                
+                // Show loading state
+                button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
+                button.disabled = true;
+                statusIndicator.innerHTML = '<span class="badge bg-warning">Checking...</span>';
+                
+                // Send AJAX request
+                fetch(`{{ url_for('databases.check', id=0) }}`.replace('0', databaseId))
+                    .then(response => response.json())
+                    .then(data => {
+                        // Reset button
+                        button.innerHTML = originalContent;
+                        button.disabled = false;
+                        
+                        // Update status indicator
+                        if (data.success) {
+                            statusIndicator.innerHTML = `
+                                <span class="badge bg-success">
+                                    <i class="fas fa-check-circle me-1"></i> Online
+                                </span>
+                                <small class="d-block mt-1">PostgreSQL ${data.postgres_version}</small>
+                                ${data.pgbackrest_installed 
+                                    ? '<small class="d-block text-success"><i class="fas fa-shield-alt me-1"></i> pgBackRest installed</small>' 
+                                    : '<small class="d-block text-warning"><i class="fas fa-exclamation-triangle me-1"></i> pgBackRest not installed</small>'}
+                            `;
+                        } else {
+                            if (data.can_install) {
+                                statusIndicator.innerHTML = `
+                                    <span class="badge bg-warning">
+                                        <i class="fas fa-exclamation-triangle me-1"></i> PostgreSQL not installed
+                                    </span>
+                                `;
+                            } else {
+                                statusIndicator.innerHTML = `
+                                    <span class="badge bg-danger">
+                                        <i class="fas fa-times-circle me-1"></i> Error
+                                    </span>
+                                    <small class="d-block text-danger mt-1">${data.message}</small>
+                                `;
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        // Reset button
+                        button.innerHTML = originalContent;
+                        button.disabled = false;
+                        
+                        // Show error
+                        statusIndicator.innerHTML = `
+                            <span class="badge bg-danger">
+                                <i class="fas fa-times-circle me-1"></i> Error
+                            </span>
+                            <small class="d-block text-danger mt-1">${error.message}</small>
+                        `;
+                    });
+            });
+        });
+    });
+</script>
+{% endblock %} 

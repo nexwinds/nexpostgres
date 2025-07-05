@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block title %}Restore Log Details - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Restore Log Details</h1>
+    <div>
+        <a href="{{ url_for('backups.restore_logs') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left me-1"></i> Back to Restore Logs
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Basic Info -->
+    <div class="col-md-6">
+        <div class="card shadow mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">Restore Information</h5>
+            </div>
+            <div class="card-body">
+                <table class="table">
+                    <tr>
+                        <th style="width: 35%">Start Time</th>
+                        <td>{{ log.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                    </tr>
+                    <tr>
+                        <th>End Time</th>
+                        <td>
+                            {% if log.end_time %}
+                            {{ log.end_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                            {% else %}
+                            <span class="text-muted">Still running</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Duration</th>
+                        <td>
+                            {% if log.end_time %}
+                            {{ (log.end_time - log.start_time).total_seconds()|round|int }} seconds
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Status</th>
+                        <td>
+                            {% if log.status == 'success' %}
+                            <span class="badge bg-success">Success</span>
+                            {% elif log.status == 'failed' %}
+                            <span class="badge bg-danger">Failed</span>
+                            {% elif log.status == 'running' %}
+                            <span class="badge bg-info">Running</span>
+                            {% else %}
+                            <span class="badge bg-secondary">{{ log.status }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Database Info -->
+    <div class="col-md-6">
+        <div class="card shadow mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">Database Information</h5>
+            </div>
+            <div class="card-body">
+                <table class="table">
+                    <tr>
+                        <th style="width: 35%">Target Database</th>
+                        <td>
+                            <a href="{{ url_for('databases.edit', id=log.database_id) }}">
+                                {{ log.database.name }}
+                            </a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Server</th>
+                        <td>
+                            <a href="{{ url_for('servers.edit', id=log.database.vps_server_id) }}">
+                                {{ log.database.server.name }} ({{ log.database.server.host }})
+                            </a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Source Backup</th>
+                        <td>
+                            {% if log.backup_log %}
+                            <a href="{{ url_for('backups.view_log', id=log.backup_log_id) }}">
+                                {{ log.backup_log.job.name }} ({{ log.backup_log.start_time.strftime('%Y-%m-%d %H:%M') }})
+                            </a>
+                            {% else %}
+                            <span class="text-muted">Unknown</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Restore Options</th>
+                        <td>
+                            {% if log.recovery_target_time %}
+                            Point-in-time recovery to: {{ log.recovery_target_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                            {% else %}
+                            Full backup restore
+                            {% endif %}
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Output Log -->
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">Command Output</h5>
+    </div>
+    <div class="card-body">
+        {% if log.output %}
+        <pre class="bg-dark text-light p-3 rounded" style="max-height: 500px; overflow-y: auto;"><code>{{ log.output }}</code></pre>
+        {% else %}
+        <div class="alert alert-info">
+            No command output available.
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if log.error_message %}
+<!-- Error Details -->
+<div class="card shadow mt-4">
+    <div class="card-header bg-danger text-white">
+        <h5 class="mb-0">Error Details</h5>
+    </div>
+    <div class="card-body">
+        <pre class="bg-dark text-light p-3 rounded"><code>{{ log.error_message }}</code></pre>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %} 

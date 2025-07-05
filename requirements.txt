@@ -1,0 +1,21 @@
+# Flask and extensions
+Flask==2.3.3
+Flask-SQLAlchemy==2.5.1
+Flask-Session==0.5.0
+Flask-APScheduler==1.13.0
+
+# Database
+SQLAlchemy==1.4.41
+
+# SSH and PostgreSQL management
+paramiko==3.3.1
+
+# Web server
+gunicorn==21.2.0
+
+# Security
+Werkzeug==2.3.7
+bcrypt==4.0.1
+
+# Utilities
+python-dateutil==2.8.2 

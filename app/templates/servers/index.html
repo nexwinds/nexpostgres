@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}VPS Servers - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>VPS Servers</h1>
+    <a href="{{ url_for('servers.add') }}" class="btn btn-primary">
+        <i class="fas fa-plus me-1"></i> Add Server
+    </a>
+</div>
+
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">Server List</h5>
+    </div>
+    <div class="card-body">
+        {% if servers %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Host</th>
+                        <th>Port</th>
+                        <th>Username</th>
+                        <th>SSH Key Type</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for server in servers %}
+                    <tr>
+                        <td>{{ server.name }}</td>
+                        <td>{{ server.host }}</td>
+                        <td>{{ server.port }}</td>
+                        <td>{{ server.username }}</td>
+                        <td>
+                            {% if server.ssh_key_path %}
+                            <span class="badge bg-info">Key File</span>
+                            {% elif server.ssh_key_content %}
+                            <span class="badge bg-success">Stored Key</span>
+                            {% else %}
+                            <span class="badge bg-warning">None</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="btn-group" role="group">
+                                <a href="{{ url_for('servers.edit', id=server.id) }}" class="btn btn-sm btn-outline-primary">
+                                    <i class="fas fa-edit"></i> Edit
+                                </a>
+                                <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteServerModal{{ server.id }}">
+                                    <i class="fas fa-trash"></i> Delete
+                                </button>
+                            </div>
+                            
+                            <!-- Delete Modal -->
+                            <div class="modal fade" id="deleteServerModal{{ server.id }}" tabindex="-1" aria-labelledby="deleteServerModalLabel" aria-hidden="true">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title" id="deleteServerModalLabel">Confirm Deletion</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            Are you sure you want to delete the server <strong>{{ server.name }}</strong>?
+                                            <div class="alert alert-warning mt-3">
+                                                <i class="fas fa-exclamation-triangle me-1"></i> This will also delete all databases and backup jobs associated with this server.
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                            <form action="{{ url_for('servers.delete', id=server.id) }}" method="post">
+                                                <button type="submit" class="btn btn-danger">Delete</button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert alert-info">
+            No servers found. Click the "Add Server" button to add your first VPS server.
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %} 

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block title %}Add Backup Job - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Add Backup Job</h1>
+    <a href="{{ url_for('backups.index') }}" class="btn btn-secondary">
+        <i class="fas fa-arrow-left me-1"></i> Back to Backup Jobs
+    </a>
+</div>
+
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">Job Details</h5>
+    </div>
+    <div class="card-body">
+        <form method="post" id="backupForm">
+            <!-- Basic Information -->
+            <h4 class="border-bottom pb-2 mb-3">Basic Information</h4>
+            <div class="mb-3">
+                <label for="name" class="form-label">Job Name</label>
+                <input type="text" class="form-control" id="name" name="name" required>
+                <div class="form-text">A descriptive name for this backup job</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="database_id" class="form-label">Database</label>
+                <select class="form-select" id="database_id" name="database_id" required>
+                    <option value="" selected disabled>Select a database</option>
+                    {% for database in databases %}
+                    <option value="{{ database.id }}">{{ database.name }} on {{ database.server.name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="form-text">The database to backup</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="backup_type" class="form-label">Backup Type</label>
+                <select class="form-select" id="backup_type" name="backup_type" required>
+                    <option value="full">Full Backup</option>
+                    <option value="incr">Incremental Backup</option>
+                </select>
+                <div class="form-text">Full backups contain all data. Incremental backups only contain changes since the last backup.</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="cron_expression" class="form-label">Schedule (Cron Expression)</label>
+                <input type="text" class="form-control" id="cron_expression" name="cron_expression" placeholder="0 0 * * *" required>
+                <div class="form-text">
+                    When to run the backup job (cron format: min hour day month weekday)<br>
+                    Examples:
+                    <code>0 0 * * *</code> - Every day at midnight,
+                    <code>0 0 * * 0</code> - Every Sunday at midnight,
+                    <code>0 0 1 * *</code> - First day of every month
+                </div>
+            </div>
+            
+            <!-- S3 Storage Settings -->
+            <h4 class="border-bottom pb-2 mb-3 mt-5">S3 Storage Settings</h4>
+            
+            <div class="mb-3">
+                <label for="s3_storage_id" class="form-label">S3 Storage Configuration</label>
+                <select class="form-select" id="s3_storage_id" name="s3_storage_id" required>
+                    <option value="" selected disabled>Select an S3 storage configuration</option>
+                    {% for storage in s3_storages %}
+                    <option value="{{ storage.id }}">{{ storage.name }} ({{ storage.bucket }} in {{ storage.region }})</option>
+                    {% endfor %}
+                </select>
+                <div class="form-text">
+                    Select an S3 storage configuration for this backup job. 
+                    <a href="{{ url_for('s3_storage.add') }}" target="_blank">Create a new S3 storage configuration</a> if needed.
+                </div>
+            </div>
+            
+            <div class="d-flex justify-content-end">
+                <a href="{{ url_for('backups.index') }}" class="btn btn-secondary me-2">Cancel</a>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-save me-1"></i> Create Backup Job
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %} 

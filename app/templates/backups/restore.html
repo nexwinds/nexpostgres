@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+
+{% block title %}Restore Database - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Restore Database</h1>
+    <div>
+        <a href="{{ url_for('backups.index') }}" class="btn btn-secondary me-2">
+            <i class="fas fa-arrow-left me-1"></i> Back to Backup Jobs
+        </a>
+        <a href="{{ url_for('backups.restore_logs') }}" class="btn btn-info">
+            <i class="fas fa-history me-1"></i> Restore Logs
+        </a>
+    </div>
+</div>
+
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">Restore Options</h5>
+    </div>
+    <div class="card-body">
+        <form method="post" id="restoreForm">
+            <!-- Source Backup -->
+            <h4 class="border-bottom pb-2 mb-3">Source Backup</h4>
+            
+            <div class="mb-3">
+                <label for="backup_job_id" class="form-label">Backup Job</label>
+                <select class="form-select" id="backup_job_id" name="backup_job_id" required>
+                    <option value="" selected disabled>Select a backup job</option>
+                    {% for job in backup_jobs %}
+                    <option value="{{ job.id }}" {% if source_job_id == job.id %}selected{% endif %}>
+                        {{ job.name }} ({{ job.database.name }} on {{ job.server.name }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="mb-3" id="backupLogSelection">
+                <label for="backup_log_id" class="form-label">Backup to Restore</label>
+                <select class="form-select" id="backup_log_id" name="backup_log_id">
+                    <option value="" selected disabled>Select backup job first</option>
+                    {% if source_logs %}
+                    {% for log in source_logs %}
+                    <option value="{{ log.id }}" {% if source_log_id == log.id %}selected{% endif %}>
+                        {{ log.start_time.strftime('%Y-%m-%d %H:%M') }} - 
+                        {% if log.backup_type == 'full' %}Full{% else %}Incremental{% endif %} - 
+                        {% if log.size_mb %}{{ log.size_mb }} MB{% else %}Size unknown{% endif %}
+                    </option>
+                    {% endfor %}
+                    {% endif %}
+                </select>
+                <div class="form-text">Only successful backups are shown</div>
+            </div>
+            
+            <!-- Target Options -->
+            <h4 class="border-bottom pb-2 mb-3 mt-5">Target Options</h4>
+            
+            <div class="mb-3">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="restore_to_same" name="restore_to_same" value="true" checked>
+                    <label class="form-check-label" for="restore_to_same">Restore to same database</label>
+                </div>
+                <div class="form-text">When checked, the backup will be restored to the source database. When unchecked, you can select a different target database.</div>
+            </div>
+            
+            <div class="mb-3" id="targetDatabaseDiv" style="display: none;">
+                <label for="target_database_id" class="form-label">Target Database</label>
+                <select class="form-select" id="target_database_id" name="target_database_id">
+                    <option value="" selected disabled>Select a target database</option>
+                    {% for db in databases %}
+                    <option value="{{ db.id }}">{{ db.name }} on {{ db.server.name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="form-text">The database to restore to</div>
+            </div>
+            
+            <div class="mb-3">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="recovery_target_time" name="use_recovery_time" value="true">
+                    <label class="form-check-label" for="recovery_target_time">Restore to a specific point in time</label>
+                </div>
+                <div class="form-text">When checked, you can specify a point in time to restore to (for point-in-time recovery)</div>
+            </div>
+            
+            <div class="mb-3" id="recoveryTimeDiv" style="display: none;">
+                <label for="recovery_time" class="form-label">Recovery Target Time</label>
+                <input type="datetime-local" class="form-control" id="recovery_time" name="recovery_time">
+                <div class="form-text">The point in time to restore to (leave empty for latest)</div>
+            </div>
+            
+            <!-- Advanced Options -->
+            <h4 class="border-bottom pb-2 mb-3 mt-5">Advanced Options</h4>
+            
+            <div class="mb-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="stop_before_restore" name="stop_before_restore" value="true" checked>
+                    <label class="form-check-label" for="stop_before_restore">Stop target database before restore</label>
+                </div>
+                <div class="form-text">When checked, the target PostgreSQL server will be stopped before restoration</div>
+            </div>
+            
+            <div class="mb-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="create_restore_point" name="create_restore_point" value="true" checked>
+                    <label class="form-check-label" for="create_restore_point">Create restore point</label>
+                </div>
+                <div class="form-text">When checked, a restore point will be created before restoring</div>
+            </div>
+            
+            <!-- Confirmation -->
+            <div class="alert alert-warning mt-4">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <strong>Warning:</strong> Restoring a database will overwrite all existing data in the target database. This action cannot be undone.
+            </div>
+            
+            <div class="d-flex justify-content-end">
+                <a href="{{ url_for('backups.index') }}" class="btn btn-secondary me-2">Cancel</a>
+                <button type="submit" class="btn btn-danger">
+                    <i class="fas fa-undo me-1"></i> Start Restore
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const backupJobSelect = document.getElementById('backup_job_id');
+        const restoreToSameCheckbox = document.getElementById('restore_to_same');
+        const targetDatabaseDiv = document.getElementById('targetDatabaseDiv');
+        const recoveryTargetTimeCheckbox = document.getElementById('recovery_target_time');
+        const recoveryTimeDiv = document.getElementById('recoveryTimeDiv');
+        const backupLogSelection = document.getElementById('backupLogSelection');
+        
+        // Handle backup job selection change
+        backupJobSelect.addEventListener('change', function() {
+            const jobId = this.value;
+            if (!jobId) return;
+            
+            // Show loading indicator
+            backupLogSelection.innerHTML = '<div class="spinner-border spinner-border-sm text-primary" role="status"><span class="visually-hidden">Loading...</span></div> Loading backup logs...';
+            
+            // Fetch backup logs for selected job
+            fetch(`/backups/api/logs?job_id=${jobId}`)
+                .then(response => response.json())
+                .then(data => {
+                    let options = '<option value="" selected disabled>Select a backup to restore</option>';
+                    
+                    if (data.logs && data.logs.length > 0) {
+                        data.logs.forEach(log => {
+                            options += `<option value="${log.id}">${log.start_time} - ${log.backup_type} - ${log.size_mb ? log.size_mb + ' MB' : 'Size unknown'}</option>`;
+                        });
+                    } else {
+                        options = '<option value="" selected disabled>No successful backups available</option>';
+                    }
+                    
+                    // Update backup log select options
+                    const selectHtml = `
+                        <label for="backup_log_id" class="form-label">Backup to Restore</label>
+                        <select class="form-select" id="backup_log_id" name="backup_log_id" required>${options}</select>
+                        <div class="form-text">Only successful backups are shown</div>
+                    `;
+                    
+                    backupLogSelection.innerHTML = selectHtml;
+                })
+                .catch(error => {
+                    console.error('Error fetching backup logs:', error);
+                    backupLogSelection.innerHTML = `
+                        <label for="backup_log_id" class="form-label">Backup to Restore</label>
+                        <select class="form-select" id="backup_log_id" name="backup_log_id" disabled>
+                            <option value="" selected disabled>Error loading backups</option>
+                        </select>
+                        <div class="form-text text-danger">Failed to load backup logs: ${error.message}</div>
+                    `;
+                });
+        });
+        
+        // Handle restore to same checkbox
+        restoreToSameCheckbox.addEventListener('change', function() {
+            if (this.checked) {
+                targetDatabaseDiv.style.display = 'none';
+                document.getElementById('target_database_id').required = false;
+            } else {
+                targetDatabaseDiv.style.display = 'block';
+                document.getElementById('target_database_id').required = true;
+            }
+        });
+        
+        // Handle recovery target time checkbox
+        recoveryTargetTimeCheckbox.addEventListener('change', function() {
+            if (this.checked) {
+                recoveryTimeDiv.style.display = 'block';
+            } else {
+                recoveryTimeDiv.style.display = 'none';
+            }
+        });
+        
+        // Initialize form state
+        if (!restoreToSameCheckbox.checked) {
+            targetDatabaseDiv.style.display = 'block';
+        }
+        
+        if (recoveryTargetTimeCheckbox.checked) {
+            recoveryTimeDiv.style.display = 'block';
+        }
+    });
+</script>
+{% endblock %} 

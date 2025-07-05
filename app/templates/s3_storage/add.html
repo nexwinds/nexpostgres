@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block title %}Add S3 Storage - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Add S3 Storage Configuration</h1>
+    <a href="{{ url_for('s3_storage.index') }}" class="btn btn-secondary">
+        <i class="fas fa-arrow-left me-1"></i> Back to S3 Storage
+    </a>
+</div>
+
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">S3 Storage Details</h5>
+    </div>
+    <div class="card-body">
+        <form method="post" id="s3Form">
+            <div class="mb-3">
+                <label for="name" class="form-label">Configuration Name</label>
+                <input type="text" class="form-control" id="name" name="name" required>
+                <div class="form-text">A descriptive name for this S3 storage configuration</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="bucket" class="form-label">S3 Bucket Name</label>
+                <input type="text" class="form-control" id="bucket" name="bucket" required>
+                <div class="form-text">The name of the S3 bucket to store backups (e.g. my-database-backups)</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="region" class="form-label">S3 Region</label>
+                <input type="text" class="form-control" id="region" name="region" placeholder="us-east-1" required>
+                <div class="form-text">The AWS region of your S3 bucket (e.g. us-east-1)</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="access_key" class="form-label">S3 Access Key</label>
+                <input type="text" class="form-control" id="access_key" name="access_key" required>
+                <div class="form-text">Your AWS access key with permission to access the S3 bucket</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="secret_key" class="form-label">S3 Secret Key</label>
+                <input type="password" class="form-control" id="secret_key" name="secret_key" required>
+                <div class="form-text">Your AWS secret key with permission to access the S3 bucket</div>
+            </div>
+            
+            <div class="mb-3">
+                <button type="button" id="testS3Connection" class="btn btn-outline-info">
+                    <i class="fas fa-cloud me-1"></i> Test S3 Connection
+                </button>
+                <span id="s3ConnectionResult" class="ms-3"></span>
+            </div>
+            
+            <div class="d-flex justify-content-end">
+                <a href="{{ url_for('s3_storage.index') }}" class="btn btn-secondary me-2">Cancel</a>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-save me-1"></i> Save S3 Configuration
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Test S3 connection button
+        const testS3ConnectionBtn = document.getElementById('testS3Connection');
+        const s3ConnectionResult = document.getElementById('s3ConnectionResult');
+        
+        testS3ConnectionBtn.addEventListener('click', function() {
+            const bucket = document.getElementById('bucket').value;
+            const region = document.getElementById('region').value;
+            const accessKey = document.getElementById('access_key').value;
+            const secretKey = document.getElementById('secret_key').value;
+            
+            if (!bucket || !region || !accessKey || !secretKey) {
+                s3ConnectionResult.innerHTML = '<span class="text-danger">Please fill in all S3 fields first</span>';
+                return;
+            }
+            
+            // Show loading indicator
+            testS3ConnectionBtn.disabled = true;
+            testS3ConnectionBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Testing...';
+            
+            // Create form data
+            const formData = new FormData();
+            formData.append('bucket', bucket);
+            formData.append('region', region);
+            formData.append('access_key', accessKey);
+            formData.append('secret_key', secretKey);
+            
+            // Send AJAX request
+            fetch('{{ url_for("s3_storage.test_connection") }}', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Reset button
+                testS3ConnectionBtn.disabled = false;
+                testS3ConnectionBtn.innerHTML = '<i class="fas fa-cloud me-1"></i> Test S3 Connection';
+                
+                // Show result
+                if (data.success) {
+                    s3ConnectionResult.innerHTML = '<span class="text-success"><i class="fas fa-check-circle me-1"></i> Connection successful</span>';
+                } else {
+                    s3ConnectionResult.innerHTML = `<span class="text-danger"><i class="fas fa-times-circle me-1"></i> ${data.message}</span>`;
+                }
+            })
+            .catch(error => {
+                // Reset button
+                testS3ConnectionBtn.disabled = false;
+                testS3ConnectionBtn.innerHTML = '<i class="fas fa-cloud me-1"></i> Test S3 Connection';
+                
+                // Show error
+                s3ConnectionResult.innerHTML = `<span class="text-danger"><i class="fas fa-times-circle me-1"></i> Error: ${error.message}</span>`;
+            });
+        });
+    });
+</script>
+{% endblock %} 

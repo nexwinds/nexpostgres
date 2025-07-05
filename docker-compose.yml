@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  nexpostgres:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nexpostgres
+    restart: unless-stopped
+    environment:
+      - SECRET_KEY=change-this-in-production
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./app/ssh_keys:/app/app/ssh_keys
+      - ./app/flask_session:/app/app/flask_session
+    ports:
+      - "5000:5000"
+
+volumes:
+  data:
+    driver: local 
