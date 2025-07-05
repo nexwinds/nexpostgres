@@ -4,7 +4,7 @@ from app.utils.ssh_manager import SSHManager
 from app.utils.postgres_manager import PostgresManager
 from app.utils.scheduler import schedule_backup_job, execute_manual_backup
 from app.routes.auth import login_required, first_login_required
-from datetime import datetime
+from datetime import datetime, timedelta
 
 backups_bp = Blueprint('backups', __name__, url_prefix='/backups')
 
@@ -242,20 +242,212 @@ def setup(id):
         flash(f'Error setting up backup: {str(e)}', 'danger')
         return redirect(url_for('backups.index'))
 
+@backups_bp.route('/verify-config/<int:id>', methods=['GET', 'POST'])
+@login_required
+@first_login_required
+def verify_config(id):
+    backup_job = BackupJob.query.get_or_404(id)
+    database = backup_job.database
+    server = backup_job.server
+    
+    try:
+        # Connect to server via SSH
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_path=server.ssh_key_path,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            flash('Failed to connect to server via SSH', 'danger')
+            return redirect(url_for('backups.index'))
+        
+        # Initialize PostgreSQL manager
+        pg_manager = PostgresManager(ssh)
+        
+        # Verify and fix PostgreSQL configuration
+        success, message = pg_manager.verify_and_fix_postgres_config(database.name)
+        
+        # Disconnect from server
+        ssh.disconnect()
+        
+        if success:
+            flash(f'PostgreSQL configuration verified: {message}', 'success')
+        else:
+            flash(f'Failed to verify PostgreSQL configuration: {message}', 'danger')
+        
+        return redirect(url_for('backups.logs', job_id=backup_job.id))
+        
+    except Exception as e:
+        flash(f'Error verifying configuration: {str(e)}', 'danger')
+        return redirect(url_for('backups.index'))
+
+@backups_bp.route('/check-pg-version/<int:id>', methods=['GET'])
+@login_required
+@first_login_required
+def check_pg_version(id):
+    """Debug route to check PostgreSQL version detection"""
+    backup_job = BackupJob.query.get_or_404(id)
+    database = backup_job.database
+    server = backup_job.server
+    
+    debug_info = []
+    
+    try:
+        # Connect to server via SSH
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_path=server.ssh_key_path,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            debug_info.append("Failed to connect to server via SSH")
+            return jsonify({'success': False, 'debug_info': debug_info})
+        
+        debug_info.append("Connected to server via SSH")
+        
+        # Initialize PostgreSQL manager
+        pg_manager = PostgresManager(ssh)
+        
+        # Try to get PostgreSQL version
+        version = pg_manager.get_postgres_version()
+        if version:
+            debug_info.append(f"PostgreSQL version detected: {version}")
+        else:
+            debug_info.append("Could not detect PostgreSQL version")
+        
+        # Run some diagnostic commands
+        debug_commands = [
+            "which psql",
+            "sudo -u postgres psql --version",
+            "ls -la /var/lib/postgresql/",
+            "ls -la /etc/postgresql/",
+            "find /etc -name 'postgresql.conf'",
+            "ps aux | grep postgres",
+            "sudo systemctl status postgresql* || true"
+        ]
+        
+        for cmd in debug_commands:
+            result = ssh.execute_command(cmd)
+            stdout = result['stdout'].strip() if 'stdout' in result else ''
+            stderr = result['stderr'].strip() if 'stderr' in result else ''
+            exit_code = result['exit_code'] if 'exit_code' in result else -1
+            
+            debug_info.append(f"Command: {cmd}")
+            debug_info.append(f"Exit code: {exit_code}")
+            
+            if stdout:
+                debug_info.append("Output:")
+                # Limit output to 10 lines
+                stdout_lines = stdout.split("\n")[:10]
+                for line in stdout_lines:
+                    debug_info.append(f"> {line}")
+                if len(stdout.split("\n")) > 10:
+                    debug_info.append("> ... (output truncated)")
+            
+            if stderr:
+                debug_info.append("Error:")
+                stderr_lines = stderr.split("\n")[:5]
+                for line in stderr_lines:
+                    debug_info.append(f"> {line}")
+        
+        # Disconnect from server
+        ssh.disconnect()
+        
+        return jsonify({'success': True, 'debug_info': debug_info})
+        
+    except Exception as e:
+        debug_info.append(f"Error: {str(e)}")
+        return jsonify({'success': False, 'debug_info': debug_info})
+
+@backups_bp.route('/fix-backup/<int:id>', methods=['GET', 'POST'])
+@login_required
+@first_login_required
+def fix_backup(id):
+    """Route to fix backup configuration issues, especially for incremental backups"""
+    backup_job = BackupJob.query.get_or_404(id)
+    database = backup_job.database
+    server = backup_job.server
+    
+    try:
+        # Connect to server via SSH
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_path=server.ssh_key_path,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            flash('Failed to connect to server via SSH', 'danger')
+            return redirect(url_for('backups.logs', job_id=backup_job.id))
+        
+        # Initialize PostgreSQL manager
+        pg_manager = PostgresManager(ssh)
+        
+        # First ensure archive_command is correctly set
+        success, message = pg_manager.verify_and_fix_postgres_config(database.name)
+        
+        if not success:
+            flash(f'Failed to verify PostgreSQL configuration: {message}', 'danger')
+            ssh.disconnect()
+            return redirect(url_for('backups.logs', job_id=backup_job.id))
+        
+        # Now fix incremental backup configuration
+        success, message = pg_manager.fix_incremental_backup_config(database.name)
+        
+        # Disconnect from server
+        ssh.disconnect()
+        
+        if success:
+            flash(f'Backup configuration fixed: {message}', 'success')
+        else:
+            flash(f'Failed to fix backup configuration: {message}', 'danger')
+        
+        return redirect(url_for('backups.logs', job_id=backup_job.id))
+        
+    except Exception as e:
+        flash(f'Error fixing backup configuration: {str(e)}', 'danger')
+        return redirect(url_for('backups.logs', job_id=backup_job.id))
+
 @backups_bp.route('/logs')
 @login_required
 @first_login_required
 def logs():
     job_id = request.args.get('job_id', type=int)
+    status = request.args.get('status')
+    days = request.args.get('days', '7')
+    
+    # Build query based on filters
+    query = BackupLog.query
     
     if job_id:
         backup_job = BackupJob.query.get_or_404(job_id)
-        logs = BackupLog.query.filter_by(backup_job_id=job_id).order_by(BackupLog.start_time.desc()).all()
+        query = query.filter_by(backup_job_id=job_id)
+    
+    if status:
+        query = query.filter_by(status=status)
+    
+    # Filter by time range if not "all"
+    if days != 'all':
+        days_ago = datetime.utcnow() - timedelta(days=int(days))
+        query = query.filter(BackupLog.start_time >= days_ago)
+    
+    # Sort by start time (newest first)
+    logs = query.order_by(BackupLog.start_time.desc()).all()
+    
+    if job_id:
         return render_template('backups/job_logs.html', backup_job=backup_job, logs=logs)
     
     # Show all logs
-    logs = BackupLog.query.order_by(BackupLog.start_time.desc()).all()
-    return render_template('backups/logs.html', logs=logs)
+    jobs = BackupJob.query.all()
+    return render_template('backups/logs.html', logs=logs, jobs=jobs)
 
 @backups_bp.route('/logs/view/<int:id>')
 @login_required
