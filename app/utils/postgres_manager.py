@@ -1,6 +1,7 @@
 import logging
 import re
 from app.utils.ssh_manager import SSHManager
+import time
 
 class PostgresManager:
     def __init__(self, ssh_manager):
@@ -736,3 +737,55 @@ pg1-path={data_dir}" | sudo tee -a /etc/pgbackrest/pgbackrest.conf""")
             success = False
             
         return success, old_version, new_version
+    
+    def initialize_server(self):
+        """Initialize a new server: update system, install PostgreSQL and pgBackRest, wait, and restart"""
+        self.logger.info("Initializing server with PostgreSQL and pgBackRest")
+        
+        try:
+            # Update server packages
+            self.logger.info("Updating server packages")
+            self.ssh.execute_command("sudo apt-get update")
+            update_result = self.ssh.execute_command("sudo apt-get upgrade -y")
+            
+            # Install PostgreSQL - continue even if update failed
+            self.logger.info("Installing PostgreSQL")
+            postgres_installed = self.install_postgres()
+            if not postgres_installed:
+                self.logger.error("Failed to install PostgreSQL")
+                return False, "Failed to install PostgreSQL"
+            
+            # Get PostgreSQL version for confirmation
+            pg_version = self.get_postgres_version()
+            if not pg_version:
+                self.logger.error("PostgreSQL installation verification failed")
+                return False, "PostgreSQL installation verification failed"
+            
+            self.logger.info(f"PostgreSQL {pg_version} installed successfully")
+            
+            # Install pgBackRest
+            self.logger.info("Installing pgBackRest")
+            pgbackrest_installed = self.install_pgbackrest()
+            if not pgbackrest_installed:
+                self.logger.warning("Failed to install pgBackRest, but PostgreSQL is working")
+                return True, f"Server initialized with PostgreSQL {pg_version}, but pgBackRest installation failed"
+            
+            self.logger.info("pgBackRest installed successfully")
+            
+            # Wait 10 seconds
+            self.logger.info("Waiting 10 seconds before restarting services")
+            time.sleep(10)
+            
+            # Restart PostgreSQL
+            self.logger.info("Restarting PostgreSQL")
+            restart_success = self._restart_postgres()
+            if not restart_success:
+                self.logger.warning("Failed to restart PostgreSQL, but installation was successful")
+                return True, f"Server initialized with PostgreSQL {pg_version} and pgBackRest, but restart failed"
+            
+            self.logger.info("PostgreSQL restarted successfully")
+            return True, f"Server initialized successfully with PostgreSQL {pg_version} and pgBackRest"
+            
+        except Exception as e:
+            self.logger.error(f"Error initializing server: {str(e)}")
+            return False, f"Error initializing server: {str(e)}"

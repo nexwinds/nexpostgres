@@ -26,19 +26,23 @@ class User(db.Model):
 class VpsServer(BaseModel):
     name = db.Column(db.String(80), nullable=False)
     host = db.Column(db.String(120), nullable=False)
-    port = db.Column(db.Integer, default=22)
-    username = db.Column(db.String(80), nullable=False)
-    ssh_key_path = db.Column(db.String(255))
+    port = db.Column(db.Integer, default=22)  # SSH port
+    postgres_port = db.Column(db.Integer, default=5432)  # PostgreSQL port
+    username = db.Column(db.String(80))
+    ssh_key_path = db.Column(db.String(256))
     ssh_key_content = db.Column(db.Text)
+    initialized = db.Column(db.Boolean, default=False)
     
     # Relationships
     databases = db.relationship('PostgresDatabase', backref='server', lazy=True, cascade="all, delete-orphan")
     backup_jobs = db.relationship('BackupJob', backref='server', lazy=True, cascade="all, delete-orphan")
+    
+    def __repr__(self):
+        return f'<VpsServer {self.name}>'
 
 class PostgresDatabase(BaseModel):
     name = db.Column(db.String(80), nullable=False)
     vps_server_id = db.Column(db.Integer, db.ForeignKey('vps_server.id', ondelete='CASCADE'), nullable=False)
-    port = db.Column(db.Integer, default=5432)
     username = db.Column(db.String(80), default='postgres')
     password = db.Column(db.String(128))
     size = db.Column(db.String(20))

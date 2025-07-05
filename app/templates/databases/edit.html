@@ -21,7 +21,7 @@
                 <select class="form-select" id="server_id" name="server_id" required>
                     {% for server in servers %}
                     <option value="{{ server.id }}" {% if server.id == database.vps_server_id %}selected{% endif %}>
-                        {{ server.name }} ({{ server.host }})
+                        {{ server.name }} ({{ server.host }}:{{ server.postgres_port }})
                     </option>
                     {% endfor %}
                 </select>
@@ -32,12 +32,6 @@
                 <label for="name" class="form-label">Database Name</label>
                 <input type="text" class="form-control" id="name" name="name" value="{{ database.name }}" required>
                 <div class="form-text">The name of the PostgreSQL database to backup</div>
-            </div>
-            
-            <div class="mb-3">
-                <label for="port" class="form-label">PostgreSQL Port</label>
-                <input type="number" class="form-control" id="port" name="port" value="{{ database.port }}" required>
-                <div class="form-text">The port where PostgreSQL is running (default: 5432)</div>
             </div>
             
             <div class="mb-3">

@@ -5,7 +5,10 @@ NEXPOSTGRES is a centralized control panel for managing PostgreSQL databases run
 ## Features
 
 - **Authentication**: Simple admin user login system with enforced password change on first login
-- **VPS Server Management**: Add, edit, and delete remote Ubuntu VPS servers with SSH access
+- **VPS Server Management**: 
+  - Add, edit, and delete remote Ubuntu VPS servers with SSH access
+  - Automatic server initialization with PostgreSQL and pgBackRest installation
+  - PostgreSQL port configuration at the server level for all databases
 - **Database Management**: Track PostgreSQL databases across your VPS servers
 - **Automated Backup Management**: 
   - Configure and schedule full and incremental backups
@@ -56,6 +59,9 @@ NEXPOSTGRES is a centralized control panel for managing PostgreSQL databases run
 2. Enter server details including hostname, SSH port, username
 3. Provide SSH key information (file path or key content)
 4. Test the connection before saving
+5. The server will automatically be initialized with PostgreSQL and pgBackRest upon creation
+   - This process includes: updating system packages, installing PostgreSQL and pgBackRest, and restarting services
+   - If automatic initialization fails, you can retry it from the server list page
 
 ### Adding a PostgreSQL Database
 

@@ -162,7 +162,6 @@ def sync_all_servers():
                 # Create database record
                 database = PostgresDatabase(
                     name=db_info['name'],
-                    port=5432,  # Default PostgreSQL port
                     username=db_info['owner'],
                     password='',  # Empty password, user will need to update
                     vps_server_id=server.id
@@ -197,7 +196,6 @@ def add():
     
     if request.method == 'POST':
         name = request.form.get('name')
-        port = request.form.get('port', 5432, type=int)
         username = request.form.get('username')
         password = request.form.get('password')
         server_id = request.form.get('server_id', type=int)
@@ -217,7 +215,6 @@ def add():
         # Create database record
         database = PostgresDatabase(
             name=name,
-            port=port,
             username=username,
             password=password,
             vps_server_id=server_id
@@ -240,7 +237,6 @@ def edit(id):
     
     if request.method == 'POST':
         name = request.form.get('name')
-        port = request.form.get('port', 5432, type=int)
         username = request.form.get('username')
         password = request.form.get('password')
         server_id = request.form.get('server_id', type=int)
@@ -260,7 +256,6 @@ def edit(id):
         
         # Update database record
         database.name = name
-        database.port = port
         database.username = username
         
         # Only update password if provided

@@ -21,7 +21,7 @@
                 <select class="form-select" id="server_id" name="server_id" required>
                     <option value="" selected disabled>Select a server</option>
                     {% for server in servers %}
-                    <option value="{{ server.id }}">{{ server.name }} ({{ server.host }})</option>
+                    <option value="{{ server.id }}">{{ server.name }} ({{ server.host }}:{{ server.postgres_port }})</option>
                     {% endfor %}
                 </select>
                 <div class="form-text">The server where the PostgreSQL database is located</div>
@@ -31,12 +31,6 @@
                 <label for="name" class="form-label">Database Name</label>
                 <input type="text" class="form-control" id="name" name="name" required>
                 <div class="form-text">The name of the PostgreSQL database to backup</div>
-            </div>
-            
-            <div class="mb-3">
-                <label for="port" class="form-label">PostgreSQL Port</label>
-                <input type="number" class="form-control" id="port" name="port" value="5432" required>
-                <div class="form-text">The port where PostgreSQL is running (default: 5432)</div>
             </div>
             
             <div class="mb-3">

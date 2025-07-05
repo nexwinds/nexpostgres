@@ -22,9 +22,11 @@
                     <tr>
                         <th>Name</th>
                         <th>Host</th>
-                        <th>Port</th>
+                        <th>SSH Port</th>
+                        <th>PG Port</th>
                         <th>Username</th>
                         <th>SSH Key Type</th>
+                        <th>Status</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -34,6 +36,7 @@
                         <td>{{ server.name }}</td>
                         <td>{{ server.host }}</td>
                         <td>{{ server.port }}</td>
+                        <td>{{ server.postgres_port }}</td>
                         <td>{{ server.username }}</td>
                         <td>
                             {% if server.ssh_key_path %}
@@ -43,6 +46,23 @@
                             {% else %}
                             <span class="badge bg-warning">None</span>
                             {% endif %}
+                        </td>
+                        <td>
+                            <div class="status-indicator" data-server-id="{{ server.id }}">
+                                {% if server.initialized %}
+                                <span class="badge bg-success">
+                                    <i class="fas fa-check-circle me-1"></i> Initialized
+                                </span>
+                                {% else %}
+                                <span class="badge bg-warning">
+                                    <i class="fas fa-exclamation-triangle me-1"></i> Not Initialized
+                                </span>
+                                <button class="btn btn-sm btn-outline-primary mt-1 initialize-server" 
+                                        data-server-id="{{ server.id }}">
+                                    Initialize
+                                </button>
+                                {% endif %}
+                            </div>
                         </td>
                         <td>
                             <div class="btn-group" role="group">
@@ -90,4 +110,128 @@
         {% endif %}
     </div>
 </div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Initialize server buttons
+        const initializeButtons = document.querySelectorAll('.initialize-server');
+        
+        initializeButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const serverId = this.getAttribute('data-server-id');
+                const statusIndicator = document.querySelector(`.status-indicator[data-server-id="${serverId}"]`);
+                const originalContent = this.innerHTML;
+                
+                // Show loading state
+                this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Initializing...';
+                this.disabled = true;
+                
+                // Send AJAX request
+                fetch(`{{ url_for('servers.initialize_server', id=0) }}`.replace('0', serverId), {
+                    method: 'POST'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        statusIndicator.innerHTML = `
+                            <span class="badge bg-success">
+                                <i class="fas fa-check-circle me-1"></i> Initialized
+                            </span>
+                        `;
+                    } else {
+                        // Show error
+                        statusIndicator.innerHTML = `
+                            <span class="badge bg-danger">
+                                <i class="fas fa-times-circle me-1"></i> Initialization Failed
+                            </span>
+                            <small class="d-block text-danger mt-1">${data.message}</small>
+                            <button class="btn btn-sm btn-outline-primary mt-1 initialize-server" data-server-id="${serverId}">
+                                Retry Initialization
+                            </button>
+                        `;
+                        
+                        // Setup retry button
+                        statusIndicator.querySelector('.initialize-server').addEventListener('click', function() {
+                            initializeServer(serverId, this);
+                        });
+                    }
+                })
+                .catch(error => {
+                    // Show error
+                    statusIndicator.innerHTML = `
+                        <span class="badge bg-danger">
+                            <i class="fas fa-times-circle me-1"></i> Initialization Failed
+                        </span>
+                        <small class="d-block text-danger mt-1">${error.message}</small>
+                        <button class="btn btn-sm btn-outline-primary mt-1 initialize-server" data-server-id="${serverId}">
+                            Retry Initialization
+                        </button>
+                    `;
+                    
+                    // Setup retry button
+                    statusIndicator.querySelector('.initialize-server').addEventListener('click', function() {
+                        initializeServer(serverId, this);
+                    });
+                });
+            });
+        });
+        
+        function initializeServer(serverId, button) {
+            const statusIndicator = document.querySelector(`.status-indicator[data-server-id="${serverId}"]`);
+            const originalContent = button.innerHTML;
+            
+            // Show loading state
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Initializing...';
+            button.disabled = true;
+            
+            // Send AJAX request
+            fetch(`{{ url_for('servers.initialize_server', id=0) }}`.replace('0', serverId), {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    statusIndicator.innerHTML = `
+                        <span class="badge bg-success">
+                            <i class="fas fa-check-circle me-1"></i> Initialized
+                        </span>
+                    `;
+                } else {
+                    // Show error
+                    statusIndicator.innerHTML = `
+                        <span class="badge bg-danger">
+                            <i class="fas fa-times-circle me-1"></i> Initialization Failed
+                        </span>
+                        <small class="d-block text-danger mt-1">${data.message}</small>
+                        <button class="btn btn-sm btn-outline-primary mt-1 initialize-server" data-server-id="${serverId}">
+                            Retry Initialization
+                        </button>
+                    `;
+                    
+                    // Setup retry button
+                    statusIndicator.querySelector('.initialize-server').addEventListener('click', function() {
+                        initializeServer(serverId, this);
+                    });
+                }
+            })
+            .catch(error => {
+                // Show error
+                statusIndicator.innerHTML = `
+                    <span class="badge bg-danger">
+                        <i class="fas fa-times-circle me-1"></i> Initialization Failed
+                    </span>
+                    <small class="d-block text-danger mt-1">${error.message}</small>
+                    <button class="btn btn-sm btn-outline-primary mt-1 initialize-server" data-server-id="${serverId}">
+                        Retry Initialization
+                    </button>
+                `;
+                
+                // Setup retry button
+                statusIndicator.querySelector('.initialize-server').addEventListener('click', function() {
+                    initializeServer(serverId, this);
+                });
+            });
+        }
+    });
+</script>
 {% endblock %} 

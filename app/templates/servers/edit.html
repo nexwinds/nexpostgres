@@ -33,6 +33,12 @@
             </div>
             
             <div class="mb-3">
+                <label for="postgres_port" class="form-label">PostgreSQL Port</label>
+                <input type="number" class="form-control" id="postgres_port" name="postgres_port" value="{{ server.postgres_port }}" required>
+                <div class="form-text">Port used by PostgreSQL on this server</div>
+            </div>
+            
+            <div class="mb-3">
                 <label for="username" class="form-label">Username</label>
                 <input type="text" class="form-control" id="username" name="username" value="{{ server.username }}" required>
                 <div class="form-text">User with SSH access to the server</div>

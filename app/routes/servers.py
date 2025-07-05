@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from app.models.database import VpsServer, db
-from app.utils.ssh_manager import test_ssh_connection
+from app.utils.ssh_manager import test_ssh_connection, SSHManager
+from app.utils.postgres_manager import PostgresManager
 from app.routes.auth import login_required, first_login_required
 import os
 
@@ -17,14 +18,16 @@ def index():
 @login_required
 @first_login_required
 def add():
-    server = VpsServer(port=22)
+    server = VpsServer(port=22, postgres_port=5432)
     
     if request.method == 'POST':
         server.name = request.form.get('name')
         server.host = request.form.get('host')
         server.port = request.form.get('port', 22, type=int)
+        server.postgres_port = request.form.get('postgres_port', 5432, type=int)
         server.username = request.form.get('username')
         server.ssh_key_content = request.form.get('ssh_key_content')
+        server.initialized = False  # Set initial status as not initialized
         
         if not server.ssh_key_content.strip():
             flash('SSH key content cannot be empty', 'danger')
@@ -47,7 +50,36 @@ def add():
         db.session.add(server)
         db.session.commit()
         
-        flash('Server added successfully', 'success')
+        # Initialize the server in the background
+        try:
+            # Create SSH connection
+            ssh = SSHManager(
+                host=server.host,
+                port=server.port,
+                username=server.username,
+                ssh_key_path=server.ssh_key_path,
+                ssh_key_content=server.ssh_key_content
+            )
+            
+            if ssh.connect():
+                # Initialize server
+                pg_manager = PostgresManager(ssh)
+                success, message = pg_manager.initialize_server()
+                
+                # Disconnect
+                ssh.disconnect()
+                
+                if success:
+                    server.initialized = True
+                    db.session.commit()
+                    flash('Server added successfully and initialized with PostgreSQL and pgBackRest', 'success')
+                else:
+                    flash(f'Server added successfully but initialization failed: {message}', 'warning')
+            else:
+                flash('Server added successfully but initialization could not start', 'warning')
+        except Exception as e:
+            flash(f'Server added successfully but initialization failed: {str(e)}', 'warning')
+        
         return redirect(url_for('servers.index'))
     
     return render_template('servers/add.html', server=server)
@@ -71,6 +103,7 @@ def edit(id):
         server.name = request.form.get('name')
         server.host = request.form.get('host')
         server.port = request.form.get('port', 22, type=int)
+        server.postgres_port = request.form.get('postgres_port', 5432, type=int)
         server.username = request.form.get('username')
         server.ssh_key_content = request.form.get('ssh_key_content')
         
@@ -131,4 +164,54 @@ def test_connection():
     if connection_ok:
         return jsonify({'success': True, 'message': 'Connection successful'})
     else:
-        return jsonify({'success': False, 'message': 'Connection failed'}) 
+        return jsonify({'success': False, 'message': 'Connection failed'})
+
+@servers_bp.route('/initialize/<int:id>', methods=['POST'])
+@login_required
+@first_login_required
+def initialize_server(id):
+    server = VpsServer.query.get_or_404(id)
+    
+    try:
+        # Connect to server via SSH
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_path=server.ssh_key_path,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            return jsonify({
+                'success': False,
+                'message': 'Failed to connect to server via SSH'
+            })
+        
+        # Initialize server
+        pg_manager = PostgresManager(ssh)
+        success, message = pg_manager.initialize_server()
+        
+        # Disconnect
+        ssh.disconnect()
+        
+        if success:
+            # Update server status in database
+            server.initialized = True
+            db.session.commit()
+            
+            return jsonify({
+                'success': True,
+                'message': message
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': message
+            })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }) 
