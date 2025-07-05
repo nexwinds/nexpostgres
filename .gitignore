@@ -20,12 +20,6 @@ var/
 .installed.cfg
 *.egg
 
-# Flask
-instance/
-.webassets-cache
-app/flask_session/
-flask_session/
-
 # SQLite
 *.sqlite
 *.sqlite3

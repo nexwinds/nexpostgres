@@ -33,6 +33,7 @@ def login():
         user = User.query.filter_by(username=username).first()
         
         if user and user.check_password(password):
+            session.permanent = True
             session['user_id'] = user.id
             
             if user.is_first_login:

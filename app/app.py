@@ -1,10 +1,10 @@
 import os
 import logging
 from flask import Flask, redirect, url_for
-from flask_session import Session
 from app.config import Config
 from app.models.database import init_db
 from app.utils.scheduler import init_scheduler
+from app.utils.session_manager import init_session
 from app.routes.auth import auth_bp
 from app.routes.servers import servers_bp
 from app.routes.databases import databases_bp
@@ -19,8 +19,8 @@ def create_app(config_class=Config):
     
     # Initialize extensions
     Config.init_app(app)
-    Session(app)
     init_db(app)
+    init_session(app)  # Use our custom session interface
     
     # Create app_backups directory
     os.makedirs(os.path.join(app.root_path, 'app_backups'), exist_ok=True)

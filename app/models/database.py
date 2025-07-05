@@ -16,6 +16,14 @@ class User(db.Model):
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
+class FlaskSession(db.Model):
+    """Model for storing Flask session data in the database"""
+    id = db.Column(db.String(255), primary_key=True)
+    user_id = db.Column(db.Integer, nullable=True)  # To link sessions to users for deletion
+    data = db.Column(db.LargeBinary, nullable=False)
+    expiry = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
 class VpsServer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
