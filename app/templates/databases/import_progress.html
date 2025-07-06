@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+
+{% block title %}Database Import Progress - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Database Import Progress</h1>
+    <a href="{{ url_for('databases.index') }}" class="btn btn-secondary">
+        <i class="fas fa-arrow-left me-1"></i> Back to Databases
+    </a>
+</div>
+
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">Import Status</h5>
+    </div>
+    <div class="card-body">
+        <div class="alert alert-info mb-4" id="statusAlert">
+            <i class="fas fa-sync fa-spin me-1"></i>
+            <strong>In Progress:</strong> Preparing database import...
+        </div>
+        
+        <div class="mb-4">
+            <h6>Source Information:</h6>
+            {% if connection_type == 'standard' %}
+            <ul class="list-unstyled">
+                <li><strong>Host:</strong> {{ host }}</li>
+                <li><strong>Port:</strong> {{ port }}</li>
+                <li><strong>Database:</strong> {{ database_name }}</li>
+                <li><strong>Username:</strong> {{ username }}</li>
+            </ul>
+            {% else %}
+            <ul class="list-unstyled">
+                <li><strong>Connection URL:</strong> {{ connection_url|replace(connection_url.split(':')[2].split('@')[0], '******') }}</li>
+            </ul>
+            {% endif %}
+        </div>
+        
+        <div class="mb-4">
+            <h6>Target Database:</h6>
+            <ul class="list-unstyled">
+                <li><strong>Database:</strong> {{ target_db.name }}</li>
+                <li><strong>Server:</strong> {{ target_db.server.name }} ({{ target_db.server.host }})</li>
+            </ul>
+        </div>
+        
+        <div class="progress mb-3">
+            <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+        
+        <div class="card mb-4">
+            <div class="card-header bg-light py-2">
+                <h6 class="mb-0">Import Log</h6>
+            </div>
+            <div class="card-body p-0">
+                <div id="logOutput" class="log-container border-0 bg-light p-3" style="height: 300px; overflow-y: auto; font-family: monospace; white-space: pre-wrap;">{{ restore_log.log_output }}</div>
+            </div>
+        </div>
+        
+        <div id="completeActions" class="text-end" style="display: none;">
+            <a href="{{ url_for('databases.index') }}" class="btn btn-primary">
+                <i class="fas fa-list me-1"></i> Back to Databases
+            </a>
+            <a href="{{ url_for('backups.restore_logs') }}" class="btn btn-secondary ms-2">
+                <i class="fas fa-history me-1"></i> View All Restore Logs
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Store the import parameters
+    const importData = {
+        restore_log_id: {{ restore_log.id }},
+        target_db_id: {{ target_db.id }},
+        connection_type: "{{ connection_type }}",
+        {% if connection_type == 'standard' %}
+        host: "{{ host }}",
+        port: {{ port }},
+        username: "{{ username }}",
+        password: "{{ password }}",
+        database_name: "{{ database_name }}",
+        {% else %}
+        connection_url: "{{ connection_url }}",
+        {% endif %}
+    };
+    
+    // Artificial progress stages
+    const progressStages = [
+        { percent: 10, message: 'Connecting to source database...' },
+        { percent: 20, message: 'Exporting data from source database...' },
+        { percent: 40, message: 'Creating temporary database...' },
+        { percent: 60, message: 'Importing data to temporary database...' },
+        { percent: 80, message: 'Replacing target database...' },
+        { percent: 90, message: 'Finalizing import...' },
+        { percent: 100, message: 'Import completed' }
+    ];
+    
+    // Elements
+    const logOutput = document.getElementById('logOutput');
+    const progressBar = document.getElementById('progressBar');
+    const statusAlert = document.getElementById('statusAlert');
+    const completeActions = document.getElementById('completeActions');
+    
+    // Variables
+    let currentStage = 0;
+    let isComplete = false;
+    let currentStatus = 'in_progress';
+    
+    // Update the status alert
+    function updateStatusAlert(status, message) {
+        statusAlert.className = 'alert mb-4';
+        let icon = '';
+        
+        switch(status) {
+            case 'in_progress':
+                statusAlert.classList.add('alert-info');
+                icon = '<i class="fas fa-sync fa-spin me-1"></i>';
+                break;
+            case 'success':
+                statusAlert.classList.add('alert-success');
+                icon = '<i class="fas fa-check-circle me-1"></i>';
+                break;
+            case 'failed':
+                statusAlert.classList.add('alert-danger');
+                icon = '<i class="fas fa-exclamation-circle me-1"></i>';
+                break;
+        }
+        
+        statusAlert.innerHTML = `${icon}<strong>${status === 'in_progress' ? 'In Progress' : status === 'success' ? 'Success' : 'Failed'}:</strong> ${message}`;
+    }
+    
+    // Update progress based on log content
+    function updateProgress(log) {
+        if (log.includes('Starting export from source database')) {
+            updateProgressStage(0);
+        } else if (log.includes('Source database exported successfully')) {
+            updateProgressStage(1);
+        } else if (log.includes('Creating temporary database')) {
+            updateProgressStage(2);
+        } else if (log.includes('Starting import to temporary database')) {
+            updateProgressStage(3);
+        } else if (log.includes('Import to temporary database completed')) {
+            updateProgressStage(4);
+        } else if (log.includes('Dropping target database')) {
+            updateProgressStage(5);
+        } else if (log.includes('Database import completed successfully')) {
+            updateProgressStage(6);
+        }
+    }
+    
+    // Update to specific progress stage
+    function updateProgressStage(stageIndex) {
+        if (stageIndex >= progressStages.length) return;
+        
+        currentStage = stageIndex;
+        const stage = progressStages[currentStage];
+        
+        progressBar.style.width = `${stage.percent}%`;
+        progressBar.setAttribute('aria-valuenow', stage.percent);
+        updateStatusAlert('in_progress', stage.message);
+    }
+    
+    // Update log output
+    function updateLog(content) {
+        logOutput.textContent = content;
+        logOutput.scrollTop = logOutput.scrollHeight;
+    }
+    
+    // Complete the import process
+    function completeImport(status, message) {
+        isComplete = true;
+        currentStatus = status;
+        
+        // Update UI
+        if (status === 'success') {
+            progressBar.style.width = '100%';
+            progressBar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+            progressBar.classList.add('bg-success');
+            updateStatusAlert('success', 'Database import completed successfully');
+        } else {
+            progressBar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+            progressBar.classList.add('bg-danger');
+            updateStatusAlert('failed', message || 'Database import failed');
+        }
+        
+        // Show complete actions
+        completeActions.style.display = 'block';
+        
+        // Stop polling
+        if (typeof statusInterval !== 'undefined') {
+            clearInterval(statusInterval);
+        }
+    }
+    
+    // Start the import process
+    function startImport() {
+        fetch('{{ url_for("databases.execute_import") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(importData)
+        })
+        .then(response => response.json())
+        .catch(error => {
+            console.error('Error:', error);
+        });
+    }
+    
+    // Poll for status updates
+    function pollStatus() {
+        if (isComplete) return;
+        
+        fetch(`{{ url_for("databases.import_status", restore_log_id=restore_log.id) }}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    updateLog(data.log_output);
+                    updateProgress(data.log_output);
+                    
+                    if (data.is_complete) {
+                        completeImport(data.status, data.log_output.split('\n').pop());
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error polling status:', error);
+            });
+    }
+    
+    // Global statusInterval variable
+    let statusInterval;
+    
+    // Start the process when the page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        // Initial status update
+        updateProgressStage(0);
+        
+        // Start the import
+        startImport();
+        
+        // Poll for status updates every 2 seconds
+        statusInterval = setInterval(pollStatus, 2000);
+        
+        // Safety timeout after 10 minutes
+        setTimeout(() => {
+            if (!isComplete) {
+                updateStatusAlert('failed', 'Import timed out after 10 minutes');
+                clearInterval(statusInterval);
+                completeActions.style.display = 'block';
+            }
+        }, 10 * 60 * 1000);
+    });
+</script>
+
+<style>
+    .log-container {
+        background-color: #f8f9fa;
+        border-radius: 0.25rem;
+        font-size: 0.875rem;
+    }
+</style>
+{% endblock %} 

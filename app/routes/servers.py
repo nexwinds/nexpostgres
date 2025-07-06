@@ -377,4 +377,44 @@ def update_server(id):
         return jsonify({
             'success': False,
             'message': str(e)
+        })
+
+@servers_bp.route('/validate-postgres-config/<int:id>', methods=['POST'])
+@login_required
+@first_login_required
+def validate_postgres_config(id):
+    server = VpsServer.query.get_or_404(id)
+    
+    try:
+        # Connect to server via SSH
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            return jsonify({
+                'success': False,
+                'message': 'Failed to connect to server via SSH'
+            })
+        
+        # Check and fix PostgreSQL configuration
+        pg_manager = PostgresManager(ssh)
+        success, message, changes = pg_manager.check_and_fix_external_connections()
+        
+        # Disconnect
+        ssh.disconnect()
+        
+        return jsonify({
+            'success': success,
+            'message': message,
+            'changes': changes
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
         }) 

@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block title %}Import Database - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Import Database</h1>
+    <a href="{{ url_for('databases.index') }}" class="btn btn-secondary">
+        <i class="fas fa-arrow-left me-1"></i> Back to Databases
+    </a>
+</div>
+
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">Database Import</h5>
+    </div>
+    <div class="card-body">
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle me-1"></i>
+            <strong>Info:</strong> This tool allows you to import data from an external PostgreSQL database.
+            The import process will replace all data in the target database.
+        </div>
+        
+        <form method="post">
+            <!-- Target Database Selection -->
+            <div class="mb-4">
+                <label for="target_database_id" class="form-label">Target Database</label>
+                <select class="form-select" id="target_database_id" name="target_database_id" required>
+                    <option value="" selected disabled>Select Target Database</option>
+                    {% for database in databases %}
+                    <option value="{{ database.id }}">{{ database.name }} ({{ database.server.name }})</option>
+                    {% endfor %}
+                </select>
+                <div class="form-text">Select the database where you want to import data to.</div>
+            </div>
+            
+            <!-- Connection Type Tabs -->
+            <div class="mb-4">
+                <ul class="nav nav-tabs" id="connectionTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="standard-tab" data-bs-toggle="tab" data-bs-target="#standard" type="button" role="tab" aria-controls="standard" aria-selected="true">
+                            Standard Connection
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="url-tab" data-bs-toggle="tab" data-bs-target="#url" type="button" role="tab" aria-controls="url" aria-selected="false">
+                            Connection URL
+                        </button>
+                    </li>
+                </ul>
+                <div class="tab-content mt-3" id="connectionTabsContent">
+                    <!-- Standard Connection Form -->
+                    <div class="tab-pane fade show active" id="standard" role="tabpanel" aria-labelledby="standard-tab">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="host" class="form-label">Host</label>
+                                <input type="text" class="form-control" id="host" name="host" placeholder="e.g., 127.0.0.1">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="port" class="form-label">Port</label>
+                                <input type="number" class="form-control" id="port" name="port" placeholder="5432" value="5432">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="username" class="form-label">Username</label>
+                                <input type="text" class="form-control" id="username" name="username" placeholder="e.g., postgres">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="password" class="form-label">Password</label>
+                                <input type="password" class="form-control" id="password" name="password">
+                            </div>
+                            <div class="col-12">
+                                <label for="database_name" class="form-label">Database Name</label>
+                                <input type="text" class="form-control" id="database_name" name="database_name" placeholder="e.g., mydatabase">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Connection URL Form -->
+                    <div class="tab-pane fade" id="url" role="tabpanel" aria-labelledby="url-tab">
+                        <div class="mb-3">
+                            <label for="connection_url" class="form-label">Connection URL</label>
+                            <input type="text" class="form-control" id="connection_url" name="connection_url" placeholder="postgresql://username:password@host:port/dbname">
+                            <div class="form-text">Format: postgresql://username:password@host:port/dbname</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Hidden field to track which tab is active -->
+            <input type="hidden" id="connection_type" name="connection_type" value="standard">
+            
+            <div class="form-check mb-4">
+                <input class="form-check-input" type="checkbox" id="confirm_import" required>
+                <label class="form-check-label" for="confirm_import">
+                    I understand that this will replace all data in the target database
+                </label>
+            </div>
+            
+            <div class="d-flex justify-content-end">
+                <a href="{{ url_for('databases.index') }}" class="btn btn-secondary me-2">Cancel</a>
+                <button type="submit" class="btn btn-primary" id="importButton" disabled>
+                    <i class="fas fa-file-import me-1"></i> Start Import
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const confirmCheckbox = document.getElementById('confirm_import');
+        const importButton = document.getElementById('importButton');
+        const connectionType = document.getElementById('connection_type');
+        const standardTab = document.getElementById('standard-tab');
+        const urlTab = document.getElementById('url-tab');
+        
+        // Enable/disable import button based on checkbox
+        confirmCheckbox.addEventListener('change', function() {
+            importButton.disabled = !this.checked;
+        });
+        
+        // Update connection type when tab changes
+        standardTab.addEventListener('click', function() {
+            connectionType.value = 'standard';
+        });
+        
+        urlTab.addEventListener('click', function() {
+            connectionType.value = 'url';
+        });
+    });
+</script>
+{% endblock %} 

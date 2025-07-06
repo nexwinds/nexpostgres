@@ -160,6 +160,10 @@
                     <button id="update-btn" class="btn btn-info">
                         <i class="fas fa-download me-1"></i> Update Server
                     </button>
+                    
+                    <button id="validate-postgres-btn" class="btn btn-primary">
+                        <i class="fas fa-database me-1"></i> Validate PostgreSQL Config
+                    </button>
                 </div>
                 
                 <div id="action-status" class="mt-3">
@@ -335,6 +339,82 @@
                     actionStatus.innerHTML = `
                         <div class="alert alert-danger">
                             <i class="fas fa-times-circle me-1"></i> ${data.message}
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                actionStatus.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-times-circle me-1"></i> Error: ${error.message}
+                    </div>
+                `;
+            });
+        });
+        
+        // Handle validate PostgreSQL config button
+        document.getElementById('validate-postgres-btn').addEventListener('click', function() {
+            const actionStatus = document.getElementById('action-status');
+            actionStatus.innerHTML = `
+                <div class="alert alert-info">
+                    <i class="fas fa-spinner fa-spin me-1"></i> Validating PostgreSQL configuration...
+                </div>
+            `;
+            
+            fetch(`{{ url_for('servers.validate_postgres_config', id=server.id) }}`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    let changeDetails = "";
+                    
+                    if (data.changes) {
+                        changeDetails = "<ul>";
+                        
+                        if (data.changes.created_files) {
+                            changeDetails += "<li><strong>Created missing configuration files</strong></li>";
+                        }
+                        
+                        if (data.changes.listen_addresses) {
+                            changeDetails += "<li>Updated postgresql.conf: listen_addresses = '*'</li>";
+                        }
+                        
+                        if (data.changes.pg_hba) {
+                            changeDetails += "<li>Updated pg_hba.conf to allow external connections</li>";
+                        }
+                        
+                        changeDetails += "</ul>";
+                    }
+                    
+                    actionStatus.innerHTML = `
+                        <div class="alert alert-success">
+                            <i class="fas fa-check-circle me-1"></i> ${data.message}
+                            ${changeDetails}
+                        </div>
+                    `;
+                } else {
+                    // Handle detailed error messages that might contain newlines
+                    let errorMsg = data.message.replace(/\n/g, '<br>');
+                    
+                    // If the message contains a list of search attempts, format it nicely
+                    if (errorMsg.includes('Search attempts:')) {
+                        const parts = errorMsg.split('Search attempts:');
+                        errorMsg = parts[0] + '<br><strong>Search attempts:</strong><ul>';
+                        
+                        // Convert each search attempt into a list item
+                        const attempts = parts[1].split('<br>').filter(a => a.trim() !== '');
+                        attempts.forEach(attempt => {
+                            errorMsg += `<li>${attempt.trim()}</li>`;
+                        });
+                        
+                        errorMsg += '</ul>';
+                    }
+                    
+                    actionStatus.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-times-circle me-1"></i> <strong>Error:</strong><br>
+                            ${errorMsg}
                         </div>
                     `;
                 }
