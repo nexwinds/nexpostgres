@@ -28,7 +28,6 @@
                         <th>Name</th>
                         <th>Server</th>
                         <th>PG Port</th>
-                        <th>Username</th>
                         <th>Status</th>
                         <th>Actions</th>
                     </tr>
@@ -39,7 +38,6 @@
                         <td>{{ database.name }}</td>
                         <td>{{ database.server.name }}</td>
                         <td>{{ database.server.postgres_port }}</td>
-                        <td>{{ database.username }}</td>
                         <td>
                             <span class="status-indicator" data-database-id="{{ database.id }}">
                                 <span class="badge bg-secondary">Unknown</span>

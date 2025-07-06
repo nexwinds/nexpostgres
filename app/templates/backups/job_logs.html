@@ -146,7 +146,13 @@
                         </td>
                         <td>
                             {% if log.size_bytes %}
-                            {{ (log.size_bytes / (1024 * 1024))|round|int }} MB
+                                {% if log.size_bytes >= 1073741824 %}
+                                {{ (log.size_bytes / (1024 * 1024 * 1024))|round(2) }} GB
+                                {% elif log.size_bytes >= 1048576 %}
+                                {{ (log.size_bytes / (1024 * 1024))|round(2) }} MB
+                                {% else %}
+                                {{ (log.size_bytes / 1024)|round(2) }} KB
+                                {% endif %}
                             {% else %}
                             <span class="text-muted">-</span>
                             {% endif %}

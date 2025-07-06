@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Backup Logs - NEXPOSTGRES{% endblock %}
+{% block title %}Backup Logs{% if backup_job %}: {{ backup_job.name }}{% endif %} - NEXPOSTGRES{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -125,8 +125,14 @@
                             {% endif %}
                         </td>
                         <td>
-                            {% if log.size_mb %}
-                            {{ log.size_mb }} MB
+                            {% if log.size_bytes %}
+                                {% if log.size_bytes >= 1073741824 %}
+                                {{ (log.size_bytes / (1024 * 1024 * 1024))|round(2) }} GB
+                                {% elif log.size_bytes >= 1048576 %}
+                                {{ (log.size_bytes / (1024 * 1024))|round(2) }} MB
+                                {% else %}
+                                {{ (log.size_bytes / 1024)|round(2) }} KB
+                                {% endif %}
                             {% else %}
                             <span class="text-muted">-</span>
                             {% endif %}

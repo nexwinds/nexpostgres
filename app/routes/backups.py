@@ -405,6 +405,53 @@ def restore():
                 if backups and len(backups) > 0:
                     # Use the most recent backup (typically the first one listed)
                     backup_name = backups[0].get('name', 'latest')
+                    
+                    # Find the corresponding backup log in our database
+                    if not backup_log_id and backup_name != 'latest':
+                        # Try to find a backup log that matches this backup time
+                        try:
+                            timestamp_str = backups[0].get('info', {}).get('timestamp', '')
+                            if timestamp_str:
+                                timestamp_parts = timestamp_str.split('-')
+                                if len(timestamp_parts) >= 6:
+                                    year = int(timestamp_parts[0])
+                                    month = int(timestamp_parts[1])
+                                    day = int(timestamp_parts[2])
+                                    hour = int(timestamp_parts[3])
+                                    minute = int(timestamp_parts[4])
+                                    second = int(timestamp_parts[5].split('.')[0])
+                                    
+                                    backup_time = datetime(year, month, day, hour, minute, second)
+                                    
+                                    # Find backup logs within a 60-second window of this time
+                                    potential_logs = BackupLog.query.filter(
+                                        BackupLog.backup_job_id == backup_job.id,
+                                        BackupLog.status == 'success',
+                                        BackupLog.start_time >= backup_time - timedelta(seconds=60),
+                                        BackupLog.start_time <= backup_time + timedelta(seconds=60)
+                                    ).all()
+                                    
+                                    if potential_logs:
+                                        # Use the closest match
+                                        closest_log = min(potential_logs, 
+                                            key=lambda log: abs((log.start_time - backup_time).total_seconds()))
+                                        backup_log_id = closest_log.id
+                                        print(f"Found matching backup log ID {backup_log_id} for latest backup")
+                        except Exception as e:
+                            print(f"Error finding matching backup log: {str(e)}")
+                    
+                    # If we still don't have a backup log ID, use the most recent successful backup log
+                    if not backup_log_id and backup_name == 'latest':
+                        most_recent_log = BackupLog.query.filter(
+                            BackupLog.backup_job_id == backup_job.id,
+                            BackupLog.status == 'success'
+                        ).order_by(BackupLog.start_time.desc()).first()
+                        
+                        if most_recent_log:
+                            backup_log_id = most_recent_log.id
+                            print(f"Using most recent backup log ID {backup_log_id} for 'latest' backup")
+                        else:
+                            print("No successful backup logs found for this job")
         
         # Validate backup selection or recovery point
         if use_recovery_time:
@@ -449,12 +496,20 @@ def restore():
         restore_log = RestoreLog(
             database_id=database_id,
             backup_log_id=backup_log_id if backup_log_id else None,
-            restore_point=recovery_time,
+            restore_point=datetime.fromisoformat(recovery_time) if recovery_time and use_recovery_time else None,
             status='in_progress'
         )
         
         db.session.add(restore_log)
         db.session.commit()
+        
+        # Double-check that the backup_log relationship is established
+        if backup_log_id:
+            backup_log = BackupLog.query.get(backup_log_id)
+            if backup_log:
+                print(f"Backup log found: {backup_log.id}, job: {backup_log.backup_job.name if backup_log.backup_job else 'None'}")
+            else:
+                print(f"Warning: Backup log {backup_log_id} not found")
         
         try:
             # Execute restore
@@ -466,6 +521,52 @@ def restore():
             restore_log.status = 'success' if success else 'failed'
             restore_log.end_time = datetime.utcnow()
             restore_log.log_output = log_output
+            
+            # Add information about which backup was actually used
+            if success and backup_name:
+                if "restore backup set" in log_output:
+                    # Extract the actual backup set name from the log output
+                    import re
+                    backup_set_match = re.search(r'restore backup set ([0-9\-A-Z]+)', log_output)
+                    if backup_set_match:
+                        actual_backup_name = backup_set_match.group(1)
+                        print(f"Actual backup set used: {actual_backup_name}")
+                        
+                        # If we don't have a backup_log_id yet, try to find one matching this backup name
+                        if not restore_log.backup_log_id:
+                            # Parse the timestamp from the backup name
+                            try:
+                                timestamp_parts = actual_backup_name.split('-')
+                                if len(timestamp_parts) >= 2:
+                                    # Format is typically YYYYMMDD-HHMMSSF
+                                    date_part = timestamp_parts[0]
+                                    time_part = timestamp_parts[1][:-1]  # Remove the F or I suffix
+                                    
+                                    year = int(date_part[0:4])
+                                    month = int(date_part[4:6])
+                                    day = int(date_part[6:8])
+                                    hour = int(time_part[0:2])
+                                    minute = int(time_part[2:4])
+                                    second = int(time_part[4:6])
+                                    
+                                    backup_time = datetime(year, month, day, hour, minute, second)
+                                    
+                                    # Find backup logs within a 60-second window of this time
+                                    potential_logs = BackupLog.query.filter(
+                                        BackupLog.backup_job_id == backup_job.id,
+                                        BackupLog.status == 'success',
+                                        BackupLog.start_time >= backup_time - timedelta(seconds=60),
+                                        BackupLog.start_time <= backup_time + timedelta(seconds=60)
+                                    ).all()
+                                    
+                                    if potential_logs:
+                                        # Use the closest match
+                                        closest_log = min(potential_logs, 
+                                            key=lambda log: abs((log.start_time - backup_time).total_seconds()))
+                                        restore_log.backup_log_id = closest_log.id
+                                        print(f"Found matching backup log ID {restore_log.backup_log_id} for actual backup used")
+                            except Exception as e:
+                                print(f"Error finding matching backup log for actual backup: {str(e)}")
             
             db.session.commit()
             
@@ -494,14 +595,45 @@ def restore():
 @login_required
 @first_login_required
 def restore_logs():
-    logs = RestoreLog.query.order_by(RestoreLog.start_time.desc()).all()
-    return render_template('backups/restore_logs.html', logs=logs)
+    # Get filter parameters
+    database_id = request.args.get('database_id', type=int)
+    status = request.args.get('status')
+    days = request.args.get('days', '7')
+    
+    # Build query based on filters
+    query = RestoreLog.query.join(RestoreLog.backup_log, isouter=True)
+    
+    # Filter by database
+    if database_id:
+        query = query.filter(RestoreLog.database_id == database_id)
+    
+    # Filter by status
+    if status:
+        query = query.filter(RestoreLog.status == status)
+    
+    # Filter by date
+    if days and days != 'all':
+        date_threshold = datetime.utcnow() - timedelta(days=int(days))
+        query = query.filter(RestoreLog.start_time >= date_threshold)
+    
+    # Get all databases for the filter dropdown
+    databases = PostgresDatabase.query.all()
+    
+    # Order by start time (most recent first)
+    logs = query.order_by(RestoreLog.start_time.desc()).all()
+    
+    return render_template('backups/restore_logs.html', logs=logs, databases=databases, 
+                          selected_database_id=database_id, selected_status=status, selected_days=days)
 
 @backups_bp.route('/restore/logs/view/<int:id>')
 @login_required
 @first_login_required
 def view_restore_log(id):
-    log = RestoreLog.query.get_or_404(id)
+    # Use a join to ensure backup_log is loaded
+    log = RestoreLog.query.options(
+        db.joinedload(RestoreLog.backup_log).joinedload(BackupLog.backup_job)
+    ).get_or_404(id)
+    
     return render_template('backups/view_restore_log.html', log=log)
 
 @backups_bp.route('/test-s3', methods=['POST'])
@@ -867,4 +999,27 @@ def api_recovery_points():
         return jsonify({
             'success': False,
             'message': f'Error retrieving recovery points: {str(e)}'
-        }) 
+        })
+
+@backups_bp.route('/debug/restore-log/<int:id>')
+@login_required
+@first_login_required
+def debug_restore_log(id):
+    """Debug route to check restore log relationships"""
+    restore_log = RestoreLog.query.get_or_404(id)
+    
+    # Get the backup log directly
+    backup_log = None
+    if restore_log.backup_log_id:
+        backup_log = BackupLog.query.get(restore_log.backup_log_id)
+    
+    # Build debug info
+    debug_info = {
+        "restore_log_id": restore_log.id,
+        "backup_log_id": restore_log.backup_log_id,
+        "backup_log_exists": backup_log is not None,
+        "backup_job_id": backup_log.backup_job_id if backup_log else None,
+        "backup_job_name": backup_log.backup_job.name if backup_log and hasattr(backup_log, 'backup_job') else None
+    }
+    
+    return jsonify(debug_info) 

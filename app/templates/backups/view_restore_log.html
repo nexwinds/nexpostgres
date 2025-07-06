@@ -91,10 +91,16 @@
                     <tr>
                         <th>Source Backup</th>
                         <td>
-                            {% if log.backup_log %}
-                            <a href="{{ url_for('backups.view_log', id=log.backup_log_id) }}">
-                                {{ log.backup_log.backup_job.name }} ({{ log.backup_log.start_time.strftime('%Y-%m-%d %H:%M') }})
-                            </a>
+                            {% if log.backup_log_id %}
+                                {% if log.backup_log and log.backup_log.backup_job %}
+                                <a href="{{ url_for('backups.view_log', id=log.backup_log_id) }}">
+                                    {{ log.backup_log.backup_job.name }} ({{ log.backup_log.start_time.strftime('%Y-%m-%d %H:%M') }})
+                                </a>
+                                {% else %}
+                                <a href="{{ url_for('backups.debug_restore_log', id=log.id) }}" class="text-warning">
+                                    <i class="fas fa-exclamation-triangle"></i> Backup exists but relationship broken
+                                </a>
+                                {% endif %}
                             {% else %}
                             <span class="text-muted">Unknown</span>
                             {% endif %}

@@ -128,9 +128,21 @@ def execute_backup(job_id, manual=False):
         message = "Backup completed successfully" if success else f"Backup failed: {log_output}"
         logger.info(f"Backup job {job.name} (ID: {job.id}): {message}")
         
-        # If backup was successful, set the backup size based on database size
+        # If backup was successful, set the backup size based on database size and backup path
         if success:
             try:
+                # Set the backup path
+                if job.s3_storage:
+                    # For S3 storage
+                    backup_path = f"s3://{job.s3_storage.bucket}/{job.database.name}"
+                    backup_log.backup_path = backup_path
+                    logger.info(f"Set backup path: {backup_path}")
+                else:
+                    # For local storage
+                    backup_path = f"/var/lib/pgbackrest/backup/{job.database.name}"
+                    backup_log.backup_path = backup_path
+                    logger.info(f"Set backup path: {backup_path}")
+                
                 # Create an estimate based on database size - this method worked reliably
                 db_size_cmd = f"sudo -u postgres psql -c \"SELECT pg_size_pretty(pg_database_size('{job.database.name}'));\""
                 db_size_result = ssh.execute_command(db_size_cmd)

@@ -90,6 +90,7 @@ class BackupLog(BaseModel):
     size_bytes = db.Column(db.BigInteger)
     log_output = db.Column(db.Text)
     manual = db.Column(db.Boolean, default=False)
+    backup_path = db.Column(db.String(255))  # Path to the backup files
     
     # Relationships
     restore_logs = db.relationship('RestoreLog', backref='backup_log', lazy=True)
