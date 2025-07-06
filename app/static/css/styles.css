@@ -1,24 +1,144 @@
 /* Custom CSS for NEXPOSTGRES */
 
+:root {
+    /* Light theme variables */
+    --bg-color: #ffffff;
+    --text-color: #212529;
+    --card-bg: #ffffff;
+    --card-border: #e5e7eb;
+    --navbar-bg: #0d6efd;
+    --navbar-color: #ffffff;
+    --code-bg: #f9f9f9;
+    --code-border: #e1e1e1;
+    --table-header-bg: #f9fafb;
+    --table-header-color: #495057;
+    --table-border: #dee2e6;
+    --alert-bg: #f8f9fa;
+    --input-bg: #ffffff;
+    --input-border: #ced4da;
+    --dropdown-bg: #ffffff;
+    --dropdown-color: #212529;
+    --dropdown-hover-bg: #f8f9fa;
+    --log-bg: #fafbfc;
+    --log-color: #333;
+    --log-border: #e0e0e0;
+    --footer-color: #6c757d;
+    --link-color: #0d6efd;
+    --link-hover-color: #0a58ca;
+}
+
+[data-theme="dark"] {
+    /* Dark theme variables */
+    --bg-color: #121212;
+    --text-color: #e0e0e0;
+    --card-bg: #1e1e1e;
+    --card-border: #2d2d2d;
+    --navbar-bg: #0c5cce;
+    --navbar-color: #ffffff;
+    --code-bg: #2d2d2d;
+    --code-border: #444444;
+    --table-header-bg: #1e1e1e;
+    --table-header-color: #b0b0b0;
+    --table-border: #2d2d2d;
+    --alert-bg: #1e1e1e;
+    --input-bg: #2d2d2d;
+    --input-border: #444444;
+    --dropdown-bg: #2d2d2d;
+    --dropdown-color: #e0e0e0;
+    --dropdown-hover-bg: #3d3d3d;
+    --log-bg: #2d2d2d;
+    --log-color: #e0e0e0;
+    --log-border: #444444;
+    --footer-color: #b0b0b0;
+    --link-color: #63a2ff;
+    --link-hover-color: #8eb8ff;
+}
+
 body {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    background-color: #ffffff;
-    color: #212529;
+    background-color: var(--bg-color);
+    color: var(--text-color);
     font-family: system-ui, sans-serif;
+    transition: background-color 0.3s, color 0.3s;
 }
 
 .content {
     flex: 1;
 }
 
+/* Bootstrap overrides for dark mode */
+[data-theme="dark"] .bg-light {
+    background-color: var(--bg-color) !important;
+}
+
+[data-theme="dark"] .navbar-dark {
+    background-color: var(--navbar-bg) !important;
+}
+
+[data-theme="dark"] .dropdown-menu {
+    background-color: var(--dropdown-bg);
+    color: var(--dropdown-color);
+    border-color: var(--card-border);
+}
+
+[data-theme="dark"] .dropdown-item {
+    color: var(--dropdown-color);
+}
+
+[data-theme="dark"] .dropdown-item:hover,
+[data-theme="dark"] .dropdown-item:focus {
+    background-color: var(--dropdown-hover-bg);
+}
+
+[data-theme="dark"] .table {
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .form-control,
+[data-theme="dark"] .form-select {
+    background-color: var(--input-bg);
+    border-color: var(--input-border);
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .form-control:focus,
+[data-theme="dark"] .form-select:focus {
+    background-color: var(--input-bg);
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .text-muted {
+    color: var(--footer-color) !important;
+}
+
+[data-theme="dark"] a {
+    color: var(--link-color);
+}
+
+[data-theme="dark"] a:hover {
+    color: var(--link-hover-color);
+}
+
+[data-theme="dark"] .modal-content {
+    background-color: var(--card-bg);
+    border-color: var(--card-border);
+}
+
 /* Dashboard Stats Cards */
 .card {
-    transition: transform 0.2s ease;
-    border: 1px solid #e5e7eb;
+    transition: transform 0.2s ease, background-color 0.3s, border-color 0.3s;
+    border: 1px solid var(--card-border);
     border-radius: 6px;
-    box-shadow: none; /* Removed shadow for flatter look */
+    box-shadow: none;
+    background-color: var(--card-bg);
+}
+
+[data-theme="dark"] .card {
+    background-color: var(--card-bg);
+    border-color: var(--card-border);
+    color: var(--text-color);
 }
 
 .card:hover {
@@ -34,35 +154,41 @@ body {
     color: #343a40;
 }
 
+[data-theme="dark"] .badge {
+    background-color: #2d2d2d;
+    color: #e0e0e0;
+}
+
 /* Form Styles */
 .form-label {
     font-weight: 500;
-    color: #212529;
+    color: var(--text-color);
 }
 
 .form-text {
     font-size: 0.8rem;
-    color: #6c757d;
+    color: var(--footer-color);
 }
 
 /* Table Styles */
 .table th {
-    background-color: #f9fafb;
+    background-color: var(--table-header-bg);
     font-weight: 500;
-    color: #495057;
-    border-bottom: 1px solid #dee2e6;
+    color: var(--table-header-color);
+    border-bottom: 1px solid var(--table-border);
 }
 
 /* Code Block for SSH Keys */
 .code-block {
     font-family: monospace;
-    background-color: #f9f9f9;
-    border: 1px solid #e1e1e1;
+    background-color: var(--code-bg);
+    border: 1px solid var(--code-border);
     border-radius: 4px;
     padding: 10px;
     max-height: 300px;
     overflow-y: auto;
     white-space: pre;
+    color: var(--text-color);
 }
 
 /* S3 Connection Test Feedback */
@@ -89,9 +215,9 @@ body {
 /* Backup Log Details */
 .log-output {
     font-family: monospace;
-    background-color: #fafbfc;
-    color: #333;
-    border: 1px solid #e0e0e0;
+    background-color: var(--log-bg);
+    color: var(--log-color);
+    border: 1px solid var(--log-border);
     border-radius: 4px;
     padding: 15px;
     max-height: 400px;
@@ -120,28 +246,41 @@ body {
 /* Cron Expression Builder */
 .cron-builder label {
     font-size: 0.9rem;
-    color: #495057;
+    color: var(--text-color);
 }
 
 .cron-builder select {
     font-size: 0.9rem;
     border-radius: 4px;
-    border: 1px solid #ced4da;
+    border: 1px solid var(--input-border);
+    background-color: var(--input-bg);
+    color: var(--text-color);
 }
 
 /* Restore Point-in-Time UI */
 .pitr-controls {
     padding: 15px;
-    background-color: #f9fafb;
+    background-color: var(--table-header-bg);
     border-radius: 4px;
-    border: 1px solid #e9ecef;
+    border: 1px solid var(--card-border);
     margin-top: 15px;
 }
 
 /* Help tooltips */
 .help-icon {
-    color: #6c757d;
+    color: var(--footer-color);
     cursor: help;
+}
+
+/* Theme toggle button styles */
+#theme-toggle {
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
 }
 
 /* Responsive adjustments */

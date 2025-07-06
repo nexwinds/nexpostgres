@@ -1,6 +1,15 @@
 // NEXPOSTGRES JavaScript functions
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Initialize theme
+    initializeTheme();
+    
+    // Theme toggle
+    const themeToggle = document.getElementById('theme-toggle');
+    if (themeToggle) {
+        themeToggle.addEventListener('click', toggleTheme);
+    }
+    
     // Auto-close alerts after 5 seconds
     setTimeout(function() {
         const alerts = document.querySelectorAll('.alert');
@@ -44,6 +53,46 @@ document.addEventListener('DOMContentLoaded', function() {
         testSshButton.addEventListener('click', testSshConnection);
     }
 });
+
+// Initialize theme based on localStorage or system preference
+function initializeTheme() {
+    const savedTheme = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const defaultTheme = savedTheme || (prefersDark ? 'dark' : 'light');
+    
+    setTheme(defaultTheme);
+}
+
+// Toggle between light and dark themes
+function toggleTheme() {
+    const htmlElement = document.documentElement;
+    const currentTheme = htmlElement.getAttribute('data-theme');
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+    
+    setTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+}
+
+// Set the theme
+function setTheme(theme) {
+    const htmlElement = document.documentElement;
+    const themeIcon = document.getElementById('theme-icon');
+    
+    htmlElement.setAttribute('data-theme', theme);
+    
+    if (themeIcon) {
+        themeIcon.className = theme === 'dark' ? 'fas fa-moon me-1' : 'fas fa-sun me-1';
+    }
+    
+    // Remove bg-light class from body if dark theme
+    if (theme === 'dark') {
+        document.body.classList.remove('bg-light');
+    } else {
+        if (!document.body.classList.contains('bg-light')) {
+            document.body.classList.add('bg-light');
+        }
+    }
+}
 
 // Cron expression builder
 function setupCronExpressionBuilder() {
