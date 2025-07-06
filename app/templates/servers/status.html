@@ -1,0 +1,371 @@
+{% extends "base.html" %}
+
+{% block title %}Server Status: {{ server.name }} - NEXPOSTGRES{% endblock %}
+
+{% block extra_css %}
+<style>
+    .metric-card {
+        transition: all 0.3s;
+    }
+    .metric-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    }
+    .progress {
+        height: 10px;
+    }
+    .status-indicator {
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 5px;
+    }
+    .status-online {
+        background-color: #28a745;
+    }
+    .status-offline {
+        background-color: #dc3545;
+    }
+    .status-loading {
+        background-color: #ffc107;
+        animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+        0% { opacity: 0.5; }
+        50% { opacity: 1; }
+        100% { opacity: 0.5; }
+    }
+    .server-actions button {
+        margin-right: 5px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1>Server Status</h1>
+        <h4>{{ server.name }} ({{ server.host }})</h4>
+    </div>
+    <div class="d-flex align-items-center">
+        <span id="connection-status">
+            <span class="status-indicator status-loading"></span> Connecting...
+        </span>
+        <a href="{{ url_for('servers.index') }}" class="btn btn-outline-secondary ms-3">
+            <i class="fas fa-arrow-left me-1"></i> Back to Servers
+        </a>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card shadow h-100">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="fas fa-info-circle me-2"></i> System Information</h5>
+            </div>
+            <div class="card-body">
+                <table class="table">
+                    <tbody>
+                        <tr>
+                            <th width="35%"><i class="fas fa-server me-2"></i> Operating System</th>
+                            <td id="os-info"><div class="placeholder-glow"><span class="placeholder col-9"></span></div></td>
+                        </tr>
+                        <tr>
+                            <th><i class="fas fa-network-wired me-2"></i> Public IPv4</th>
+                            <td id="ip-info"><div class="placeholder-glow"><span class="placeholder col-6"></span></div></td>
+                        </tr>
+                        <tr>
+                            <th><i class="fas fa-microchip me-2"></i> vCPU</th>
+                            <td id="vcpu-info"><div class="placeholder-glow"><span class="placeholder col-3"></span></div></td>
+                        </tr>
+                        <tr>
+                            <th><i class="fas fa-memory me-2"></i> RAM</th>
+                            <td id="ram-info"><div class="placeholder-glow"><span class="placeholder col-7"></span></div></td>
+                        </tr>
+                        <tr>
+                            <th><i class="fas fa-hdd me-2"></i> Local Disk</th>
+                            <td id="disk-info"><div class="placeholder-glow"><span class="placeholder col-8"></span></div></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card shadow h-100">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="fas fa-chart-line me-2"></i> Resource Usage</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <strong>CPU Usage</strong>
+                        <span id="cpu-percent">--%</span>
+                    </div>
+                    <div class="progress">
+                        <div id="cpu-progress" class="progress-bar bg-info" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+                
+                <div class="mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <strong>Memory Usage</strong>
+                        <span id="memory-percent">--%</span>
+                    </div>
+                    <div class="progress">
+                        <div id="memory-progress" class="progress-bar bg-warning" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+                
+                <div class="mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <strong>Disk Usage</strong>
+                        <span id="disk-percent">--%</span>
+                    </div>
+                    <div class="progress">
+                        <div id="disk-progress" class="progress-bar bg-danger" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+                
+                <div class="text-center mt-4">
+                    <p><small>Auto-refreshing every 30 seconds</small></p>
+                    <button id="refresh-btn" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-sync-alt me-1"></i> Refresh Now
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card shadow">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="fas fa-cogs me-2"></i> Server Controls</h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    <strong>Warning:</strong> These actions may cause temporary service disruptions.
+                </div>
+                
+                <div class="server-actions">
+                    <button id="restart-btn" class="btn btn-warning">
+                        <i class="fas fa-power-off me-1"></i> Restart Server
+                    </button>
+                    
+                    <button id="update-btn" class="btn btn-info">
+                        <i class="fas fa-download me-1"></i> Update Server
+                    </button>
+                </div>
+                
+                <div id="action-status" class="mt-3">
+                    <!-- Action status messages will appear here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const serverId = {{ server.id }};
+        let refreshInterval;
+        
+        // Function to fetch server status data
+        function fetchServerStatus() {
+            document.getElementById('connection-status').innerHTML = '<span class="status-indicator status-loading"></span> Connecting...';
+            
+            fetch(`{{ url_for('servers.status_data', id=server.id) }}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Update connection status
+                        document.getElementById('connection-status').innerHTML = '<span class="status-indicator status-online"></span> Online';
+                        
+                        // Update system info
+                        document.getElementById('os-info').textContent = data.os;
+                        document.getElementById('ip-info').textContent = data.ip;
+                        document.getElementById('vcpu-info').textContent = data.vcpu;
+                        document.getElementById('ram-info').textContent = `${data.ram.used} MB / ${data.ram.total} MB`;
+                        document.getElementById('disk-info').textContent = `${data.disk.used} / ${data.disk.total} (${data.disk.free} free)`;
+                        
+                        // Update resource usage
+                        document.getElementById('cpu-percent').textContent = `${data.cpu_usage_percent}%`;
+                        document.getElementById('cpu-progress').style.width = `${data.cpu_usage_percent}%`;
+                        
+                        document.getElementById('memory-percent').textContent = `${data.ram.usage_percent}%`;
+                        document.getElementById('memory-progress').style.width = `${data.ram.usage_percent}%`;
+                        
+                        document.getElementById('disk-percent').textContent = `${data.disk.usage_percent}%`;
+                        document.getElementById('disk-progress').style.width = `${data.disk.usage_percent}%`;
+                        
+                        // Set progress bar colors based on usage
+                        setCpuProgressColor(data.cpu_usage_percent);
+                        setMemoryProgressColor(data.ram.usage_percent);
+                        setDiskProgressColor(data.disk.usage_percent);
+                    } else {
+                        // Show connection error
+                        document.getElementById('connection-status').innerHTML = '<span class="status-indicator status-offline"></span> Offline';
+                        showError(`Failed to connect to server: ${data.message}`);
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('connection-status').innerHTML = '<span class="status-indicator status-offline"></span> Offline';
+                    showError(`Error fetching server status: ${error.message}`);
+                });
+        }
+        
+        // Set progress bar colors based on usage thresholds
+        function setCpuProgressColor(percent) {
+            const progressBar = document.getElementById('cpu-progress');
+            if (percent > 80) {
+                progressBar.className = 'progress-bar bg-danger';
+            } else if (percent > 60) {
+                progressBar.className = 'progress-bar bg-warning';
+            } else {
+                progressBar.className = 'progress-bar bg-info';
+            }
+        }
+        
+        function setMemoryProgressColor(percent) {
+            const progressBar = document.getElementById('memory-progress');
+            if (percent > 80) {
+                progressBar.className = 'progress-bar bg-danger';
+            } else if (percent > 60) {
+                progressBar.className = 'progress-bar bg-warning';
+            } else {
+                progressBar.className = 'progress-bar bg-success';
+            }
+        }
+        
+        function setDiskProgressColor(percent) {
+            const progressBar = document.getElementById('disk-progress');
+            if (percent > 90) {
+                progressBar.className = 'progress-bar bg-danger';
+            } else if (percent > 70) {
+                progressBar.className = 'progress-bar bg-warning';
+            } else {
+                progressBar.className = 'progress-bar bg-success';
+            }
+        }
+        
+        // Handle restart server button
+        document.getElementById('restart-btn').addEventListener('click', function() {
+            if (!confirm('Are you sure you want to restart this server? All services will be temporarily unavailable.')) {
+                return;
+            }
+            
+            const actionStatus = document.getElementById('action-status');
+            actionStatus.innerHTML = `
+                <div class="alert alert-info">
+                    <i class="fas fa-spinner fa-spin me-1"></i> Restarting server...
+                </div>
+            `;
+            
+            fetch(`{{ url_for('servers.restart_server', id=server.id) }}`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    actionStatus.innerHTML = `
+                        <div class="alert alert-success">
+                            <i class="fas fa-check-circle me-1"></i> ${data.message}
+                        </div>
+                    `;
+                    // Clear interval and show reconnecting message
+                    clearInterval(refreshInterval);
+                    setTimeout(() => {
+                        document.getElementById('connection-status').innerHTML = 
+                            '<span class="status-indicator status-loading"></span> Server restarting, will try to reconnect...';
+                        // Try to reconnect after 1 minute
+                        setTimeout(() => {
+                            fetchServerStatus();
+                            startAutoRefresh();
+                        }, 60000);
+                    }, 2000);
+                } else {
+                    actionStatus.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-times-circle me-1"></i> ${data.message}
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                actionStatus.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-times-circle me-1"></i> Error: ${error.message}
+                    </div>
+                `;
+            });
+        });
+        
+        // Handle update server button
+        document.getElementById('update-btn').addEventListener('click', function() {
+            if (!confirm('Are you sure you want to update this server? This may take some time to complete.')) {
+                return;
+            }
+            
+            const actionStatus = document.getElementById('action-status');
+            actionStatus.innerHTML = `
+                <div class="alert alert-info">
+                    <i class="fas fa-spinner fa-spin me-1"></i> Updating server... This may take several minutes.
+                </div>
+            `;
+            
+            fetch(`{{ url_for('servers.update_server', id=server.id) }}`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    actionStatus.innerHTML = `
+                        <div class="alert alert-success">
+                            <i class="fas fa-check-circle me-1"></i> ${data.message}
+                        </div>
+                    `;
+                } else {
+                    actionStatus.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-times-circle me-1"></i> ${data.message}
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                actionStatus.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-times-circle me-1"></i> Error: ${error.message}
+                    </div>
+                `;
+            });
+        });
+        
+        // Handle manual refresh
+        document.getElementById('refresh-btn').addEventListener('click', function() {
+            fetchServerStatus();
+        });
+        
+        // Show error message
+        function showError(message) {
+            console.error(message);
+        }
+        
+        // Auto-refresh every 30 seconds
+        function startAutoRefresh() {
+            refreshInterval = setInterval(fetchServerStatus, 30000);
+        }
+        
+        // Initial fetch and start auto-refresh
+        fetchServerStatus();
+        startAutoRefresh();
+    });
+</script>
+{% endblock %} 

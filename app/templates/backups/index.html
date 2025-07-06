@@ -104,7 +104,7 @@
                             <!-- Fix Config button will be dynamically added here when issues are detected -->
                             <div class="fix-config-container" data-job-id="{{ job.id }}" style="margin-top: 5px; display: none;">
                             </div>
-                            
+ 
                             <!-- Delete Modal -->
                             <div class="modal fade" id="deleteModal{{ job.id }}" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
                                 <div class="modal-dialog">
@@ -173,6 +173,42 @@
                                     </div>
                                 </div>
                             </div>
+                            
+                            <!-- Fix S3 Path Modal -->
+                            {% if job.s3_storage %}
+                            <div class="modal fade" id="fixS3PathModal{{ job.id }}" tabindex="-1" aria-labelledby="fixS3PathModalLabel" aria-hidden="true">
+                                <div class="modal-dialog modal-lg">
+                                    <div class="modal-content">
+                                        <div class="modal-header bg-info text-white">
+                                            <h5 class="modal-title" id="fixS3PathModalLabel">Optimize S3 Backup Path Structure</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="alert alert-info">
+                                                <h6><i class="fas fa-info-circle me-2"></i>What will be changed:</h6>
+                                                <p>This update will modify the pgBackRest configuration to exclude the unnecessary directory levels <code>var/lib/pgbackrest/*</code> in S3 storage, making it easier to navigate your backup files.</p>
+                                                <p><strong>Note:</strong> This will only affect <em>new</em> backups. Existing backups will remain in their current location.</p>
+                                            </div>
+                                            
+                                            <div class="mb-3">
+                                                <h6>Benefits:</h6>
+                                                <ul>
+                                                    <li>More straightforward S3 navigation</li>
+                                                    <li>Cleaner backup structure</li>
+                                                    <li>Easier manual verification of backups</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                            <button type="button" class="btn btn-info fix-s3-path-confirm" data-job-id="{{ job.id }}">
+                                                <i class="fas fa-check me-1"></i> Apply Optimization
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}

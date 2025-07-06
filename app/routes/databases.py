@@ -249,4 +249,19 @@ def check(id):
         return jsonify({
             'success': False,
             'message': str(e)
-        }) 
+        })
+
+@databases_bp.route('/credentials/<int:id>')
+@login_required
+@first_login_required
+def credentials(id):
+    database = PostgresDatabase.query.get_or_404(id)
+    server = database.server
+    
+    # Create the connection URL based on server and database info
+    connection_url = f"postgresql://{database.username}:{database.password}@{server.host}:{server.postgres_port}/{database.name}"
+    
+    return render_template('databases/credentials.html', 
+                           database=database, 
+                           server=server, 
+                           connection_url=connection_url) 

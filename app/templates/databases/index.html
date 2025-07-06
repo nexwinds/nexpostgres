@@ -44,6 +44,9 @@
                         </td>
                         <td>
                             <div class="btn-group" role="group">
+                                <a href="{{ url_for('databases.credentials', id=database.id) }}" class="btn btn-sm btn-outline-success">
+                                    <i class="fas fa-key"></i> Credentials
+                                </a>
                                 <button type="button" class="btn btn-sm btn-outline-info check-database" data-database-id="{{ database.id }}">
                                     <i class="fas fa-sync-alt"></i> Check
                                 </button>

@@ -275,23 +275,86 @@ def view_log(id):
 @first_login_required
 def restore():
     databases = PostgresDatabase.query.all()
+    backup_jobs = BackupJob.query.all()
     
     if request.method == 'POST':
         database_id = request.form.get('database_id', type=int)
-        backup_name = request.form.get('backup_name')
-        restore_time = request.form.get('restore_time')
+        backup_log_id = request.form.get('backup_log_id', type=int)
+        recovery_time = request.form.get('recovery_time')
+        restore_to_same = request.form.get('restore_to_same') == 'true'
+        
+        # Use target database if not restoring to same
+        if not restore_to_same:
+            target_database_id = request.form.get('target_database_id', type=int)
+            if target_database_id:
+                database_id = target_database_id
         
         # Validate data
         database = PostgresDatabase.query.get(database_id)
-        
         if not database:
             flash('Selected database does not exist', 'danger')
-            return render_template('backups/restore.html', databases=databases)
+            return render_template('backups/restore.html', databases=databases, backup_jobs=backup_jobs)
+        
+        # Get backup information if log ID is provided
+        backup_name = None
+        if backup_log_id:
+            backup_log = BackupLog.query.get(backup_log_id)
+            if not backup_log:
+                flash('Selected backup does not exist', 'danger')
+                return render_template('backups/restore.html', databases=databases, backup_jobs=backup_jobs)
+                
+            # Get backup job and check against database
+            backup_job = backup_log.backup_job
+            if backup_job.database_id != database_id and restore_to_same:
+                flash('Backup job does not match selected database', 'danger')
+                return render_template('backups/restore.html', databases=databases, backup_jobs=backup_jobs)
+            
+            # Get the backup name from the database
+            # Format for pgBackRest is typically like "latest", "20230101-123456F", etc.
+            server = backup_job.server
+            ssh = SSHManager(
+                host=server.host,
+                port=server.port,
+                username=server.username,
+                ssh_key_path=server.ssh_key_path,
+                ssh_key_content=server.ssh_key_content
+            )
+            
+            if ssh.connect():
+                pg_manager = PostgresManager(ssh)
+                backups = pg_manager.list_backups(backup_job.database.name)
+                ssh.disconnect()
+                
+                # Find a backup name corresponding to this log time
+                if backups:
+                    backup_log_time = backup_log.start_time
+                    for backup in backups:
+                        timestamp_str = backup.get('info', {}).get('timestamp', '')
+                        if timestamp_str:
+                            try:
+                                timestamp_parts = timestamp_str.split('-')
+                                if len(timestamp_parts) >= 6:
+                                    year = int(timestamp_parts[0])
+                                    month = int(timestamp_parts[1])
+                                    day = int(timestamp_parts[2])
+                                    hour = int(timestamp_parts[3])
+                                    minute = int(timestamp_parts[4])
+                                    second = int(timestamp_parts[5].split('.')[0])
+                                    
+                                    backup_time = datetime(year, month, day, hour, minute, second)
+                                    time_diff = abs((backup_time - backup_log_time).total_seconds())
+                                    
+                                    # If the backup time is close to the log time (within 60 seconds)
+                                    if time_diff <= 60:
+                                        backup_name = backup.get('name', '')
+                                        break
+                            except:
+                                continue
         
         # Ensure either backup name or restore time is provided
-        if not backup_name and not restore_time:
-            flash('Please provide either a backup name or a restore time', 'danger')
-            return render_template('backups/restore.html', databases=databases)
+        if not backup_name and not recovery_time:
+            flash('Please provide either a backup or a recovery point', 'danger')
+            return render_template('backups/restore.html', databases=databases, backup_jobs=backup_jobs)
         
         # Get server information
         server = database.server
@@ -307,7 +370,7 @@ def restore():
         
         if not ssh.connect():
             flash('Failed to connect to server via SSH', 'danger')
-            return render_template('backups/restore.html', databases=databases)
+            return render_template('backups/restore.html', databases=databases, backup_jobs=backup_jobs)
         
         # Create PostgreSQL manager
         pg_manager = PostgresManager(ssh)
@@ -315,8 +378,8 @@ def restore():
         # Create restore log entry
         restore_log = RestoreLog(
             database_id=database_id,
-            backup_name=backup_name,
-            restore_time=restore_time,
+            backup_log_id=backup_log_id if backup_log_id else None,
+            restore_time=recovery_time,
             status='in_progress'
         )
         
@@ -326,7 +389,7 @@ def restore():
         try:
             # Execute restore
             success, log_output = pg_manager.restore_backup(
-                database.name, backup_name, restore_time
+                database.name, backup_name, recovery_time
             )
             
             # Update restore log
@@ -355,7 +418,7 @@ def restore():
         
         return redirect(url_for('backups.restore_logs'))
     
-    return render_template('backups/restore.html', databases=databases)
+    return render_template('backups/restore.html', databases=databases, backup_jobs=backup_jobs)
 
 @backups_bp.route('/restore/logs')
 @login_required
@@ -1133,3 +1196,118 @@ pg1-path={data_dir}
         flash(f'Error fixing backup configuration: {str(e)}', 'danger')
         
     return redirect(url_for('backups.index')) 
+
+# Add this new API endpoint for backup logs
+@backups_bp.route('/api/logs')
+@login_required
+@first_login_required
+def api_logs():
+    job_id = request.args.get('job_id', type=int)
+    if not job_id:
+        return jsonify({'success': False, 'message': 'No job ID provided'})
+        
+    logs = BackupLog.query.filter_by(
+        backup_job_id=job_id, 
+        status='success'
+    ).order_by(BackupLog.start_time.desc()).all()
+    
+    logs_data = []
+    for log in logs:
+        size_mb = None
+        if log.size_bytes:
+            size_mb = round(log.size_bytes / (1024 * 1024), 2)
+            
+        logs_data.append({
+            'id': log.id,
+            'start_time': log.start_time.strftime('%Y-%m-%d %H:%M'),
+            'backup_type': log.backup_type,
+            'size_mb': size_mb
+        })
+    
+    return jsonify({
+        'success': True, 
+        'logs': logs_data
+    })
+
+@backups_bp.route('/api/recovery-points')
+@login_required
+@first_login_required
+def api_recovery_points():
+    job_id = request.args.get('job_id', type=int)
+    if not job_id:
+        return jsonify({'success': False, 'message': 'No job ID provided'})
+        
+    # Get the backup job
+    backup_job = BackupJob.query.get(job_id)
+    if not backup_job:
+        return jsonify({'success': False, 'message': 'Backup job not found'})
+    
+    database = backup_job.database
+    server = backup_job.server
+    
+    # Connect to server via SSH
+    try:
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_path=server.ssh_key_path,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            return jsonify({'success': False, 'message': 'Failed to connect to server via SSH'})
+        
+        # Create PostgreSQL manager
+        pg_manager = PostgresManager(ssh)
+        
+        # Get available backups to determine recovery points
+        backups = pg_manager.list_backups(database.name)
+        
+        if not backups:
+            ssh.disconnect()
+            return jsonify({'success': False, 'message': 'No backups found for this database'})
+        
+        # Extract recovery points from backups
+        recovery_points = []
+        for backup in backups:
+            # Get timestamp from backup info
+            timestamp_str = backup.get('info', {}).get('timestamp', '')
+            if timestamp_str:
+                try:
+                    # Convert timestamp to datetime and format
+                    timestamp_parts = timestamp_str.split('-')
+                    if len(timestamp_parts) >= 6:
+                        year = int(timestamp_parts[0])
+                        month = int(timestamp_parts[1])
+                        day = int(timestamp_parts[2])
+                        hour = int(timestamp_parts[3])
+                        minute = int(timestamp_parts[4])
+                        second = int(timestamp_parts[5].split('.')[0])
+                        
+                        dt = datetime(year, month, day, hour, minute, second)
+                        recovery_points.append({
+                            'datetime': dt.strftime('%Y-%m-%dT%H:%M:%S'),
+                            'formatted': dt.strftime('%Y-%m-%d %H:%M:%S'),
+                            'backup_name': backup.get('name', '')
+                        })
+                except (ValueError, IndexError) as e:
+                    pass  # Skip invalid timestamps
+        
+        ssh.disconnect()
+        
+        # Sort recovery points by datetime (newest first)
+        recovery_points.sort(key=lambda x: x['datetime'], reverse=True)
+        
+        return jsonify({
+            'success': True,
+            'recovery_points': recovery_points
+        })
+        
+    except Exception as e:
+        if 'ssh' in locals() and ssh:
+            ssh.disconnect()
+        return jsonify({
+            'success': False,
+            'message': f'Error retrieving recovery points: {str(e)}'
+        }) 

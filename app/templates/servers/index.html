@@ -66,6 +66,9 @@
                         </td>
                         <td>
                             <div class="btn-group" role="group">
+                                <a href="{{ url_for('servers.status', id=server.id) }}" class="btn btn-sm btn-info">
+                                    <i class="fas fa-chart-line"></i> Status
+                                </a>
                                 <a href="{{ url_for('servers.edit', id=server.id) }}" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-edit"></i> Edit
                                 </a>

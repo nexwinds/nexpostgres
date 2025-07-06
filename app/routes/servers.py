@@ -4,6 +4,7 @@ from app.utils.ssh_manager import test_ssh_connection, SSHManager
 from app.utils.postgres_manager import PostgresManager
 from app.routes.auth import login_required, first_login_required
 import os
+import json
 
 servers_bp = Blueprint('servers', __name__, url_prefix='/servers')
 
@@ -208,6 +209,181 @@ def initialize_server(id):
             return jsonify({
                 'success': False,
                 'message': message
+            })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        })
+
+@servers_bp.route('/status/<int:id>')
+@login_required
+@first_login_required
+def status(id):
+    server = VpsServer.query.get_or_404(id)
+    return render_template('servers/status.html', server=server)
+
+@servers_bp.route('/status-data/<int:id>', methods=['GET'])
+@login_required
+@first_login_required
+def status_data(id):
+    server = VpsServer.query.get_or_404(id)
+    
+    try:
+        # Connect to server via SSH
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_path=server.ssh_key_path,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            return jsonify({
+                'success': False,
+                'message': 'Failed to connect to server via SSH'
+            })
+        
+        # Get system information
+        os_info = ssh.execute_command("cat /etc/os-release | grep -E '^(NAME|VERSION)' | tr '\\n' ' '")
+        os_name = os_info['stdout'].strip()
+        
+        # Get public IPv4 address
+        ip_info = ssh.execute_command("curl -s https://ipinfo.io/ip || hostname -I | awk '{print $1}'")
+        public_ip = ip_info['stdout'].strip()
+        
+        # Get CPU info
+        cpu_info = ssh.execute_command("nproc --all")
+        vcpu_count = cpu_info['stdout'].strip()
+        
+        # Get memory info
+        mem_info = ssh.execute_command("free -m | grep Mem")
+        mem_parts = mem_info['stdout'].strip().split()
+        total_ram = int(mem_parts[1])
+        used_ram = int(mem_parts[2])
+        ram_usage_percent = round((used_ram / total_ram) * 100, 2)
+        
+        # Get disk info
+        disk_info = ssh.execute_command("df -h / | tail -1")
+        disk_parts = disk_info['stdout'].strip().split()
+        total_disk = disk_parts[1]
+        used_disk = disk_parts[2]
+        free_disk = disk_parts[3]
+        disk_usage_percent = disk_parts[4].replace('%', '')
+        
+        # Get current CPU usage
+        cpu_usage = ssh.execute_command("top -bn1 | grep 'Cpu(s)' | awk '{print $2}'")
+        cpu_usage_percent = cpu_usage['stdout'].strip()
+        
+        # Disconnect
+        ssh.disconnect()
+        
+        # Prepare response data
+        system_info = {
+            'success': True,
+            'os': os_name,
+            'ip': public_ip,
+            'vcpu': vcpu_count,
+            'ram': {
+                'total': total_ram,
+                'used': used_ram,
+                'usage_percent': ram_usage_percent
+            },
+            'disk': {
+                'total': total_disk,
+                'used': used_disk,
+                'free': free_disk,
+                'usage_percent': disk_usage_percent
+            },
+            'cpu_usage_percent': cpu_usage_percent
+        }
+        
+        return jsonify(system_info)
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        })
+
+@servers_bp.route('/restart/<int:id>', methods=['POST'])
+@login_required
+@first_login_required
+def restart_server(id):
+    server = VpsServer.query.get_or_404(id)
+    
+    try:
+        # Connect to server via SSH
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_path=server.ssh_key_path,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            return jsonify({
+                'success': False,
+                'message': 'Failed to connect to server via SSH'
+            })
+        
+        # Issue reboot command
+        ssh.execute_command("sudo reboot")
+        
+        # Disconnect
+        ssh.disconnect()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Server restart initiated successfully'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        })
+
+@servers_bp.route('/update/<int:id>', methods=['POST'])
+@login_required
+@first_login_required
+def update_server(id):
+    server = VpsServer.query.get_or_404(id)
+    
+    try:
+        # Connect to server via SSH
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_path=server.ssh_key_path,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            return jsonify({
+                'success': False,
+                'message': 'Failed to connect to server via SSH'
+            })
+        
+        # Run system update command
+        update_result = ssh.execute_command("sudo apt-get update && sudo apt-get upgrade -y")
+        
+        # Disconnect
+        ssh.disconnect()
+        
+        if update_result['exit_code'] == 0:
+            return jsonify({
+                'success': True,
+                'message': 'Server updated successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': f"Update failed: {update_result['stderr']}"
             })
         
     except Exception as e:

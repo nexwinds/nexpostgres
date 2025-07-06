@@ -224,34 +224,30 @@
     document.addEventListener('DOMContentLoaded', function() {
         // Chart for backup activity
         var ctx = document.getElementById('backupChart').getContext('2d');
-        var backupChart = new Chart(ctx, {
+        new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: {{ dates|tojson }},
-                datasets: [
-                    {
-                        label: 'Successful',
-                        data: {{ successful_data|tojson }},
-                        backgroundColor: 'rgba(40, 167, 69, 0.7)',
-                        borderColor: 'rgba(40, 167, 69, 1)',
-                        borderWidth: 1
-                    },
-                    {
-                        label: 'Failed',
-                        data: {{ failed_data|tojson }},
-                        backgroundColor: 'rgba(220, 53, 69, 0.7)',
-                        borderColor: 'rgba(220, 53, 69, 1)',
-                        borderWidth: 1
-                    }
-                ]
+                datasets: [{
+                    label: 'Successful',
+                    data: {{ successful_data|tojson }},
+                    backgroundColor: 'rgba(40, 167, 69, 0.7)',
+                    borderColor: 'rgba(40, 167, 69, 1)',
+                    borderWidth: 1
+                }, {
+                    label: 'Failed',
+                    data: {{ failed_data|tojson }},
+                    backgroundColor: 'rgba(220, 53, 69, 0.7)',
+                    borderColor: 'rgba(220, 53, 69, 1)',
+                    borderWidth: 1
+                }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
                     y: {
-                        beginAtZero: true,
-                        precision: 0
+                        beginAtZero: true
                     }
                 }
             }

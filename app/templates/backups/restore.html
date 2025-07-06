@@ -29,7 +29,7 @@
                 <select class="form-select" id="backup_job_id" name="backup_job_id" required>
                     <option value="" selected disabled>Select a backup job</option>
                     {% for job in backup_jobs %}
-                    <option value="{{ job.id }}" {% if source_job_id == job.id %}selected{% endif %}>
+                    <option value="{{ job.id }}" data-database-id="{{ job.database_id }}">
                         {{ job.name }} ({{ job.database.name }} on {{ job.server.name }})
                     </option>
                     {% endfor %}
@@ -40,18 +40,12 @@
                 <label for="backup_log_id" class="form-label">Backup to Restore</label>
                 <select class="form-select" id="backup_log_id" name="backup_log_id">
                     <option value="" selected disabled>Select backup job first</option>
-                    {% if source_logs %}
-                    {% for log in source_logs %}
-                    <option value="{{ log.id }}" {% if source_log_id == log.id %}selected{% endif %}>
-                        {{ log.start_time.strftime('%Y-%m-%d %H:%M') }} - 
-                        {% if log.backup_type == 'full' %}Full{% else %}Incremental{% endif %} - 
-                        {% if log.size_mb %}{{ log.size_mb }} MB{% else %}Size unknown{% endif %}
-                    </option>
-                    {% endfor %}
-                    {% endif %}
                 </select>
                 <div class="form-text">Only successful backups are shown</div>
             </div>
+
+            <!-- Hidden input to store database ID -->
+            <input type="hidden" id="database_id" name="database_id" value="">
             
             <!-- Target Options -->
             <h4 class="border-bottom pb-2 mb-3 mt-5">Target Options</h4>
@@ -85,8 +79,10 @@
             
             <div class="mb-3" id="recoveryTimeDiv" style="display: none;">
                 <label for="recovery_time" class="form-label">Recovery Target Time</label>
-                <input type="datetime-local" class="form-control" id="recovery_time" name="recovery_time">
-                <div class="form-text">The point in time to restore to (leave empty for latest)</div>
+                <select class="form-select" id="recovery_time" name="recovery_time">
+                    <option value="" selected disabled>Select backup job first</option>
+                </select>
+                <div class="form-text">Available recovery points for selected backup job</div>
             </div>
             
             <!-- Advanced Options -->
@@ -134,14 +130,28 @@
         const recoveryTargetTimeCheckbox = document.getElementById('recovery_target_time');
         const recoveryTimeDiv = document.getElementById('recoveryTimeDiv');
         const backupLogSelection = document.getElementById('backupLogSelection');
+        const databaseIdInput = document.getElementById('database_id');
+        const recoveryTimeSelect = document.getElementById('recovery_time');
         
         // Handle backup job selection change
         backupJobSelect.addEventListener('change', function() {
             const jobId = this.value;
             if (!jobId) return;
             
-            // Show loading indicator
-            backupLogSelection.innerHTML = '<div class="spinner-border spinner-border-sm text-primary" role="status"><span class="visually-hidden">Loading...</span></div> Loading backup logs...';
+            // Get the database ID from the selected job option
+            const databaseId = this.options[this.selectedIndex].getAttribute('data-database-id');
+            databaseIdInput.value = databaseId;
+            
+            // Show loading indicator for backup logs
+            backupLogSelection.innerHTML = `
+                <label for="backup_log_id" class="form-label">Backup to Restore</label>
+                <div class="d-flex align-items-center">
+                    <div class="spinner-border spinner-border-sm text-primary me-2" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <span>Loading backup logs...</span>
+                </div>
+            `;
             
             // Fetch backup logs for selected job
             fetch(`/backups/api/logs?job_id=${jobId}`)
@@ -176,7 +186,41 @@
                         <div class="form-text text-danger">Failed to load backup logs: ${error.message}</div>
                     `;
                 });
+                
+            // Load recovery points when recovery_target_time is checked
+            if (recoveryTargetTimeCheckbox.checked) {
+                loadRecoveryPoints(jobId);
+            }
         });
+        
+        // Function to load recovery points
+        function loadRecoveryPoints(jobId) {
+            recoveryTimeSelect.innerHTML = `
+                <option value="" selected disabled>Loading recovery points...</option>
+            `;
+            
+            fetch(`/backups/api/recovery-points?job_id=${jobId}`)
+                .then(response => response.json())
+                .then(data => {
+                    let options = '<option value="" selected disabled>Select a recovery point</option>';
+                    
+                    if (data.success && data.recovery_points && data.recovery_points.length > 0) {
+                        data.recovery_points.forEach(point => {
+                            options += `<option value="${point.datetime}">${point.formatted} (${point.backup_name})</option>`;
+                        });
+                    } else {
+                        options = '<option value="" selected disabled>No recovery points available</option>';
+                    }
+                    
+                    recoveryTimeSelect.innerHTML = options;
+                })
+                .catch(error => {
+                    console.error('Error fetching recovery points:', error);
+                    recoveryTimeSelect.innerHTML = `
+                        <option value="" selected disabled>Error loading recovery points</option>
+                    `;
+                });
+        }
         
         // Handle restore to same checkbox
         restoreToSameCheckbox.addEventListener('change', function() {
@@ -193,6 +237,10 @@
         recoveryTargetTimeCheckbox.addEventListener('change', function() {
             if (this.checked) {
                 recoveryTimeDiv.style.display = 'block';
+                const jobId = backupJobSelect.value;
+                if (jobId) {
+                    loadRecoveryPoints(jobId);
+                }
             } else {
                 recoveryTimeDiv.style.display = 'none';
             }

@@ -349,8 +349,8 @@ class PostgresManager:
         
         # Create pgBackRest main configuration
         config_content = f"""[global]
-# Path where backups and archives are stored
-repo1-path=/var/lib/pgbackrest
+# Local repo path used for transaction logs and temporary files
+repo1-local-path=/var/lib/pgbackrest
 
 # Configuration include path
 config-include-path=/etc/pgbackrest/conf.d
@@ -362,6 +362,9 @@ repo1-s3-endpoint=s3.{s3_region}.amazonaws.com
 repo1-s3-region={s3_region}
 repo1-s3-key={s3_access_key}
 repo1-s3-key-secret={s3_secret_key}
+
+# Use direct S3 paths (no var/lib/pgbackrest prefix)
+repo1-path=/
 
 # Backup retention policy
 repo1-retention-full=7
@@ -481,11 +484,14 @@ pg1-user=postgres
             
             # Basic configuration without S3 settings
             main_config = """[global]
-# Path where backups and archives are stored
-repo1-path=/var/lib/pgbackrest
+# Local repo path used for transaction logs and temporary files
+repo1-local-path=/var/lib/pgbackrest
 
 # Configuration include path
 config-include-path=/etc/pgbackrest/conf.d
+
+# Use direct S3 paths (no var/lib/pgbackrest prefix)
+repo1-path=/
 
 # Backup retention policy
 repo1-retention-full=7

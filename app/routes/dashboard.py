@@ -36,20 +36,28 @@ def index():
             FROM backup_log
             WHERE start_time >= :seven_days_ago
             GROUP BY date(start_time)
+            ORDER BY date(start_time)
         """), 
         {"seven_days_ago": seven_days_ago}
     ).all()
     
     # Prepare chart data
-    stats_dict = {stat.date: (stat.successful, stat.failed) for stat in daily_stats}
-    date_list = [(datetime.utcnow() - timedelta(days=x)).date() for x in range(6, -1, -1)]
+    # Convert date strings to date objects for easier comparison
+    stats_dict = {datetime.strptime(stat.date, '%Y-%m-%d').date(): (stat.successful, stat.failed) for stat in daily_stats}
+    
+    # Generate the last 7 days date range
+    today = datetime.utcnow().date()
+    date_list = [(today - timedelta(days=x)) for x in range(6, -1, -1)]
     
     dates = []
     successful = []
     failed = []
     
     for date in date_list:
+        # Format date for display
         dates.append(date.strftime('%Y-%m-%d'))
+        
+        # Get stats for this date if available
         if date in stats_dict:
             successful.append(stats_dict[date][0] or 0)
             failed.append(stats_dict[date][1] or 0)
