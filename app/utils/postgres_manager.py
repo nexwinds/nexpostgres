@@ -1122,7 +1122,7 @@ EOF"''')
             health_status['issues'].append("pgbackrest is not installed")
             return False, health_status
             
-        # Check PostgreSQL configuration
+        # Check PostgreSQL configuration - only check, don't modify
         pg_config = self._find_postgresql_conf()
         if not pg_config:
             health_status['issues'].append("Could not find PostgreSQL configuration file")
@@ -1139,40 +1139,18 @@ EOF"''')
             if not archive_mode_ok:
                 health_status['issues'].append("archive_mode is not set to 'on'")
             if not archive_command_ok:
-                health_status['issues'].append("archive_command is not properly configured")
+                health_status['issues'].append("archive_command is not properly configured for pgBackRest")
                 
-        # Check backup configuration
+        # Check backup configuration - only check, don't modify
         check_backup = self.ssh.execute_command(f"sudo -u postgres pgbackrest --stanza={db_name} info")
         health_status['backup_config_correct'] = check_backup['exit_code'] == 0
         
         if not health_status['backup_config_correct']:
-            health_status['issues'].append("Backup configuration is incorrect")
+            health_status['issues'].append("pgBackRest configuration is incorrect")
             
             # Check for specific S3 endpoint issue
             if "requires option: repo1-s3-endpoint" in check_backup['stderr']:
                 health_status['issues'].append("Missing S3 endpoint configuration")
-                
-                # Try to fix S3 endpoint issue
-                s3_region = None
-                region_check = self.ssh.execute_command("sudo grep 'repo1-s3-region' /etc/pgbackrest/pgbackrest.conf")
-                if region_check['exit_code'] == 0:
-                    region_match = re.search(r'repo1-s3-region=([^\s]+)', region_check['stdout'])
-                    if region_match:
-                        s3_region = region_match.group(1)
-                
-                if s3_region:
-                    # Add S3 endpoint to configuration
-                    self.logger.info(f"Adding missing S3 endpoint for region {s3_region}")
-                    endpoint_cmd = f"sudo sed -i '/repo1-s3-region/a repo1-s3-endpoint=s3.{s3_region}.amazonaws.com' /etc/pgbackrest/pgbackrest.conf"
-                    self.ssh.execute_command(endpoint_cmd)
-                    
-                    # Check if fix worked
-                    recheck = self.ssh.execute_command(f"sudo -u postgres pgbackrest --stanza={db_name} info")
-                    health_status['backup_config_correct'] = recheck['exit_code'] == 0
-                    if health_status['backup_config_correct']:
-                        health_status['issues'].remove("Backup configuration is incorrect")
-                        health_status['issues'].remove("Missing S3 endpoint configuration")
-                        health_status['issues'].append("Fixed missing S3 endpoint configuration")
         
         # Check if full backup exists
         if health_status['backup_config_correct']:
@@ -1186,14 +1164,36 @@ EOF"''')
                          health_status['pgbackrest_installed'] and 
                          health_status['pg_config_correct'] and 
                          health_status['backup_config_correct'] and 
-                         health_status['full_backup_exists'])
+                         (health_status['full_backup_exists'] or True))  # Don't fail just because no backup exists yet
         
         return overall_status, health_status
     
     def execute_backup(self, db_name, backup_type):
         """Execute a backup on demand"""
-        # Verify and fix configuration issues
-        self.verify_and_fix_postgres_config(db_name)
+        # Check if configuration is valid without modifying it
+        check_cmd = f"sudo -u postgres pgbackrest --stanza={db_name} check"
+        check_result = self.ssh.execute_command(check_cmd)
+        
+        # Only fix configuration if there's an issue
+        if check_result['exit_code'] != 0:
+            self.logger.warning(f"Backup configuration check failed: {check_result['stderr']}. Attempting to fix.")
+            
+            # Check for specific S3 endpoint issue
+            if "requires option: repo1-s3-endpoint" in check_result['stderr']:
+                self.logger.info("Fixing missing S3 endpoint configuration")
+                s3_region = None
+                region_check = self.ssh.execute_command("sudo grep 'repo1-s3-region' /etc/pgbackrest/pgbackrest.conf")
+                if region_check['exit_code'] == 0:
+                    region_match = re.search(r'repo1-s3-region=([^\s]+)', region_check['stdout'])
+                    if region_match:
+                        s3_region = region_match.group(1)
+                
+                if s3_region:
+                    endpoint_cmd = f"sudo sed -i '/repo1-s3-region/a repo1-s3-endpoint=s3.{s3_region}.amazonaws.com' /etc/pgbackrest/pgbackrest.conf"
+                    self.ssh.execute_command(endpoint_cmd)
+            else:
+                # Only perform full configuration fix if not a simple issue
+                self.verify_and_fix_postgres_config(db_name)
         
         # For incremental backup, check if full backup exists
         if backup_type == 'incr':
@@ -1202,7 +1202,8 @@ EOF"''')
                 self.logger.warning("No prior backup exists, changing to full backup")
                 backup_type = 'full'
         
-        # Execute backup
+        # Execute backup without reconfiguring
+        self.logger.info(f"Executing {backup_type} backup for {db_name}")
         result = self.ssh.execute_command(f"sudo -u postgres pgbackrest --stanza={db_name} --type={backup_type} --repo1-retention-full=7 --repo1-retention-full-type=count backup")
         
         if result['exit_code'] != 0:

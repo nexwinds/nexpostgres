@@ -17,6 +17,7 @@ except ImportError:
 from app.models.database import BackupJob, BackupLog, db
 from app.utils.ssh_manager import SSHManager
 from app.utils.postgres_manager import PostgresManager
+from flask import current_app
 
 logger = logging.getLogger('nexpostgres.scheduler')
 
@@ -107,18 +108,31 @@ def execute_backup(job_id, manual=False):
         # Setup PostgreSQL manager
         pg_manager = PostgresManager(ssh)
         
-        # Configure pgBackRest if S3 storage is set
-        if s3_storage:
-            success = pg_manager.setup_pgbackrest_config(
-                database.name,
-                s3_storage.bucket,
-                s3_storage.region,
-                s3_storage.access_key,
-                s3_storage.secret_key
-            )
+        # Check if pgBackRest configuration is valid
+        check_cmd = f"sudo -u postgres pgbackrest --stanza={database.name} check"
+        check_result = ssh.execute_command(check_cmd)
+        
+        # Only configure if there's an issue with the configuration
+        if check_result['exit_code'] != 0:
+            logger.warning(f"Backup configuration check failed: {check_result['stderr']}. Attempting to fix.")
             
-            if not success:
-                raise Exception("Failed to configure pgBackRest")
+            # Configure pgBackRest if S3 storage is set
+            if s3_storage:
+                success = pg_manager.setup_pgbackrest_config(
+                    database.name,
+                    s3_storage.bucket,
+                    s3_storage.region,
+                    s3_storage.access_key,
+                    s3_storage.secret_key
+                )
+                
+                if not success:
+                    raise Exception("Failed to configure pgBackRest")
+            else:
+                # Update configuration without S3
+                pg_manager.update_pgbackrest_config(database.name)
+        else:
+            logger.info(f"Backup configuration for {database.name} is valid, proceeding with backup")
         
         # Execute backup
         success, log_output = pg_manager.execute_backup(database.name, job.backup_type)
