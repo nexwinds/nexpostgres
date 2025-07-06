@@ -85,6 +85,9 @@ def add():
         db.session.add(backup_job)
         db.session.commit()
         
+        # Verify and setup backup configuration if needed
+        _check_and_configure_backup(database, s3_storage)
+        
         # Schedule the backup job
         try:
             schedule_backup_job(backup_job)
@@ -95,6 +98,44 @@ def add():
         return redirect(url_for('backups.index'))
     
     return render_template('backups/add.html', databases=databases, s3_storages=s3_storages)
+
+def _check_and_configure_backup(database, s3_storage):
+    """Helper function to check and configure backup if needed"""
+    try:
+        # Connect to server and check backup configuration
+        ssh, pg_manager = get_managers(database.server)
+        
+        if not ssh or not pg_manager:
+            flash('Unable to connect to server to verify backup configuration', 'warning')
+            return
+            
+        # Check if configuration is valid
+        check_cmd = f"sudo -u postgres pgbackrest --stanza={database.name} check"
+        check_result = ssh.execute_command(check_cmd)
+        
+        if check_result['exit_code'] != 0:
+            flash('Configuring backup system...', 'info')
+            
+            # Configure pgBackRest based on storage type
+            if s3_storage:
+                pg_manager.setup_pgbackrest_config(
+                    database.name,
+                    s3_storage.bucket,
+                    s3_storage.region,
+                    s3_storage.access_key,
+                    s3_storage.secret_key
+                )
+            else:
+                pg_manager.update_pgbackrest_config(database.name)
+                
+            flash('Backup system configured successfully', 'success')
+        else:
+            flash('Backup configuration is valid', 'success')
+            
+        # Clean up
+        ssh.disconnect()
+    except Exception as e:
+        flash(f'Configuration check failed: {str(e)}', 'warning')
 
 @backups_bp.route('/edit/<int:id>', methods=['GET', 'POST'])
 @login_required
@@ -138,9 +179,12 @@ def edit(id):
         backup_job.s3_storage_id = s3_storage_id
         
         db.session.commit()
-        
-        # Reschedule the backup job if enabled
+
+        # Check configuration if job is enabled
         if enabled:
+            _check_and_configure_backup(database, s3_storage)
+            
+            # Reschedule the job
             try:
                 schedule_backup_job(backup_job)
                 flash('Backup job updated and rescheduled successfully', 'success')

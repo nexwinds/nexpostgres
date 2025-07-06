@@ -71,15 +71,11 @@ def parse_cron_expression(expression):
     return result
 
 def execute_backup(job_id, manual=False):
-    """Execute a backup job (common function for scheduled and manual backups)"""
+    """Execute a backup job"""
     job = BackupJob.query.get(job_id)
     if not job:
         logger.error(f"Backup job {job_id} not found")
         return False, "Backup job not found"
-    
-    database = job.database
-    server = job.server
-    s3_storage = job.s3_storage
     
     # Create a backup log entry
     backup_log = BackupLog(
@@ -92,76 +88,63 @@ def execute_backup(job_id, manual=False):
     db.session.add(backup_log)
     db.session.commit()
     
+    success, message = False, "Initialization error"
+    
     try:
         # Connect to server
         ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_path=server.ssh_key_path,
-            ssh_key_content=server.ssh_key_content
+            host=job.server.host,
+            port=job.server.port,
+            username=job.server.username,
+            ssh_key_path=job.server.ssh_key_path,
+            ssh_key_content=job.server.ssh_key_content
         )
         
         if not ssh.connect():
             raise Exception("Failed to connect to server via SSH")
         
-        # Setup PostgreSQL manager
+        # Setup PostgreSQL manager and execute backup
         pg_manager = PostgresManager(ssh)
         
-        # Check if pgBackRest configuration is valid
-        check_cmd = f"sudo -u postgres pgbackrest --stanza={database.name} check"
-        check_result = ssh.execute_command(check_cmd)
+        # Check configuration validity before proceeding
+        check_result = ssh.execute_command(f"sudo -u postgres pgbackrest --stanza={job.database.name} check")
         
-        # Only configure if there's an issue with the configuration
         if check_result['exit_code'] != 0:
-            logger.warning(f"Backup configuration check failed: {check_result['stderr']}. Attempting to fix.")
-            
-            # Configure pgBackRest if S3 storage is set
-            if s3_storage:
-                success = pg_manager.setup_pgbackrest_config(
-                    database.name,
-                    s3_storage.bucket,
-                    s3_storage.region,
-                    s3_storage.access_key,
-                    s3_storage.secret_key
-                )
-                
-                if not success:
+            logger.warning(f"Fixing configuration for {job.database.name}")
+            # Configure with or without S3 as needed
+            if job.s3_storage:
+                if not pg_manager.setup_pgbackrest_config(
+                    job.database.name,
+                    job.s3_storage.bucket,
+                    job.s3_storage.region,
+                    job.s3_storage.access_key,
+                    job.s3_storage.secret_key
+                ):
                     raise Exception("Failed to configure pgBackRest")
             else:
-                # Update configuration without S3
-                pg_manager.update_pgbackrest_config(database.name)
-        else:
-            logger.info(f"Backup configuration for {database.name} is valid, proceeding with backup")
-        
-        # Execute backup
-        success, log_output = pg_manager.execute_backup(database.name, job.backup_type)
-        
+                pg_manager.update_pgbackrest_config(job.database.name)
+                
+        # Execute the backup
+        success, log_output = pg_manager.execute_backup(job.database.name, job.backup_type)
+        message = "Backup completed successfully" if success else f"Backup failed: {log_output}"
+        logger.info(f"Backup job {job.name} (ID: {job.id}): {message}")
+    
+    except Exception as e:
+        success, message = False, str(e)
+        logger.error(f"Error executing backup job {job.id}: {message}")
+    
+    finally:
         # Update backup log
         backup_log.status = "success" if success else "failed"
         backup_log.end_time = datetime.utcnow()
-        backup_log.log_output = log_output
+        backup_log.log_output = message
         
+        # Clean up and save changes
         db.session.commit()
-        
-        # Disconnect SSH
-        ssh.disconnect()
-        
-        message = "Backup completed successfully" if success else f"Backup failed: {log_output}"
-        logger.info(f"Backup job {job.name} (ID: {job.id}) completed with status: {backup_log.status}")
-        
-        return success, message
-        
-    except Exception as e:
-        # Update backup log with error
-        backup_log.status = "failed"
-        backup_log.end_time = datetime.utcnow()
-        backup_log.log_output = str(e)
-        
-        db.session.commit()
-        
-        logger.error(f"Error executing backup job {job.name} (ID: {job.id}): {str(e)}")
-        return False, str(e)
+        if 'ssh' in locals() and ssh:
+            ssh.disconnect()
+    
+    return success, message
 
 def execute_backup_job(job_id):
     """Execute a scheduled backup job"""
