@@ -32,6 +32,7 @@
                         <th>Type</th>
                         <th>Schedule</th>
                         <th>Status</th>
+                        <th>Retention</th>
                         <th>Last Run</th>
                         <th>Actions</th>
                     </tr>
@@ -65,6 +66,9 @@
                             {% endif %}
                         </td>
                         <td>
+                            <span class="badge bg-secondary">Keep {{ job.retention_count }}</span>
+                        </td>
+                        <td>
                             {% set last_log = job.logs|sort(attribute='start_time', reverse=True)|first %}
                             {% if last_log %}
                                 {{ last_log.start_time.strftime('%Y-%m-%d %H:%M') }}
@@ -87,6 +91,11 @@
                                 <a href="{{ url_for('backups.edit', id=job.id) }}" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-edit"></i> Edit
                                 </a>
+                                <form action="{{ url_for('backups.apply_retention', id=job.id) }}" method="post" class="d-inline">
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary" title="Enforce retention policy (delete old backups)">
+                                        <i class="fas fa-broom"></i> Apply Retention
+                                    </button>
+                                </form>
                                 <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteModal{{ job.id }}">
                                     <i class="fas fa-trash"></i> Delete
                                 </button>

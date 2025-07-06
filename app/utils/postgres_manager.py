@@ -3,6 +3,7 @@ import re
 from app.utils.ssh_manager import SSHManager
 import time
 import os
+from datetime import datetime
 
 class PostgresManager:
     def __init__(self, ssh_manager):
@@ -1174,7 +1175,7 @@ EOF"''')
         
         return overall_status, health_status
     
-    def execute_backup(self, db_name, backup_type):
+    def execute_backup(self, db_name, backup_type, retention_count=7):
         """Execute a backup on demand"""
         # Check configuration and fix only if necessary
         check_result = self.ssh.execute_command(f"sudo -u postgres pgbackrest --stanza={db_name} check")
@@ -1193,9 +1194,20 @@ EOF"''')
             self.logger.warning(f"No full backup exists for {db_name}, switching to full backup")
             backup_type = 'full'
         
-        # Execute the backup
-        result = self.ssh.execute_command(f"sudo -u postgres pgbackrest --stanza={db_name} --type={backup_type} --repo1-retention-full=7 --repo1-retention-full-type=count backup")
-        return (result['exit_code'] == 0, result['stderr'] if result['exit_code'] != 0 else result['stdout'])
+        # Execute the backup with the specified retention policy
+        result = self.ssh.execute_command(f"sudo -u postgres pgbackrest --stanza={db_name} --type={backup_type} --repo1-retention-full={retention_count} --repo1-retention-full-type=count backup")
+        success = result['exit_code'] == 0
+        output = result['stderr'] if not success else result['stdout']
+        
+        if success:
+            # The pgbackrest retention is only applied during a full backup, so we explicitly
+            # clean up old backups to ensure we're always enforcing the retention policy
+            cleanup_success, cleanup_message = self.cleanup_old_backups(db_name, retention_count)
+            if not cleanup_success:
+                self.logger.warning(f"Backup succeeded but cleanup failed: {cleanup_message}")
+                output += f"\nBackup succeeded but cleanup failed: {cleanup_message}"
+        
+        return success, output
         
     def _get_s3_region(self):
         """Extract S3 region from configuration file"""
@@ -1564,3 +1576,66 @@ EOF"''')
         except Exception as e:
             self.logger.error(f"Error updating user password: {str(e)}")
             return False, f"Error updating user password: {str(e)}"
+    
+    def cleanup_old_backups(self, db_name, retention_count):
+        """
+        Apply retention policy to existing backups.
+        Delete old backups beyond the retention count limit.
+        
+        Args:
+            db_name: Database name (stanza)
+            retention_count: Number of backups to keep
+            
+        Returns:
+            tuple: (success, message)
+        """
+        try:
+            # First, list all available backups
+            backups = self.list_backups(db_name)
+            
+            if not backups or len(backups) <= retention_count:
+                # No action needed, we're within the retention limit
+                return True, f"No cleanup needed. Current backups ({len(backups)}) within retention limit ({retention_count})"
+            
+            # Sort backups by timestamp (newest first)
+            # Extract timestamp from backup info
+            for backup in backups:
+                if 'timestamp' in backup['info']:
+                    timestamp_str = backup['info']['timestamp']
+                    try:
+                        # Convert timestamp string to datetime object
+                        backup['datetime'] = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+                    except ValueError:
+                        # Fallback if format doesn't match
+                        backup['datetime'] = datetime.now()
+                else:
+                    # Fallback if no timestamp available
+                    backup['datetime'] = datetime.now()
+            
+            # Sort backups by datetime (newest first)
+            backups.sort(key=lambda x: x['datetime'], reverse=True)
+            
+            # Keep the newest backups up to the retention limit
+            backups_to_keep = backups[:retention_count]
+            backups_to_delete = backups[retention_count:]
+            
+            if not backups_to_delete:
+                return True, "No backups to delete"
+            
+            deleted_count = 0
+            # Delete old backups
+            for backup in backups_to_delete:
+                backup_name = backup['name']
+                result = self.ssh.execute_command(f"sudo -u postgres pgbackrest --stanza={db_name} forget {backup_name}")
+                
+                if result['exit_code'] == 0:
+                    self.logger.info(f"Successfully deleted old backup: {backup_name}")
+                    deleted_count += 1
+                else:
+                    self.logger.error(f"Failed to delete backup {backup_name}: {result['stderr']}")
+            
+            return True, f"Successfully deleted {deleted_count} old backups, keeping {len(backups_to_keep)} most recent backups"
+        
+        except Exception as e:
+            self.logger.error(f"Error in cleanup_old_backups: {str(e)}")
+            return False, f"Error cleaning up old backups: {str(e)}"

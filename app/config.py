@@ -14,7 +14,7 @@ class Config:
     
     # Session configuration
     SESSION_TYPE = 'sqlalchemy'
-    SESSION_COOKIE_NAME = 'nexdb_session'
+    SESSION_COOKIE_NAME = 'nexpostgres_session'
     SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', '0') == '1'
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = 'Lax'
@@ -27,6 +27,7 @@ class Config:
     # Application specific configurations
     DEFAULT_SSH_PORT = int(os.environ.get('DEFAULT_SSH_PORT', '22'))
     DEFAULT_POSTGRES_PORT = int(os.environ.get('DEFAULT_POSTGRES_PORT', '5432'))
+    DEFAULT_BACKUP_RETENTION_COUNT = int(os.environ.get('DEFAULT_BACKUP_RETENTION_COUNT', '7'))
     
     # File paths
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))

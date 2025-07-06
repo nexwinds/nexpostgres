@@ -54,6 +54,7 @@ def add():
         backup_type = request.form.get('backup_type')
         cron_expression = request.form.get('cron_expression')
         s3_storage_id = request.form.get('s3_storage_id', type=int)
+        retention_count = request.form.get('retention_count', type=int, default=7)
         
         # Validate data
         database = PostgresDatabase.query.get(database_id)
@@ -71,6 +72,11 @@ def add():
             flash('Invalid backup type', 'danger')
             return render_template('backups/add.html', databases=databases, s3_storages=s3_storages)
         
+        # Validate retention count
+        if not retention_count or retention_count < 1:
+            flash('Retention count must be at least 1', 'danger')
+            return render_template('backups/add.html', databases=databases, s3_storages=s3_storages)
+        
         # Create backup job
         backup_job = BackupJob(
             name=name,
@@ -78,7 +84,8 @@ def add():
             vps_server_id=database.vps_server_id,
             backup_type=backup_type,
             cron_expression=cron_expression,
-            s3_storage_id=s3_storage_id
+            s3_storage_id=s3_storage_id,
+            retention_count=retention_count
         )
         
         db.session.add(backup_job)
@@ -151,6 +158,7 @@ def edit(id):
         cron_expression = request.form.get('cron_expression')
         enabled = request.form.get('enabled') == 'true'
         s3_storage_id = request.form.get('s3_storage_id', type=int)
+        retention_count = request.form.get('retention_count', type=int, default=7)
         
         # Validate data
         database = PostgresDatabase.query.get(database_id)
@@ -168,6 +176,11 @@ def edit(id):
             flash('Invalid backup type', 'danger')
             return render_template('backups/edit.html', backup_job=backup_job, databases=databases, s3_storages=s3_storages)
         
+        # Validate retention count
+        if not retention_count or retention_count < 1:
+            flash('Retention count must be at least 1', 'danger')
+            return render_template('backups/edit.html', backup_job=backup_job, databases=databases, s3_storages=s3_storages)
+        
         # Update backup job
         backup_job.name = name
         backup_job.database_id = database_id
@@ -176,6 +189,7 @@ def edit(id):
         backup_job.cron_expression = cron_expression
         backup_job.enabled = enabled
         backup_job.s3_storage_id = s3_storage_id
+        backup_job.retention_count = retention_count
         
         db.session.commit()
 
@@ -704,6 +718,37 @@ pg1-path={data_dir}
     except Exception as e:
         flash(f'Error fixing archive command: {str(e)}', 'danger')
         
+    return redirect(url_for('backups.index'))
+
+@backups_bp.route('/apply-retention/<int:id>', methods=['POST'])
+@login_required
+@first_login_required
+def apply_retention(id):
+    """Manually apply the retention policy to delete old backups"""
+    backup_job = BackupJob.query.get_or_404(id)
+    database = backup_job.database
+    
+    try:
+        # Connect to server
+        ssh, pg_manager = get_managers(database.server)
+        
+        if not ssh or not pg_manager:
+            flash('Unable to connect to server', 'danger')
+            return redirect(url_for('backups.index'))
+        
+        # Apply the retention policy
+        success, message = pg_manager.cleanup_old_backups(database.name, backup_job.retention_count)
+        
+        if success:
+            flash(f'Retention policy applied: {message}', 'success')
+        else:
+            flash(f'Failed to apply retention policy: {message}', 'danger')
+        
+        # Clean up
+        ssh.disconnect()
+    except Exception as e:
+        flash(f'Error applying retention policy: {str(e)}', 'danger')
+    
     return redirect(url_for('backups.index'))
 
 @backups_bp.route('/api/logs')

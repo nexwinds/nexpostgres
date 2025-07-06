@@ -68,6 +68,7 @@ class BackupJob(BaseModel):
     cron_expression = db.Column(db.String(50), nullable=False)
     enabled = db.Column(db.Boolean, default=True)
     s3_storage_id = db.Column(db.Integer, db.ForeignKey('s3_storage.id'), nullable=False)
+    retention_count = db.Column(db.Integer, default=7)  # Maximum number of backups to keep
     
     # Relationships
     logs = db.relationship('BackupLog', backref='backup_job', lazy=True, cascade="all, delete-orphan")

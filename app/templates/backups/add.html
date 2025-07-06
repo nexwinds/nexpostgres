@@ -56,6 +56,14 @@
                 </div>
             </div>
             
+            <div class="mb-3">
+                <label for="retention_count" class="form-label">Retention Policy</label>
+                <input type="number" class="form-control" id="retention_count" name="retention_count" value="7" min="1" max="100" required>
+                <div class="form-text">
+                    Maximum number of backups to keep. Older backups exceeding this limit will be automatically deleted.
+                </div>
+            </div>
+            
             <!-- S3 Storage Settings -->
             <h4 class="border-bottom pb-2 mb-3 mt-5">S3 Storage Settings</h4>
             
