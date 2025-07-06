@@ -65,7 +65,7 @@
                             {% endif %}
                         </td>
                         <td>
-                            {% set last_log = job.backup_logs|sort(attribute='start_time', reverse=True)|first %}
+                            {% set last_log = job.logs|sort(attribute='start_time', reverse=True)|first %}
                             {% if last_log %}
                                 {{ last_log.start_time.strftime('%Y-%m-%d %H:%M') }}
                                 {% if last_log.status == 'success' %}

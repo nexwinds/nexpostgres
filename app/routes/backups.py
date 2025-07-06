@@ -248,15 +248,12 @@ def logs():
         query = query.filter(BackupLog.status == status)
     
     # Filter by date
-    if days and days.isdigit():
-        days = int(days)
-        cutoff_date = datetime.now() - timedelta(days=days)
-        query = query.filter(BackupLog.start_time >= cutoff_date)
-    
-    # Order by most recent first
-    query = query.order_by(BackupLog.start_time.desc())
-    
-    logs = query.all()
+    if days and days != 'all':
+        date_threshold = datetime.utcnow() - timedelta(days=int(days))
+        query = query.filter(BackupLog.start_time >= date_threshold)
+        
+    # Order by start time (most recent first)
+    logs = query.order_by(BackupLog.start_time.desc()).all()
     
     if job_id:
         return render_template('backups/logs.html', logs=logs, backup_job=backup_job, 
