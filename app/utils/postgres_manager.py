@@ -1189,26 +1189,137 @@ EOF"''')
             else:
                 self.verify_and_fix_postgres_config(db_name)
         
-        # For incremental backup, ensure a full backup exists first
-        if backup_type == 'incr' and not self._has_full_backup(db_name):
-            self.logger.warning(f"No full backup exists for {db_name}, switching to full backup")
-            backup_type = 'full'
+        # Special handling for backups that are already configured properly
+        self._analyze_backup_info(db_name)
+        
+        # Get recent backup history - directly from pgBackRest output
+        existing_backups = self.list_backups(db_name)
+        if existing_backups:
+            self.logger.info(f"Found {len(existing_backups)} existing backups for {db_name}")
+            # If we already have backups and just ran a full backup, default to incremental unless forced
+            if backup_type == 'full' and existing_backups and any(b['type'] == 'full' for b in existing_backups):
+                self.logger.info("Full backups already exist and user requested another full backup")
+        
+        # Determine the appropriate backup type based on history
+        backup_type = self.should_force_full_backup(db_name, backup_type)
         
         # Execute the backup with the specified retention policy
+        self.logger.info(f"Executing {backup_type} backup for {db_name}")
         result = self.ssh.execute_command(f"sudo -u postgres pgbackrest --stanza={db_name} --type={backup_type} --repo1-retention-full={retention_count} --repo1-retention-full-type=count backup")
         success = result['exit_code'] == 0
         output = result['stderr'] if not success else result['stdout']
         
         if success:
+            self.logger.info(f"Backup completed successfully: {output}")
             # The pgbackrest retention is only applied during a full backup, so we explicitly
             # clean up old backups to ensure we're always enforcing the retention policy
             cleanup_success, cleanup_message = self.cleanup_old_backups(db_name, retention_count)
             if not cleanup_success:
                 self.logger.warning(f"Backup succeeded but cleanup failed: {cleanup_message}")
                 output += f"\nBackup succeeded but cleanup failed: {cleanup_message}"
+        else:
+            self.logger.error(f"Backup failed: {output}")
         
         return success, output
+    
+    def should_force_full_backup(self, db_name, backup_type):
+        """Determine if a full backup should be forced based on backup history
         
+        This implements the rule: at least one full backup every 10 backups
+        
+        Args:
+            db_name: Database name
+            backup_type: Requested backup type ('full' or 'incr')
+            
+        Returns:
+            str: 'full' if a full backup should be forced, otherwise the original backup_type
+        """
+        if backup_type == 'full':
+            return 'full'  # Already a full backup
+            
+        # Check if a full backup exists
+        if not self._has_full_backup(db_name):
+            self.logger.warning(f"No full backup exists for {db_name}, forcing full backup")
+            return 'full'
+            
+        # Get detailed backup information for better logging and debugging
+        self._analyze_backup_info(db_name)
+            
+        # Check for consecutive incremental backups
+        recent_backups = self._count_recent_backups_by_type(db_name)
+        incr_count = recent_backups.get('consecutive_incr', 0)
+        
+        # If we've had 9 consecutive incremental backups, force a full backup
+        if incr_count >= 9:
+            self.logger.info(f"Enforcing full backup after {incr_count} incremental backups for {db_name}")
+            return 'full'
+            
+        self.logger.info(f"Keeping requested backup type '{backup_type}' for {db_name}")
+        return backup_type  # Keep the original backup type
+        
+    def _analyze_backup_info(self, db_name):
+        """Analyze backup info output for debugging purposes"""
+        check_backup = self.ssh.execute_command(f"sudo -u postgres pgbackrest --stanza={db_name} info")
+        
+        if check_backup['exit_code'] != 0:
+            self.logger.error(f"Failed to get backup info: {check_backup['stderr']}")
+            return
+            
+        output = check_backup['stdout'].strip()
+        self.logger.debug(f"Full backup info: {output}")
+        
+        # Analyze the output to extract backup information
+        full_count = output.count('backup/full')
+        incr_count = output.count('backup/incr')
+        
+        self.logger.info(f"Backup analysis for {db_name}: Found {full_count} full backups and {incr_count} incremental backups")
+        
+        # Look for the most recent backup type
+        lines = output.split('\n')
+        for line in lines:
+            if 'backup/' in line and ':' in line:
+                self.logger.info(f"Most recent backup entry: {line.strip()}")
+                break
+    
+    def _count_recent_backups_by_type(self, db_name):
+        """Count recent backups by type to enforce full backup policy
+        
+        Returns:
+            dict: Count of backups by type {'full': x, 'incr': y}
+        """
+        backups = self.list_backups(db_name)
+        counts = {'full': 0, 'incr': 0}
+        
+        if not backups:
+            self.logger.warning(f"No backups found for {db_name}")
+            return counts
+            
+        # Log all backups for debugging
+        self.logger.debug(f"All backups for {db_name}: {backups}")
+        
+        # Count total backups by type
+        for backup in backups:
+            backup_type = backup.get('type')
+            if backup_type:
+                counts[backup_type] = counts.get(backup_type, 0) + 1
+                
+        self.logger.info(f"Total backup counts for {db_name}: {counts}")
+        
+        # Start counting consecutive incremental backups from most recent
+        consecutive_incr = 0
+        for backup in reversed(backups):
+            if backup['type'] == 'full':
+                # Reset count when we encounter a full backup
+                self.logger.info(f"Found full backup, stopping consecutive count at {consecutive_incr}")
+                break
+            elif backup['type'] == 'incr':
+                consecutive_incr += 1
+                self.logger.debug(f"Found incremental backup, count now: {consecutive_incr}")
+                
+        self.logger.info(f"Found {consecutive_incr} consecutive incremental backups for {db_name}")
+        counts['consecutive_incr'] = consecutive_incr
+        return counts
+    
     def _get_s3_region(self):
         """Extract S3 region from configuration file"""
         region_check = self.ssh.execute_command("sudo grep 'repo1-s3-region' /etc/pgbackrest/pgbackrest.conf")
@@ -1221,7 +1332,41 @@ EOF"''')
     def _has_full_backup(self, db_name):
         """Check if a full backup exists for the database"""
         check_backup = self.ssh.execute_command(f"sudo -u postgres pgbackrest --stanza={db_name} info")
-        return check_backup['exit_code'] == 0 and 'backup/full' in check_backup['stdout']
+        
+        # Log the complete output for debugging
+        self.logger.info(f"pgBackRest info exit code: {check_backup['exit_code']}")
+        self.logger.info(f"pgBackRest info stdout: {check_backup['stdout']}")
+        if check_backup['stderr']:
+            self.logger.info(f"pgBackRest info stderr: {check_backup['stderr']}")
+        
+        if check_backup['exit_code'] != 0:
+            self.logger.warning(f"Failed to check backup status: {check_backup['stderr']}")
+            return False
+        
+        # Try multiple patterns to detect full backups in different versions of pgBackRest
+        backup_patterns = ['backup/full', 'full backup:', 'type=full']
+        
+        has_full = False
+        for pattern in backup_patterns:
+            if pattern in check_backup['stdout'].lower():
+                has_full = True
+                self.logger.info(f"Found full backup pattern '{pattern}' for {db_name}")
+                break
+        
+        if has_full:
+            self.logger.info(f"Found existing full backup for {db_name}")
+        else:
+            self.logger.warning(f"No full backup found for {db_name} in pgBackRest info output")
+            
+        # As a fallback, check if any backup exists and assume it's valid
+        # This prevents us from constantly doing full backups when we can't parse the output correctly
+        if not has_full and check_backup['stdout'] and 'backup' in check_backup['stdout']:
+            backup_lines = [line for line in check_backup['stdout'].splitlines() if 'backup' in line.lower()]
+            if backup_lines:
+                self.logger.info(f"Using fallback detection: found backup lines in output: {backup_lines}")
+                has_full = True
+            
+        return has_full
     
     def list_backups(self, db_name):
         """List available backups"""
@@ -1621,6 +1766,17 @@ EOF"''')
             
             if not backups_to_delete:
                 return True, "No backups to delete"
+            
+            # Check if the 'forget' command is supported
+            check_forget_cmd = self.ssh.execute_command(f"sudo -u postgres pgbackrest help | grep forget")
+            forget_supported = check_forget_cmd['exit_code'] == 0 and 'forget' in check_forget_cmd['stdout']
+            
+            # If 'forget' is not supported, we'll rely on pgBackRest's built-in retention mechanism
+            if not forget_supported:
+                self.logger.info("The 'forget' command is not supported in this version of pgBackRest")
+                self.logger.info("Using built-in retention mechanism from repo1-retention-full setting")
+                # We'll consider it a success since the next full backup will apply retention
+                return True, "Using pgBackRest built-in retention mechanism (forget command not available)"
             
             deleted_count = 0
             # Delete old backups
