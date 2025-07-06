@@ -106,7 +106,7 @@
                     <tr>
                         {% if not backup_job %}
                         <td>
-                            <a href="{{ url_for('backups.logs', job_id=log.backup_job_id) }}">{{ log.job.name }}</a>
+                            <a href="{{ url_for('backups.logs', job_id=log.backup_job_id) }}">{{ log.backup_job.name }}</a>
                         </td>
                         {% endif %}
                         <td>{{ log.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
