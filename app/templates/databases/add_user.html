@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}Add Database User - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Add Database User</h1>
+    <a href="{{ url_for('databases.credentials', id=database.id) }}" class="btn btn-secondary">
+        <i class="fas fa-arrow-left me-1"></i> Back to Credentials
+    </a>
+</div>
+
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">User Details for {{ database.name }}</h5>
+    </div>
+    <div class="card-body">
+        <div class="alert alert-info mb-3">
+            <i class="fas fa-info-circle me-2"></i> 
+            <strong>Note:</strong> User permissions are managed directly on the PostgreSQL server.
+            A random password will be automatically generated.
+        </div>
+        <form method="post">
+            <div class="mb-3">
+                <label for="username" class="form-label">Username</label>
+                <input type="text" class="form-control" id="username" name="username" required>
+                <div class="form-text">Username must contain only lowercase letters, numbers, and underscores, and must start with a letter.</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="permission_level" class="form-label">Permission Level</label>
+                <select class="form-select" id="permission_level" name="permission_level" required>
+                    <option value="read_write">Read and Write</option>
+                    <option value="read_only">Read-only</option>
+                    <option value="no_access">No Access (Disabled)</option>
+                </select>
+                <div class="form-text">The level of access this user will have to the database.</div>
+            </div>
+            
+            <div class="alert alert-warning">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <strong>Important:</strong> The password will be automatically generated and displayed after submission.
+            </div>
+            
+            <div class="d-flex justify-content-end">
+                <a href="{{ url_for('databases.credentials', id=database.id) }}" class="btn btn-secondary me-2">Cancel</a>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-save me-1"></i> Add User
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %} 

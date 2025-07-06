@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Database User - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Edit Database User</h1>
+    <a href="{{ url_for('databases.credentials', id=database.id) }}" class="btn btn-secondary">
+        <i class="fas fa-arrow-left me-1"></i> Back to Credentials
+    </a>
+</div>
+
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">User Details: {{ user.username }}</h5>
+    </div>
+    <div class="card-body">
+        <div class="alert alert-info mb-3">
+            <i class="fas fa-info-circle me-2"></i> 
+            <strong>Note:</strong> User permissions will be immediately updated on the PostgreSQL server.
+        </div>
+        <form method="post">
+            <div class="mb-3">
+                <label for="username" class="form-label">Username</label>
+                <input type="text" class="form-control" id="username" name="username" value="{{ user.username }}" readonly>
+                <div class="form-text">Username cannot be changed after creation.</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="permission_level" class="form-label">Permission Level</label>
+                <select class="form-select" id="permission_level" name="permission_level" required>
+                    <option value="read_write" {% if current_permission == 'read_write' %}selected{% endif %}>Read and Write</option>
+                    <option value="read_only" {% if current_permission == 'read_only' %}selected{% endif %}>Read-only</option>
+                    <option value="no_access" {% if current_permission == 'no_access' %}selected{% endif %}>No Access (Disabled)</option>
+                </select>
+                <div class="form-text">The level of access this user will have to the database.</div>
+            </div>
+            
+            <div class="mb-3 form-check">
+                <input type="checkbox" class="form-check-input" id="regenerate_password" name="regenerate_password">
+                <label class="form-check-label" for="regenerate_password">Regenerate Password</label>
+                <div class="form-text">Check this box to generate a new password for this user.</div>
+            </div>
+            
+            <div class="alert alert-warning">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <strong>Warning:</strong> If you regenerate the password, the old password will no longer work.
+                The new password will be displayed after submission.
+            </div>
+            
+            <div class="d-flex justify-content-end">
+                <a href="{{ url_for('databases.credentials', id=database.id) }}" class="btn btn-secondary me-2">Cancel</a>
+                <button type="submit" class="btn btn-success">
+                    <i class="fas fa-save me-1"></i> Save Changes
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %} 

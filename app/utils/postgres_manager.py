@@ -1938,3 +1938,212 @@ host    all             all             ::/0                    md5
                 return False, "Configuration updated but PostgreSQL restart failed", changes_made
         
         return True, "PostgreSQL already configured to allow external connections", changes_made
+    
+    def create_database_user(self, username, password, db_name, permission_level='read_write'):
+        """Create a PostgreSQL user with specified permissions
+        
+        Args:
+            username (str): The database username to create
+            password (str): The password for the user
+            db_name (str): The database name to grant permissions on
+            permission_level (str): One of 'no_access', 'read_only', 'read_write'
+            
+        Returns:
+            tuple: (success, message)
+        """
+        self.logger.info(f"Creating database user {username} for database {db_name} with permission level {permission_level}")
+        
+        try:
+            # Check if PostgreSQL is installed
+            if not self.check_postgres_installed():
+                return False, "PostgreSQL is not installed on the server"
+            
+            # Check if user already exists
+            check_user_cmd = f"sudo -u postgres psql -t -c \"SELECT 1 FROM pg_roles WHERE rolname = '{username}';\""
+            check_user_result = self.ssh.execute_command(check_user_cmd)
+            
+            user_exists = check_user_result['exit_code'] == 0 and check_user_result['stdout'].strip()
+            
+            # Create user if it doesn't exist
+            if not user_exists:
+                create_user_cmd = f"sudo -u postgres psql -c \"CREATE USER {username} WITH ENCRYPTED PASSWORD '{password}';\""
+                user_result = self.ssh.execute_command(create_user_cmd)
+                
+                if user_result['exit_code'] != 0:
+                    return False, f"Failed to create user '{username}': {user_result['stderr']}"
+            else:
+                # Update the password for existing user
+                update_cmd = f"sudo -u postgres psql -c \"ALTER USER {username} WITH ENCRYPTED PASSWORD '{password}';\""
+                result = self.ssh.execute_command(update_cmd)
+                
+                if result['exit_code'] != 0:
+                    return False, f"Failed to update password for user '{username}': {result['stderr']}"
+            
+            # Grant appropriate permissions based on permission_level
+            if permission_level == 'no_access':
+                # Revoke all permissions
+                revoke_cmd = f"sudo -u postgres psql -c \"REVOKE ALL PRIVILEGES ON DATABASE {db_name} FROM {username};\""
+                self.ssh.execute_command(revoke_cmd)
+                
+                # Revoke schema permissions if user had them before
+                # Use ON ALL TABLES IN SCHEMA to handle all tables
+                revoke_schema_cmd = f"sudo -u postgres psql -d {db_name} -c \"REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM {username};\""
+                self.ssh.execute_command(revoke_schema_cmd)
+                
+                # Additional schema permissions
+                revoke_sequence_cmd = f"sudo -u postgres psql -d {db_name} -c \"REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM {username};\""
+                self.ssh.execute_command(revoke_sequence_cmd)
+                
+                # Revoke CONNECT
+                revoke_connect_cmd = f"sudo -u postgres psql -c \"REVOKE CONNECT ON DATABASE {db_name} FROM {username};\""
+                self.ssh.execute_command(revoke_connect_cmd)
+                
+                return True, f"User '{username}' set to no access for database '{db_name}'"
+                
+            elif permission_level == 'read_only':
+                # First ensure the user can connect to the database
+                connect_cmd = f"sudo -u postgres psql -c \"GRANT CONNECT ON DATABASE {db_name} TO {username};\""
+                self.ssh.execute_command(connect_cmd)
+                
+                # Grant USAGE on schema
+                usage_cmd = f"sudo -u postgres psql -d {db_name} -c \"GRANT USAGE ON SCHEMA public TO {username};\""
+                self.ssh.execute_command(usage_cmd)
+                
+                # Grant SELECT on all tables
+                select_cmd = f"sudo -u postgres psql -d {db_name} -c \"GRANT SELECT ON ALL TABLES IN SCHEMA public TO {username};\""
+                self.ssh.execute_command(select_cmd)
+                
+                # Set default privileges for future tables
+                future_cmd = f"sudo -u postgres psql -d {db_name} -c \"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {username};\""
+                self.ssh.execute_command(future_cmd)
+                
+                # Revoke any write permissions
+                revoke_write_cmd = f"sudo -u postgres psql -d {db_name} -c \"REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public FROM {username};\""
+                self.ssh.execute_command(revoke_write_cmd)
+                
+                return True, f"User '{username}' granted read-only access to database '{db_name}'"
+                
+            elif permission_level == 'read_write':
+                # First ensure the user can connect to the database
+                connect_cmd = f"sudo -u postgres psql -c \"GRANT CONNECT ON DATABASE {db_name} TO {username};\""
+                self.ssh.execute_command(connect_cmd)
+                
+                # Grant full privileges on the database
+                privileges_cmd = f"sudo -u postgres psql -c \"GRANT ALL PRIVILEGES ON DATABASE {db_name} TO {username};\""
+                self.ssh.execute_command(privileges_cmd)
+                
+                # Grant all privileges on all tables
+                tables_cmd = f"sudo -u postgres psql -d {db_name} -c \"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO {username};\""
+                self.ssh.execute_command(tables_cmd)
+                
+                # Grant all privileges on all sequences
+                seq_cmd = f"sudo -u postgres psql -d {db_name} -c \"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO {username};\""
+                self.ssh.execute_command(seq_cmd)
+                
+                # Grant all privileges on schema
+                schema_cmd = f"sudo -u postgres psql -d {db_name} -c \"GRANT ALL PRIVILEGES ON SCHEMA public TO {username};\""
+                self.ssh.execute_command(schema_cmd)
+                
+                # Set default privileges for future tables
+                future_cmd = f"sudo -u postgres psql -d {db_name} -c \"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO {username};\""
+                self.ssh.execute_command(future_cmd)
+                
+                future_seq_cmd = f"sudo -u postgres psql -d {db_name} -c \"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO {username};\""
+                self.ssh.execute_command(future_seq_cmd)
+                
+                return True, f"User '{username}' granted read-write access to database '{db_name}'"
+            else:
+                return False, f"Invalid permission level: {permission_level}"
+            
+        except Exception as e:
+            self.logger.error(f"Error creating/updating database user: {str(e)}")
+            return False, f"Error creating/updating database user: {str(e)}"
+    
+    def delete_database_user(self, username):
+        """Delete a PostgreSQL user
+        
+        Args:
+            username (str): The database username to delete
+            
+        Returns:
+            tuple: (success, message)
+        """
+        self.logger.info(f"Deleting database user {username}")
+        
+        try:
+            # Check if PostgreSQL is installed
+            if not self.check_postgres_installed():
+                return False, "PostgreSQL is not installed on the server"
+            
+            # Check if user exists
+            check_user_cmd = f"sudo -u postgres psql -t -c \"SELECT 1 FROM pg_roles WHERE rolname = '{username}';\""
+            check_user_result = self.ssh.execute_command(check_user_cmd)
+            
+            if not (check_user_result['exit_code'] == 0 and check_user_result['stdout'].strip()):
+                return False, f"User '{username}' does not exist"
+            
+            # Delete the user
+            drop_user_cmd = f"sudo -u postgres psql -c \"DROP USER IF EXISTS {username};\""
+            result = self.ssh.execute_command(drop_user_cmd)
+            
+            if result['exit_code'] != 0:
+                return False, f"Failed to delete user '{username}': {result['stderr']}"
+            
+            return True, f"User '{username}' deleted successfully"
+            
+        except Exception as e:
+            self.logger.error(f"Error deleting database user: {str(e)}")
+            return False, f"Error deleting database user: {str(e)}"
+    
+    def list_database_users(self, db_name):
+        """List all PostgreSQL users with access to a specific database
+        
+        Args:
+            db_name (str): The database name to check users for
+            
+        Returns:
+            list: List of users with their roles/permissions
+        """
+        self.logger.info(f"Listing users for database {db_name}")
+        
+        try:
+            # Check if PostgreSQL is installed
+            if not self.check_postgres_installed():
+                return []
+            
+            # Query to get users with access to the database
+            query = f"""
+            SELECT r.rolname as username,
+                   CASE WHEN r.rolsuper THEN 'superuser'
+                        WHEN has_database_privilege(r.rolname, '{db_name}', 'CREATE') THEN 'read_write'
+                        WHEN has_database_privilege(r.rolname, '{db_name}', 'CONNECT') THEN 'read_only'
+                        ELSE 'no_access'
+                   END as permission_level
+            FROM pg_roles r
+            WHERE r.rolcanlogin = true
+              AND r.rolname != 'postgres'
+            ORDER BY r.rolname;
+            """
+            
+            cmd = f"sudo -u postgres psql -d {db_name} -t -c \"{query}\""
+            result = self.ssh.execute_command(cmd)
+            
+            users = []
+            if result['exit_code'] == 0 and result['stdout'].strip():
+                for line in result['stdout'].strip().split('\n'):
+                    if line.strip():
+                        parts = line.strip().split('|')
+                        if len(parts) >= 2:
+                            username = parts[0].strip()
+                            permission = parts[1].strip()
+                            
+                            users.append({
+                                'username': username,
+                                'permission_level': permission
+                            })
+            
+            return users
+            
+        except Exception as e:
+            self.logger.error(f"Error listing database users: {str(e)}")
+            return []

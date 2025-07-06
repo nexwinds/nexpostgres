@@ -42,13 +42,21 @@ class VpsServer(BaseModel):
 class PostgresDatabase(BaseModel):
     name = db.Column(db.String(80), nullable=False)
     vps_server_id = db.Column(db.Integer, db.ForeignKey('vps_server.id', ondelete='CASCADE'), nullable=False)
-    username = db.Column(db.String(80), default='postgres')
-    password = db.Column(db.String(128))
     size = db.Column(db.String(20))
     
     # Relationships
     backup_jobs = db.relationship('BackupJob', backref='database', lazy=True, cascade="all, delete-orphan")
     restore_logs = db.relationship('RestoreLog', backref='database', lazy=True, cascade="all, delete-orphan")
+    users = db.relationship('PostgresDatabaseUser', backref='database', lazy=True, cascade="all, delete-orphan")
+
+class PostgresDatabaseUser(BaseModel):
+    username = db.Column(db.String(80), nullable=False)
+    password = db.Column(db.String(128), nullable=False)
+    database_id = db.Column(db.Integer, db.ForeignKey('postgres_database.id', ondelete='CASCADE'), nullable=False)
+    is_primary = db.Column(db.Boolean, default=False)  # Flag for the primary user (auto-generated from database name)
+    
+    def __repr__(self):
+        return f'<PostgresDatabaseUser {self.username} for database {self.database_id}>'
 
 class S3Storage(BaseModel):
     name = db.Column(db.String(80), nullable=False)

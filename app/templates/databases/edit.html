@@ -39,14 +39,14 @@
             
             <div class="mb-3">
                 <label for="username" class="form-label">Database Username</label>
-                <input type="text" class="form-control" id="username" name="username" value="{{ database.username }}" required readonly>
+                <input type="text" class="form-control" id="username" name="username" value="{{ primary_user.username }}" required readonly>
                 <div class="form-text">Automatically derived from the database name (lowercase only)</div>
             </div>
             
             <div class="mb-3">
                 <label for="password" class="form-label">Database Password</label>
                 <div class="input-group">
-                    <input type="text" class="form-control" id="password" name="password" value="{% if database.password %}********{% endif %}" readonly>
+                    <input type="text" class="form-control" id="password" name="password" value="{% if primary_user.password %}********{% endif %}" readonly>
                     <input type="hidden" id="password_changed" name="password_changed" value="false">
                     <button type="button" class="btn btn-outline-secondary" onclick="generatePassword()">
                         <i class="fas fa-sync-alt"></i> Regenerate
