@@ -236,6 +236,9 @@ def credentials(id):
     primary_user = next((user for user in users if user.is_primary), users[0])
     connection_url = f"postgresql://{primary_user.username}:{primary_user.password}@{server.host}:{server.postgres_port}/{database.name}"
     
+    # Add JDBC connection URL
+    jdbc_url = f"jdbc:postgresql://{server.host}:{server.postgres_port}/{database.name}"
+    
     # Get user permissions directly from the PostgreSQL server
     user_permissions = {}
     try:
@@ -264,7 +267,8 @@ def credentials(id):
                         users=users,
                         primary_user=primary_user,
                         user_permissions=user_permissions,
-                        connection_url=connection_url)
+                        connection_url=connection_url,
+                        jdbc_url=jdbc_url)
 
 @databases_bp.route('/user/add/<int:database_id>', methods=['GET', 'POST'])
 @login_required
