@@ -3,8 +3,15 @@ from app.models.database import VpsServer, PostgresDatabase, db
 from app.utils.ssh_manager import SSHManager
 from app.utils.postgres_manager import PostgresManager
 from app.routes.auth import login_required, first_login_required
+import random
+import string
 
 databases_bp = Blueprint('databases', __name__, url_prefix='/databases')
+
+def generate_random_password(length=39):
+    """Generate a random password of specified length with uppercase, lowercase and digits."""
+    charset = string.ascii_uppercase + string.ascii_lowercase + string.digits
+    return ''.join(random.choice(charset) for _ in range(length))
 
 @databases_bp.route('/')
 @login_required
@@ -33,7 +40,7 @@ def add():
     
     if request.method == 'POST':
         name = request.form.get('name')
-        username = request.form.get('username')
+        username = name.lower()  # Automatically derive username from database name
         password = request.form.get('password')
         server_id = request.form.get('server_id', type=int)
         
@@ -52,7 +59,7 @@ def add():
         # Create database record
         database = PostgresDatabase(
             name=name,
-            username=username,
+            username=username,  # Use derived username
             password=password,
             vps_server_id=server_id
         )
@@ -109,8 +116,9 @@ def edit(id):
     
     if request.method == 'POST':
         name = request.form.get('name')
-        username = request.form.get('username')
-        password = request.form.get('password')
+        username = name.lower()  # Automatically derive username from database name
+        password_changed = request.form.get('password_changed') == 'true'
+        password = request.form.get('password') if password_changed else None
         server_id = request.form.get('server_id', type=int)
         
         # Validate data
@@ -122,22 +130,21 @@ def edit(id):
         # Check if database already exists on server (if name or server changed)
         if (name != database.name or server_id != database.vps_server_id):
             existing = PostgresDatabase.query.filter_by(name=name, vps_server_id=server_id).first()
-            if existing:
+            if existing and existing.id != database.id:
                 flash(f'Database "{name}" already exists on this server', 'danger')
                 return render_template('databases/edit.html', database=database, servers=servers)
         
         # Keep track of changes
-        password_changed = password and password != database.password
         old_username = database.username
         username_changed = username != old_username
         server_changed = server_id != database.vps_server_id
         
         # Update database record
         database.name = name
-        database.username = username
+        database.username = username  # Update username based on database name
         
-        # Only update password if provided
-        if password:
+        # Only update password if regenerated
+        if password_changed and password:
             database.password = password
             
         database.vps_server_id = server_id
@@ -145,7 +152,7 @@ def edit(id):
         db.session.commit()
         
         # If password changed, update on server
-        if password_changed and not server_changed:
+        if password_changed and password and not server_changed:
             try:
                 # Connect to server via SSH
                 ssh = SSHManager(
