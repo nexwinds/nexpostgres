@@ -5,15 +5,24 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>
-        {% if job %}
-            Backup Logs: {{ job.name }}
+        {% if backup_job %}
+            Backup Logs: {{ backup_job.name }}
         {% else %}
-            All Backup Logs
+            Run/Logs
         {% endif %}
     </h1>
-    <a href="{{ url_for('backups.index') }}" class="btn btn-secondary">
-        <i class="fas fa-arrow-left me-1"></i> Back to Backup Jobs
-    </a>
+    <div>
+        {% if backup_job %}
+        <form action="{{ url_for('backups.execute', id=backup_job.id) }}" method="post" class="d-inline">
+            <button type="submit" class="btn btn-success me-2">
+                <i class="fas fa-play me-1"></i> Run Manual Backup
+            </button>
+        </form>
+        {% endif %}
+        <a href="{{ url_for('backups.index') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left me-1"></i> Back to Backup Jobs
+        </a>
+    </div>
 </div>
 
 <!-- Filter Form -->
@@ -23,12 +32,12 @@
     </div>
     <div class="card-body">
         <form method="get" class="row g-3">
-            {% if not job %}
+            {% if not backup_job %}
             <div class="col-md-4">
                 <label for="job_id" class="form-label">Backup Job</label>
                 <select class="form-select" id="job_id" name="job_id">
                     <option value="">All Jobs</option>
-                    {% for j in jobs %}
+                    {% for j in backup_jobs %}
                     <option value="{{ j.id }}" {% if request.args.get('job_id')|int == j.id %}selected{% endif %}>
                         {{ j.name }}
                     </option>
@@ -62,7 +71,7 @@
                 <button type="submit" class="btn btn-primary">
                     <i class="fas fa-filter me-1"></i> Apply Filters
                 </button>
-                <a href="{{ url_for('backups.logs', job_id=job.id) if job else url_for('backups.logs') }}" class="btn btn-outline-secondary">
+                <a href="{{ url_for('backups.logs', job_id=backup_job.id) if backup_job else url_for('backups.logs') }}" class="btn btn-outline-secondary">
                     <i class="fas fa-times me-1"></i> Clear Filters
                 </a>
             </div>
@@ -81,7 +90,7 @@
             <table class="table table-striped">
                 <thead>
                     <tr>
-                        {% if not job %}
+                        {% if not backup_job %}
                         <th>Job</th>
                         {% endif %}
                         <th>Start Time</th>
@@ -95,7 +104,7 @@
                 <tbody>
                     {% for log in logs %}
                     <tr>
-                        {% if not job %}
+                        {% if not backup_job %}
                         <td>
                             <a href="{{ url_for('backups.logs', job_id=log.backup_job_id) }}">{{ log.job.name }}</a>
                         </td>
