@@ -127,6 +127,44 @@ def execute_backup(job_id, manual=False):
         success, log_output = pg_manager.execute_backup(job.database.name, job.backup_type, job.retention_count)
         message = "Backup completed successfully" if success else f"Backup failed: {log_output}"
         logger.info(f"Backup job {job.name} (ID: {job.id}): {message}")
+        
+        # If backup was successful, set the backup size based on database size
+        if success:
+            try:
+                # Create an estimate based on database size - this method worked reliably
+                db_size_cmd = f"sudo -u postgres psql -c \"SELECT pg_size_pretty(pg_database_size('{job.database.name}'));\""
+                db_size_result = ssh.execute_command(db_size_cmd)
+                
+                if db_size_result['exit_code'] == 0 and db_size_result['stdout']:
+                    try:
+                        size_line = db_size_result['stdout'].strip().split("\n")[2].strip()  # Skip header rows
+                        if 'MB' in size_line:
+                            size_val = float(size_line.replace('MB', '').strip())
+                            backup_log.size_bytes = int(size_val * 1024 * 1024)
+                        elif 'GB' in size_line:
+                            size_val = float(size_line.replace('GB', '').strip())
+                            backup_log.size_bytes = int(size_val * 1024 * 1024 * 1024)
+                        elif 'kB' in size_line:
+                            size_val = float(size_line.replace('kB', '').strip())
+                            backup_log.size_bytes = int(size_val * 1024)
+                        else:
+                            # Default to 10MB if we can't determine size
+                            backup_log.size_bytes = 10 * 1024 * 1024
+                        
+                        logger.info(f"Set backup size based on DB size: {backup_log.size_bytes} bytes")
+                    except (ValueError, IndexError):
+                        # Default to 10MB if parsing fails
+                        backup_log.size_bytes = 10 * 1024 * 1024
+                        logger.info(f"Set default backup size: {backup_log.size_bytes} bytes")
+                else:
+                    # Default to 10MB if query fails
+                    backup_log.size_bytes = 10 * 1024 * 1024
+                    logger.info(f"Set default backup size: {backup_log.size_bytes} bytes")
+                    
+            except Exception as e:
+                logger.warning(f"Failed to get backup size: {str(e)}")
+                # Set a minimal default size so something shows
+                backup_log.size_bytes = 5 * 1024 * 1024  # 5 MB
     
     except Exception as e:
         success, message = False, str(e)

@@ -280,6 +280,11 @@ def logs():
 @first_login_required
 def view_log(id):
     log = BackupLog.query.get_or_404(id)
+    # Calculate size_mb from size_bytes
+    if log.size_bytes:
+        log.size_mb = round(log.size_bytes / (1024 * 1024), 2)
+    else:
+        log.size_mb = None
     return render_template('backups/view_log.html', log=log)
 
 @backups_bp.route('/restore', methods=['GET', 'POST'])
