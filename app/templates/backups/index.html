@@ -90,12 +90,9 @@
                                 <button type="button" class="btn btn-sm btn-outline-secondary check-backup" data-job-id="{{ job.id }}">
                                     <i class="fas fa-sync-alt"></i> Check
                                 </button>
-                                <a href="{{ url_for('backups.logs', job_id=job.id) }}" class="btn btn-sm btn-outline-secondary">
-                                    <i class="fas fa-history"></i> Logs
+                                <a href="{{ url_for('backups.logs', job_id=job.id) }}" class="btn btn-sm btn-outline-info">
+                                    <i class="fas fa-play"></i> Run/Logs
                                 </a>
-                                <button type="button" class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#executeModal{{ job.id }}">
-                                    <i class="fas fa-play"></i> Run
-                                </button>
                                 <a href="{{ url_for('backups.edit', id=job.id) }}" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-edit"></i> Edit
                                 </a>
@@ -106,30 +103,6 @@
                             
                             <!-- Fix Config button will be dynamically added here when issues are detected -->
                             <div class="fix-config-container" data-job-id="{{ job.id }}" style="margin-top: 5px; display: none;">
-                            </div>
-                            
-                            <!-- Execute Modal -->
-                            <div class="modal fade" id="executeModal{{ job.id }}" tabindex="-1" aria-labelledby="executeModalLabel" aria-hidden="true">
-                                <div class="modal-dialog">
-                                    <div class="modal-content">
-                                        <div class="modal-header">
-                                            <h5 class="modal-title" id="executeModalLabel">Run Backup Job</h5>
-                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                        </div>
-                                        <div class="modal-body">
-                                            Are you sure you want to run the backup job <strong>{{ job.name }}</strong> now?
-                                            <div class="alert alert-info mt-3">
-                                                <i class="fas fa-info-circle me-1"></i> This will execute a {{ job.backup_type }} backup of the database <strong>{{ job.database.name }}</strong>.
-                                            </div>
-                                        </div>
-                                        <div class="modal-footer">
-                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                            <form action="{{ url_for('backups.execute', id=job.id) }}" method="post">
-                                                <button type="submit" class="btn btn-primary">Run Backup</button>
-                                            </form>
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
                             
                             <!-- Delete Modal -->
