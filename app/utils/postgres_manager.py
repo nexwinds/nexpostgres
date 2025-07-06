@@ -1578,16 +1578,11 @@ EOF"''')
         return success, old_version, new_version
     
     def initialize_server(self):
-        """Initialize a new server: update system, install PostgreSQL and pgBackRest, wait, and restart"""
+        """Initialize a new server: install PostgreSQL and pgBackRest, wait, and restart"""
         self.logger.info("Initializing server with PostgreSQL and pgBackRest")
         
         try:
-            # Update server packages
-            self.logger.info("Updating server packages")
-            self.ssh.execute_command("sudo apt-get update")
-            update_result = self.ssh.execute_command("sudo apt-get upgrade -y")
-            
-            # Install PostgreSQL - continue even if update failed
+            # Install PostgreSQL
             self.logger.info("Installing PostgreSQL")
             postgres_installed = self.install_postgres()
             if not postgres_installed:
