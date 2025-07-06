@@ -196,6 +196,8 @@ def logs():
         backup_job = BackupJob.query.get(job_id)
     else:
         backup_job = None
+        # Get all backup jobs for dropdown
+        backup_jobs = BackupJob.query.all()
         
     # Filter by status
     if status:
@@ -212,7 +214,10 @@ def logs():
     # Get logs with pagination
     logs = query.order_by(BackupLog.start_time.desc()).all()
     
-    return render_template('backups/job_logs.html', logs=logs, backup_job=backup_job)
+    if backup_job:
+        return render_template('backups/job_logs.html', logs=logs, backup_job=backup_job)
+    else:
+        return render_template('backups/job_logs.html', logs=logs, backup_job=None, backup_jobs=backup_jobs)
 
 @backups_bp.route('/logs/view/<int:id>')
 @login_required

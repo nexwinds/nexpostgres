@@ -140,9 +140,9 @@
                         <tbody>
                             {% for log in recent_logs %}
                             <tr>
-                                <td>{{ log.job.name }}</td>
-                                <td>{{ log.job.database.name }}</td>
-                                <td>{{ log.job.server.name }}</td>
+                                <td>{{ log.backup_job.name }}</td>
+                                <td>{{ log.backup_job.database.name }}</td>
+                                <td>{{ log.backup_job.server.name }}</td>
                                 <td>{{ log.backup_type }}</td>
                                 <td>
                                     {% if log.status == 'success' %}
