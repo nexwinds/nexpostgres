@@ -278,10 +278,16 @@ def restore():
     backup_jobs = BackupJob.query.all()
     
     if request.method == 'POST':
+        # Get form data
+        backup_job_id = request.form.get('backup_job_id', type=int)
         database_id = request.form.get('database_id', type=int)
         backup_log_id = request.form.get('backup_log_id', type=int)
         recovery_time = request.form.get('recovery_time')
         restore_to_same = request.form.get('restore_to_same') == 'true'
+        use_recovery_time = request.form.get('use_recovery_time') == 'true'
+        
+        # Debug info
+        print(f"Form data - backup_job_id: {backup_job_id}, database_id: {database_id}, backup_log_id: {backup_log_id}, use_recovery_time: {use_recovery_time}")
         
         # Use target database if not restoring to same
         if not restore_to_same:
@@ -289,7 +295,21 @@ def restore():
             if target_database_id:
                 database_id = target_database_id
         
-        # Validate data
+        # Validate backup job and database
+        if not backup_job_id:
+            flash('Please select a backup job', 'danger')
+            return render_template('backups/restore.html', databases=databases, backup_jobs=backup_jobs)
+            
+        backup_job = BackupJob.query.get(backup_job_id)
+        if not backup_job:
+            flash('Selected backup job does not exist', 'danger')
+            return render_template('backups/restore.html', databases=databases, backup_jobs=backup_jobs)
+            
+        # Set database ID from backup job if not set
+        if not database_id:
+            database_id = backup_job.database_id
+            
+        # Validate database
         database = PostgresDatabase.query.get(database_id)
         if not database:
             flash('Selected database does not exist', 'danger')
@@ -351,10 +371,46 @@ def restore():
                             except:
                                 continue
         
-        # Ensure either backup name or restore time is provided
-        if not backup_name and not recovery_time:
-            flash('Please provide either a backup or a recovery point', 'danger')
-            return render_template('backups/restore.html', databases=databases, backup_jobs=backup_jobs)
+        # If no specific backup was found but we have a job, use latest backup
+        if not backup_name and backup_job:
+            server = backup_job.server
+            ssh = SSHManager(
+                host=server.host,
+                port=server.port,
+                username=server.username,
+                ssh_key_path=server.ssh_key_path,
+                ssh_key_content=server.ssh_key_content
+            )
+            
+            if ssh.connect():
+                pg_manager = PostgresManager(ssh)
+                backups = pg_manager.list_backups(backup_job.database.name)
+                ssh.disconnect()
+                
+                if backups and len(backups) > 0:
+                    # Use the most recent backup (typically the first one listed)
+                    backup_name = backups[0].get('name', 'latest')
+        
+        # Validate backup selection or recovery point
+        if use_recovery_time:
+            # For point-in-time recovery, recovery_time is required
+            if not recovery_time:
+                # If no recovery point is available but a backup is selected or found,
+                # use the backup instead of requiring a recovery point
+                if backup_name:
+                    # Fall back to using the backup directly
+                    use_recovery_time = False
+                    recovery_time = None
+                else:
+                    flash('No recovery points available. Either select a backup or disable point-in-time recovery', 'danger')
+                    return render_template('backups/restore.html', databases=databases, backup_jobs=backup_jobs)
+        else:
+            # For regular backup restore, ensure we have a backup_name
+            if not backup_name:
+                flash('No valid backup found to restore. Please check that backups exist for the selected job.', 'danger')
+                return render_template('backups/restore.html', databases=databases, backup_jobs=backup_jobs)
+            # If using backup, we don't need recovery_time
+            recovery_time = None
         
         # Get server information
         server = database.server
@@ -379,7 +435,7 @@ def restore():
         restore_log = RestoreLog(
             database_id=database_id,
             backup_log_id=backup_log_id if backup_log_id else None,
-            restore_time=recovery_time,
+            restore_point=recovery_time,
             status='in_progress'
         )
         

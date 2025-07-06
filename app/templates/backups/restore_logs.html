@@ -93,7 +93,7 @@
                         <td>
                             {% if log.backup_log %}
                             <a href="{{ url_for('backups.view_log', id=log.backup_log_id) }}">
-                                {{ log.backup_log.job.name }} ({{ log.backup_log.start_time.strftime('%Y-%m-%d %H:%M') }})
+                                {{ log.backup_log.backup_job.name }} ({{ log.backup_log.start_time.strftime('%Y-%m-%d %H:%M') }})
                             </a>
                             {% else %}
                             <span class="text-muted">Unknown</span>

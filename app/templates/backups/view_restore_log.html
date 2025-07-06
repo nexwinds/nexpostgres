@@ -93,7 +93,7 @@
                         <td>
                             {% if log.backup_log %}
                             <a href="{{ url_for('backups.view_log', id=log.backup_log_id) }}">
-                                {{ log.backup_log.job.name }} ({{ log.backup_log.start_time.strftime('%Y-%m-%d %H:%M') }})
+                                {{ log.backup_log.backup_job.name }} ({{ log.backup_log.start_time.strftime('%Y-%m-%d %H:%M') }})
                             </a>
                             {% else %}
                             <span class="text-muted">Unknown</span>
@@ -122,8 +122,8 @@
         <h5 class="mb-0">Command Output</h5>
     </div>
     <div class="card-body">
-        {% if log.output %}
-        <pre class="bg-dark text-light p-3 rounded" style="max-height: 500px; overflow-y: auto;"><code>{{ log.output }}</code></pre>
+        {% if log.log_output %}
+        <pre class="bg-dark text-light p-3 rounded" style="max-height: 500px; overflow-y: auto; white-space: pre-wrap;"><code>{{ log.log_output }}</code></pre>
         {% else %}
         <div class="alert alert-info">
             No command output available.

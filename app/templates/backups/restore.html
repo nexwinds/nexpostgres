@@ -158,11 +158,16 @@
                 .then(response => response.json())
                 .then(data => {
                     let options = '<option value="" selected disabled>Select a backup to restore</option>';
+                    let hasBackups = false;
                     
                     if (data.logs && data.logs.length > 0) {
+                        // Add an option for latest backup
+                        options = '<option value="latest" selected>Latest backup</option>';
+                        
                         data.logs.forEach(log => {
                             options += `<option value="${log.id}">${log.start_time} - ${log.backup_type} - ${log.size_mb ? log.size_mb + ' MB' : 'Size unknown'}</option>`;
                         });
+                        hasBackups = true;
                     } else {
                         options = '<option value="" selected disabled>No successful backups available</option>';
                     }
@@ -170,11 +175,22 @@
                     // Update backup log select options
                     const selectHtml = `
                         <label for="backup_log_id" class="form-label">Backup to Restore</label>
-                        <select class="form-select" id="backup_log_id" name="backup_log_id" required>${options}</select>
+                        <select class="form-select" id="backup_log_id" name="backup_log_id" ${!recoveryTargetTimeCheckbox.checked ? '' : ''}>${options}</select>
                         <div class="form-text">Only successful backups are shown</div>
+                        <input type="hidden" name="has_backups" value="${hasBackups ? 'true' : 'false'}">
                     `;
                     
                     backupLogSelection.innerHTML = selectHtml;
+                    
+                    // If no backups available, suggest using point-in-time recovery
+                    if (!hasBackups && !recoveryTargetTimeCheckbox.checked) {
+                        backupLogSelection.innerHTML += `
+                            <div class="alert alert-info mt-2">
+                                <i class="fas fa-info-circle me-2"></i>
+                                No successful backups found. The system will attempt to use the latest backup if available.
+                            </div>
+                        `;
+                    }
                 })
                 .catch(error => {
                     console.error('Error fetching backup logs:', error);
@@ -237,13 +253,91 @@
         recoveryTargetTimeCheckbox.addEventListener('change', function() {
             if (this.checked) {
                 recoveryTimeDiv.style.display = 'block';
+                recoveryTimeSelect.required = true;
+                
+                // Make backup log selection not required when using point-in-time recovery
+                const backupLogSelect = document.getElementById('backup_log_id');
+                if (backupLogSelect) {
+                    backupLogSelect.required = false;
+                }
+                
                 const jobId = backupJobSelect.value;
                 if (jobId) {
                     loadRecoveryPoints(jobId);
                 }
             } else {
                 recoveryTimeDiv.style.display = 'none';
+                recoveryTimeSelect.required = false;
+                
+                // Make backup log selection required again
+                const backupLogSelect = document.getElementById('backup_log_id');
+                if (backupLogSelect) {
+                    backupLogSelect.required = true;
+                }
             }
+        });
+        
+        // Form submission validation
+        document.getElementById('restoreForm').addEventListener('submit', function(e) {
+            const backupJobSelect = document.getElementById('backup_job_id');
+            const backupLogSelect = document.getElementById('backup_log_id');
+            const useRecoveryTime = recoveryTargetTimeCheckbox.checked;
+            const recoveryTimeValue = recoveryTimeSelect.value;
+            const databaseIdInput = document.getElementById('database_id');
+            
+            // Check if there are real recovery points available (not just placeholder options)
+            const recoveryPointsAvailable = Array.from(recoveryTimeSelect.options).some(option => 
+                !option.disabled && !option.textContent.includes('No recovery points available')
+            );
+            
+            // Validate backup job selection
+            if (!backupJobSelect.value) {
+                e.preventDefault();
+                alert('Please select a backup job first');
+                backupJobSelect.focus();
+                return false;
+            }
+            
+            // Ensure database ID is set from the backup job if not already set
+            if (!databaseIdInput.value && backupJobSelect.selectedIndex > 0) {
+                const databaseId = backupJobSelect.options[backupJobSelect.selectedIndex].getAttribute('data-database-id');
+                if (databaseId) {
+                    databaseIdInput.value = databaseId;
+                }
+            }
+            
+            if (!useRecoveryTime && (!backupLogSelect || !backupLogSelect.value)) {
+                // For standard restore, we try to use the latest backup automatically,
+                // so only show warning if no backups are available
+                const noBackupsAvailable = backupLogSelect && 
+                    (!backupLogSelect.options.length || 
+                    (backupLogSelect.options.length === 1 && backupLogSelect.options[0].disabled));
+                
+                if (noBackupsAvailable) {
+                    e.preventDefault();
+                    alert('No backups available for this job. Please create a backup first or try another job.');
+                    return false;
+                }
+            }
+            
+            // Only validate recovery point selection if:
+            // 1. Point-in-time recovery is enabled AND
+            // 2. There are recovery points available AND
+            // 3. No recovery point is selected
+            if (useRecoveryTime && recoveryPointsAvailable && !recoveryTimeValue) {
+                e.preventDefault();
+                alert('Please select a recovery point');
+                return false;
+            }
+            
+            // If point-in-time recovery is enabled but no recovery points are available,
+            // allow the form to submit if a backup job is selected
+            if (useRecoveryTime && !recoveryPointsAvailable && (!backupLogSelect || !backupLogSelect.value)) {
+                // The server will attempt to use the latest backup
+                console.log('No recovery points available, using latest backup instead');
+            }
+            
+            return true;
         });
         
         // Initialize form state

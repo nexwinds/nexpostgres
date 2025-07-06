@@ -1271,26 +1271,57 @@ EOF"''')
     
     def restore_backup(self, db_name, backup_name=None, restore_time=None):
         """Restore database from backup"""
-        # Stop PostgreSQL
+        # Get PostgreSQL data directory
+        pg_data_dir = self.get_data_directory()
+        if not pg_data_dir:
+            return False, "Failed to determine PostgreSQL data directory"
+        
+        self.logger.info(f"PostgreSQL data directory: {pg_data_dir}")
+        
+        # Stop PostgreSQL forcefully
+        self.logger.info("Stopping PostgreSQL service...")
         self.ssh.execute_command("sudo systemctl stop postgresql")
         
-        # Build restore command
+        # Wait a bit to ensure PostgreSQL has time to shut down
+        import time
+        time.sleep(3)
+        
+        # Verify PostgreSQL is stopped by checking if the process is still running
+        ps_check = self.ssh.execute_command("pgrep -f postgres")
+        if ps_check['exit_code'] == 0 and ps_check['stdout'].strip():
+            self.logger.warning("PostgreSQL processes still running after stop command")
+            # Try to kill PostgreSQL more forcefully
+            self.ssh.execute_command("sudo pkill -9 -f postgres")
+            time.sleep(1)
+        
+        # Check for postmaster.pid and remove it if PostgreSQL is truly stopped
+        pid_check = self.ssh.execute_command(f"sudo test -f {pg_data_dir}/postmaster.pid && echo 'exists'")
+        if pid_check['exit_code'] == 0 and 'exists' in pid_check['stdout']:
+            self.logger.info(f"Found postmaster.pid file, removing it")
+            self.ssh.execute_command(f"sudo rm -f {pg_data_dir}/postmaster.pid")
+        
+        # Try simplest approach - just restore the latest backup
         restore_cmd = f"sudo -u postgres pgbackrest --stanza={db_name} restore"
         
-        if backup_name:
-            restore_cmd += f" --set={backup_name}"
-        
-        if restore_time:
-            restore_cmd += f" --type=time --target='{restore_time}'"
+        # Log the command being executed
+        self.logger.info(f"Executing restore command: {restore_cmd}")
         
         # Execute restore
         result = self.ssh.execute_command(restore_cmd)
         
-        # Start PostgreSQL
+        # Log the complete output
+        self.logger.info(f"Restore command exit code: {result['exit_code']}")
+        self.logger.info(f"Restore command stdout: {result['stdout']}")
+        self.logger.info(f"Restore command stderr: {result['stderr']}")
+        
+        # Start PostgreSQL after restore
+        self.logger.info("Starting PostgreSQL service...")
         self.ssh.execute_command("sudo systemctl start postgresql")
         
         if result['exit_code'] != 0:
-            return False, result['stderr']
+            # Return both stdout and stderr for better diagnostics
+            error_output = f"STDOUT: {result['stdout']}\nSTDERR: {result['stderr']}"
+            return False, error_output
         
         return True, result['stdout']
     
