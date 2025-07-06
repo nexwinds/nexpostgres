@@ -18,7 +18,6 @@ def get_managers(server):
         host=server.host,
         port=server.port,
         username=server.username,
-        ssh_key_path=server.ssh_key_path,
         ssh_key_content=server.ssh_key_content
     )
     
@@ -335,7 +334,6 @@ def restore():
                 host=server.host,
                 port=server.port,
                 username=server.username,
-                ssh_key_path=server.ssh_key_path,
                 ssh_key_content=server.ssh_key_content
             )
             
@@ -377,7 +375,6 @@ def restore():
                 host=server.host,
                 port=server.port,
                 username=server.username,
-                ssh_key_path=server.ssh_key_path,
                 ssh_key_content=server.ssh_key_content
             )
             
@@ -419,7 +416,6 @@ def restore():
             host=server.host,
             port=server.port,
             username=server.username,
-            ssh_key_path=server.ssh_key_path,
             ssh_key_content=server.ssh_key_content
         )
         
@@ -763,7 +759,6 @@ def api_recovery_points():
             host=server.host,
             port=server.port,
             username=server.username,
-            ssh_key_path=server.ssh_key_path,
             ssh_key_content=server.ssh_key_content
         )
         

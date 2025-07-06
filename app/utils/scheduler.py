@@ -96,7 +96,6 @@ def execute_backup(job_id, manual=False):
             host=job.server.host,
             port=job.server.port,
             username=job.server.username,
-            ssh_key_path=job.server.ssh_key_path,
             ssh_key_content=job.server.ssh_key_content
         )
         

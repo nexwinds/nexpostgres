@@ -14,30 +14,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
     const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
     
-    // SSH Key method toggle
-    const sshKeyMethodRadios = document.querySelectorAll('input[name="ssh_key_method"]');
-    const sshKeyPathDiv = document.getElementById('ssh_key_path_div');
-    const sshKeyContentDiv = document.getElementById('ssh_key_content_div');
-    
-    if (sshKeyMethodRadios.length > 0 && sshKeyPathDiv && sshKeyContentDiv) {
-        sshKeyMethodRadios.forEach(function(radio) {
-            radio.addEventListener('change', function() {
-                if (this.value === 'path') {
-                    sshKeyPathDiv.style.display = 'block';
-                    sshKeyContentDiv.style.display = 'none';
-                } else if (this.value === 'content') {
-                    sshKeyPathDiv.style.display = 'none';
-                    sshKeyContentDiv.style.display = 'block';
-                }
-            });
-        });
-        
-        // Trigger change event on page load
-        const checkedRadio = document.querySelector('input[name="ssh_key_method"]:checked');
-        if (checkedRadio) {
-            checkedRadio.dispatchEvent(new Event('change'));
-        }
-    }
+    // SSH key is now only stored as content, so no need for method toggle
     
     // Cron expression builder
     setupCronExpressionBuilder();
@@ -177,23 +154,11 @@ function testSshConnection() {
     const host = document.getElementById('host').value;
     const port = document.getElementById('port').value;
     const username = document.getElementById('username').value;
-    const sshKeyMethod = document.querySelector('input[name="ssh_key_method"]:checked').value;
+    let sshKeyContent = document.getElementById('ssh_key_content').value;
     
-    let sshKeyPath = '';
-    let sshKeyContent = '';
-    
-    if (sshKeyMethod === 'path') {
-        sshKeyPath = document.getElementById('ssh_key_path').value;
-        if (!sshKeyPath) {
-            alert('Please enter an SSH key path');
-            return;
-        }
-    } else if (sshKeyMethod === 'content') {
-        sshKeyContent = document.getElementById('ssh_key_content').value;
-        if (!sshKeyContent) {
-            alert('Please enter SSH key content');
-            return;
-        }
+    if (!sshKeyContent) {
+        alert('Please enter SSH key content');
+        return;
     }
     
     if (!host || !username) {
@@ -217,8 +182,6 @@ function testSshConnection() {
             'host': host,
             'port': port,
             'username': username,
-            'ssh_key_method': sshKeyMethod,
-            'ssh_key_path': sshKeyPath,
             'ssh_key_content': sshKeyContent
         })
     })

@@ -58,7 +58,6 @@ def add():
                 host=server.host,
                 port=server.port,
                 username=server.username,
-                ssh_key_path=server.ssh_key_path,
                 ssh_key_content=server.ssh_key_content
             )
             
@@ -91,14 +90,8 @@ def add():
 def edit(id):
     server = VpsServer.query.get_or_404(id)
     
-    # Load SSH key content if available
-    if server.ssh_key_path and not server.ssh_key_content:
-        try:
-            if os.path.isfile(server.ssh_key_path):
-                with open(server.ssh_key_path, 'r') as f:
-                    server.ssh_key_content = f.read()
-        except Exception:
-            pass
+    # No need to load SSH key content from file anymore
+    # as we no longer store SSH keys on disk
     
     if request.method == 'POST':
         server.name = request.form.get('name')
@@ -111,9 +104,7 @@ def edit(id):
         if not server.ssh_key_content.strip():
             flash('SSH key content cannot be empty', 'danger')
             return render_template('servers/edit.html', server=server)
-            
-        server.ssh_key_path = None
-            
+        
         # Only test connection if requested
         if request.form.get('test_connection') == 'yes':
             connection_ok = test_ssh_connection(
@@ -179,7 +170,6 @@ def initialize_server(id):
             host=server.host,
             port=server.port,
             username=server.username,
-            ssh_key_path=server.ssh_key_path,
             ssh_key_content=server.ssh_key_content
         )
         
@@ -236,7 +226,6 @@ def status_data(id):
             host=server.host,
             port=server.port,
             username=server.username,
-            ssh_key_path=server.ssh_key_path,
             ssh_key_content=server.ssh_key_content
         )
         
@@ -320,7 +309,6 @@ def restart_server(id):
             host=server.host,
             port=server.port,
             username=server.username,
-            ssh_key_path=server.ssh_key_path,
             ssh_key_content=server.ssh_key_content
         )
         
@@ -359,7 +347,6 @@ def update_server(id):
             host=server.host,
             port=server.port,
             username=server.username,
-            ssh_key_path=server.ssh_key_path,
             ssh_key_content=server.ssh_key_content
         )
         

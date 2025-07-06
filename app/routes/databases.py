@@ -67,7 +67,6 @@ def add():
                 host=server.host,
                 port=server.port,
                 username=server.username,
-                ssh_key_path=server.ssh_key_path,
                 ssh_key_content=server.ssh_key_content
             )
             
@@ -153,7 +152,6 @@ def edit(id):
                     host=server.host,
                     port=server.port,
                     username=server.username,
-                    ssh_key_path=server.ssh_key_path,
                     ssh_key_content=server.ssh_key_content
                 )
                 
@@ -214,7 +212,6 @@ def check(id):
             host=server.host,
             port=server.port,
             username=server.username,
-            ssh_key_path=server.ssh_key_path,
             ssh_key_content=server.ssh_key_content
         )
         

@@ -29,7 +29,6 @@ class VpsServer(BaseModel):
     port = db.Column(db.Integer, default=22)  # SSH port
     postgres_port = db.Column(db.Integer, default=5432)  # PostgreSQL port
     username = db.Column(db.String(80))
-    ssh_key_path = db.Column(db.String(256))
     ssh_key_content = db.Column(db.Text)
     initialized = db.Column(db.Boolean, default=False)
     

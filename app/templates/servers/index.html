@@ -39,9 +39,7 @@
                         <td>{{ server.postgres_port }}</td>
                         <td>{{ server.username }}</td>
                         <td>
-                            {% if server.ssh_key_path %}
-                            <span class="badge bg-info">Key File</span>
-                            {% elif server.ssh_key_content %}
+                            {% if server.ssh_key_content %}
                             <span class="badge bg-success">Stored Key</span>
                             {% else %}
                             <span class="badge bg-warning">None</span>

@@ -4,13 +4,13 @@ import tempfile
 import logging
 
 class SSHManager:
-    def __init__(self, host, port, username, ssh_key_path=None, ssh_key_content=None):
+    def __init__(self, host, port, username, ssh_key_content=None):
         self.host = host
         self.port = port
         self.username = username
-        self.ssh_key_path = ssh_key_path
         self.ssh_key_content = ssh_key_content
         self.client = None
+        self.temp_key_path = None
         self.logger = logging.getLogger('nexpostgres.ssh')
 
     def connect(self):
@@ -19,23 +19,25 @@ class SSHManager:
             self.client = paramiko.SSHClient()
             self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
-            # Handle SSH key from content if provided
+            # Create temporary file for SSH key content
             temp_key_file = None
-            if self.ssh_key_content and not self.ssh_key_path:
+            if self.ssh_key_content:
                 temp_key_file = tempfile.NamedTemporaryFile(delete=False)
                 temp_key_file.write(self.ssh_key_content.encode())
                 temp_key_file.close()
-                self.ssh_key_path = temp_key_file.name
+                self.temp_key_path = temp_key_file.name
             
             self.client.connect(
                 hostname=self.host,
                 port=self.port,
                 username=self.username,
-                key_filename=self.ssh_key_path
+                key_filename=self.temp_key_path if self.temp_key_path else None
             )
             
-            if temp_key_file:
-                os.unlink(temp_key_file.name)
+            # Clean up temp file after connection is established
+            if temp_key_file and self.temp_key_path:
+                os.unlink(self.temp_key_path)
+                self.temp_key_path = None
             
             self.logger.info(f"Connected to {self.username}@{self.host}:{self.port}")
             return True
@@ -43,8 +45,10 @@ class SSHManager:
         except Exception as e:
             self.logger.error(f"Failed to connect to {self.username}@{self.host}:{self.port}: {str(e)}")
             
-            if temp_key_file:
-                os.unlink(temp_key_file.name)
+            # Clean up temp file in case of error
+            if temp_key_file and self.temp_key_path:
+                os.unlink(self.temp_key_path)
+                self.temp_key_path = None
                 
             return False
 
@@ -149,9 +153,9 @@ class SSHManager:
             self.logger.error(f"Failed to read content from {remote_path}: {str(e)}")
             return None
 
-def test_ssh_connection(host, port, username, ssh_key_content, ssh_key_path=None):
+def test_ssh_connection(host, port, username, ssh_key_content):
     """Test SSH connection to a remote server"""
-    ssh = SSHManager(host, port, username, ssh_key_path, ssh_key_content)
+    ssh = SSHManager(host, port, username, ssh_key_content)
     connected = ssh.connect()
     if connected:
         ssh.disconnect()
