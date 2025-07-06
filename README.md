@@ -11,7 +11,7 @@ NEXPOSTGRES is a hassle-free PostgreSQL database management solution for managin
 
 ![NEXPOSTGRES Dashboard](https://via.placeholder.com/800x400?text=NEXPOSTGRES+Dashboard)
 
-*NEXPOSTGRES is a free and open-source solution from [Nexwinds.com](https://nexwinds.com)*
+*NEXPOSTGRES is a free and open-source solution from [Nexwinds.com](https://nexwinds.com/nexpostgres)*
 
 ## Features
 
