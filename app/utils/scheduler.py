@@ -107,19 +107,6 @@ def execute_backup(job_id, manual=False):
         # Setup PostgreSQL manager
         pg_manager = PostgresManager(ssh)
         
-        # Check if PostgreSQL is installed
-        if not pg_manager.check_postgres_installed():
-            raise Exception("PostgreSQL is not installed on the server")
-        
-        # Check if pgBackRest is installed
-        if not pg_manager.check_pgbackrest_installed():
-            raise Exception("pgBackRest is not installed on the server")
-        
-        # Verify and fix PostgreSQL configuration
-        config_success, config_message = pg_manager.verify_and_fix_postgres_config(database.name)
-        if not config_success:
-            raise Exception(f"Failed to verify PostgreSQL configuration: {config_message}")
-        
         # Configure pgBackRest if S3 storage is set
         if s3_storage:
             success = pg_manager.setup_pgbackrest_config(
@@ -132,12 +119,6 @@ def execute_backup(job_id, manual=False):
             
             if not success:
                 raise Exception("Failed to configure pgBackRest")
-        
-        # For incremental backups, check if a full backup exists first
-        if job.backup_type == 'incr':
-            fix_success, fix_message = pg_manager.fix_incremental_backup_config(database.name)
-            if not fix_success:
-                raise Exception(f"Failed to fix incremental backup configuration: {fix_message}")
         
         # Execute backup
         success, log_output = pg_manager.execute_backup(database.name, job.backup_type)

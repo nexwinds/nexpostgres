@@ -15,6 +15,9 @@
         <h5 class="mb-0">Database Details</h5>
     </div>
     <div class="card-body">
+        <div class="alert alert-primary mb-3">
+            <i class="fas fa-bolt me-2"></i> The database will be immediately created on the selected server when you save this form.
+        </div>
         <form method="post">
             <div class="mb-3">
                 <label for="server_id" class="form-label">Server</label>
@@ -58,7 +61,7 @@
 <div class="alert alert-info mt-4">
     <h5><i class="fas fa-info-circle me-2"></i> Note</h5>
     <p class="mb-0">
-        After adding the database, you can check its status and install PostgreSQL or pgBackRest if needed from the database list.
+        When you add a database, it will be automatically created on the selected server if PostgreSQL is installed. If PostgreSQL is not installed, you'll need to install it first from the database management page.
     </p>
 </div>
 {% endblock %} 

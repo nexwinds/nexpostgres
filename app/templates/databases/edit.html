@@ -15,6 +15,9 @@
         <h5 class="mb-0">Database Details</h5>
     </div>
     <div class="card-body">
+        <div class="alert alert-primary mb-3">
+            <i class="fas fa-sync-alt me-2"></i> When you update the password, it will be automatically synchronized with the database user on the server.
+        </div>
         <form method="post">
             <div class="mb-3">
                 <label for="server_id" class="form-label">Server</label>
@@ -54,5 +57,12 @@
             </div>
         </form>
     </div>
+</div>
+
+<div class="alert alert-info mt-4">
+    <h5><i class="fas fa-info-circle me-2"></i> Note</h5>
+    <p class="mb-0">
+        Password changes are synchronized with the server immediately. If you change the server or database name, you may need to manually recreate the database on the new server.
+    </p>
 </div>
 {% endblock %} 

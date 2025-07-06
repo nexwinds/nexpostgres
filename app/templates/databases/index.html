@@ -9,9 +9,6 @@
         <a href="{{ url_for('databases.add') }}" class="btn btn-primary">
             <i class="fas fa-plus me-1"></i> Add Database
         </a>
-        <a href="{{ url_for('databases.sync') }}" class="btn btn-success">
-            <i class="fas fa-sync me-1"></i> Sync Databases
-        </a>
     </div>
 </div>
 
@@ -126,47 +123,14 @@
                                     <i class="fas fa-check-circle me-1"></i> Online
                                 </span>
                                 <small class="d-block mt-1">PostgreSQL ${data.postgres_version}</small>
-                                ${data.pgbackrest_installed 
-                                    ? '<small class="d-block text-success"><i class="fas fa-shield-alt me-1"></i> pgBackRest installed</small>' 
-                                    : '<small class="d-block text-warning"><i class="fas fa-exclamation-triangle me-1"></i> pgBackRest not installed</small>'}
                             `;
-                            
-                            if (!data.pgbackrest_installed) {
-                                // Add button to install pgBackRest
-                                statusIndicator.innerHTML += `
-                                    <button class="btn btn-sm btn-outline-warning mt-1 install-pgbackrest" data-database-id="${databaseId}">
-                                        Install pgBackRest
-                                    </button>
-                                `;
-                                
-                                // Setup install button
-                                statusIndicator.querySelector('.install-pgbackrest').addEventListener('click', function() {
-                                    installPgBackRest(databaseId, this);
-                                });
-                            }
                         } else {
-                            if (data.can_install) {
-                                statusIndicator.innerHTML = `
-                                    <span class="badge bg-warning">
-                                        <i class="fas fa-exclamation-triangle me-1"></i> PostgreSQL not installed
-                                    </span>
-                                    <button class="btn btn-sm btn-outline-primary mt-1 install-postgres" data-database-id="${databaseId}">
-                                        Install PostgreSQL
-                                    </button>
-                                `;
-                                
-                                // Setup install button
-                                statusIndicator.querySelector('.install-postgres').addEventListener('click', function() {
-                                    installPostgres(databaseId, this);
-                                });
-                            } else {
-                                statusIndicator.innerHTML = `
-                                    <span class="badge bg-danger">
-                                        <i class="fas fa-times-circle me-1"></i> Error
-                                    </span>
-                                    <small class="d-block text-danger mt-1">${data.message}</small>
-                                `;
-                            }
+                            statusIndicator.innerHTML = `
+                                <span class="badge bg-danger">
+                                    <i class="fas fa-times-circle me-1"></i> Offline
+                                </span>
+                                <small class="d-block text-danger mt-1">${data.message}</small>
+                            `;
                         }
                     })
                     .catch(error => {
@@ -184,131 +148,6 @@
                     });
             });
         });
-        
-        // Function to install PostgreSQL
-        function installPostgres(databaseId, button) {
-            const statusIndicator = document.querySelector(`.status-indicator[data-database-id="${databaseId}"]`);
-            const originalContent = button.innerHTML;
-            
-            // Show loading state
-            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Installing...';
-            button.disabled = true;
-            
-            // Send AJAX request
-            fetch(`{{ url_for('databases.install_postgres', id=0) }}`.replace('0', databaseId), {
-                method: 'POST'
-            })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        statusIndicator.innerHTML = `
-                            <span class="badge bg-success">
-                                <i class="fas fa-check-circle me-1"></i> PostgreSQL Installed
-                            </span>
-                            <small class="d-block text-warning mt-1">pgBackRest not installed</small>
-                            <button class="btn btn-sm btn-outline-warning mt-1 install-pgbackrest" data-database-id="${databaseId}">
-                                Install pgBackRest
-                            </button>
-                        `;
-                        
-                        // Setup install button
-                        statusIndicator.querySelector('.install-pgbackrest').addEventListener('click', function() {
-                            installPgBackRest(databaseId, this);
-                        });
-                    } else {
-                        statusIndicator.innerHTML = `
-                            <span class="badge bg-danger">
-                                <i class="fas fa-times-circle me-1"></i> Installation Failed
-                            </span>
-                            <small class="d-block text-danger mt-1">${data.message}</small>
-                            <button class="btn btn-sm btn-outline-primary mt-1 install-postgres" data-database-id="${databaseId}">
-                                Retry Installation
-                            </button>
-                        `;
-                        
-                        // Setup retry button
-                        statusIndicator.querySelector('.install-postgres').addEventListener('click', function() {
-                            installPostgres(databaseId, this);
-                        });
-                    }
-                })
-                .catch(error => {
-                    // Show error
-                    statusIndicator.innerHTML = `
-                        <span class="badge bg-danger">
-                            <i class="fas fa-times-circle me-1"></i> Installation Failed
-                        </span>
-                        <small class="d-block text-danger mt-1">${error.message}</small>
-                        <button class="btn btn-sm btn-outline-primary mt-1 install-postgres" data-database-id="${databaseId}">
-                            Retry Installation
-                        </button>
-                    `;
-                    
-                    // Setup retry button
-                    statusIndicator.querySelector('.install-postgres').addEventListener('click', function() {
-                        installPostgres(databaseId, this);
-                    });
-                });
-        }
-        
-        // Function to install pgBackRest
-        function installPgBackRest(databaseId, button) {
-            const statusIndicator = document.querySelector(`.status-indicator[data-database-id="${databaseId}"]`);
-            const originalContent = button.innerHTML;
-            
-            // Show loading state
-            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Installing...';
-            button.disabled = true;
-            
-            // Send AJAX request
-            fetch(`{{ url_for('databases.install_pgbackrest', id=0) }}`.replace('0', databaseId), {
-                method: 'POST'
-            })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        statusIndicator.innerHTML = `
-                            <span class="badge bg-success">
-                                <i class="fas fa-check-circle me-1"></i> Online
-                            </span>
-                            <small class="d-block mt-1">PostgreSQL ${data.postgres_version || ''}</small>
-                            <small class="d-block text-success"><i class="fas fa-shield-alt me-1"></i> pgBackRest installed</small>
-                        `;
-                    } else {
-                        statusIndicator.innerHTML = `
-                            <span class="badge bg-warning">
-                                <i class="fas fa-exclamation-triangle me-1"></i> pgBackRest Installation Failed
-                            </span>
-                            <small class="d-block text-danger mt-1">${data.message}</small>
-                            <button class="btn btn-sm btn-outline-warning mt-1 install-pgbackrest" data-database-id="${databaseId}">
-                                Retry Installation
-                            </button>
-                        `;
-                        
-                        // Setup retry button
-                        statusIndicator.querySelector('.install-pgbackrest').addEventListener('click', function() {
-                            installPgBackRest(databaseId, this);
-                        });
-                    }
-                })
-                .catch(error => {
-                    // Show error
-                    statusIndicator.innerHTML = `
-                        <span class="badge bg-danger">
-                            <i class="fas fa-times-circle me-1"></i> Installation Failed
-                        </span>
-                        <small class="d-block text-danger mt-1">${error.message}</small>
-                        <button class="btn btn-sm btn-outline-warning mt-1 install-pgbackrest" data-database-id="${databaseId}">
-                            Retry Installation
-                        </button>
-                    `;
-                    
-                    // Setup retry button
-                    statusIndicator.querySelector('.install-pgbackrest').addEventListener('click', function() {
-                        installPgBackRest(databaseId, this);
-                    });
-                });
-        }
     });
 </script>
 {% endblock %} 

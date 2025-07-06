@@ -32,6 +32,7 @@
                         <th>Type</th>
                         <th>Schedule</th>
                         <th>Status</th>
+                        <th>System Health</th>
                         <th>Last Run</th>
                         <th>Actions</th>
                     </tr>
@@ -65,6 +66,11 @@
                             {% endif %}
                         </td>
                         <td>
+                            <span class="backup-status-indicator" data-job-id="{{ job.id }}">
+                                <span class="badge bg-secondary">Unknown</span>
+                            </span>
+                        </td>
+                        <td>
                             {% set last_log = job.backup_logs|sort(attribute='start_time', reverse=True)|first %}
                             {% if last_log %}
                                 {{ last_log.start_time.strftime('%Y-%m-%d %H:%M') }}
@@ -81,6 +87,12 @@
                         </td>
                         <td>
                             <div class="btn-group" role="group">
+                                <button type="button" class="btn btn-sm btn-outline-secondary check-backup" data-job-id="{{ job.id }}">
+                                    <i class="fas fa-sync-alt"></i> Check
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#fixConfigModal{{ job.id }}">
+                                    <i class="fas fa-wrench"></i> Fix Config
+                                </button>
                                 <a href="{{ url_for('backups.logs', job_id=job.id) }}" class="btn btn-sm btn-outline-secondary">
                                     <i class="fas fa-history"></i> Logs
                                 </a>
@@ -142,6 +154,51 @@
                                     </div>
                                 </div>
                             </div>
+                            
+                            <!-- Fix Config Modal -->
+                            <div class="modal fade" id="fixConfigModal{{ job.id }}" tabindex="-1" aria-labelledby="fixConfigModalLabel" aria-hidden="true">
+                                <div class="modal-dialog modal-lg">
+                                    <div class="modal-content">
+                                        <div class="modal-header bg-warning text-dark">
+                                            <h5 class="modal-title" id="fixConfigModalLabel">Fix Backup Configuration Issues</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="mb-3">
+                                                <h6>Detected Issues:</h6>
+                                                <ul class="issue-list">
+                                                    <li>Click "Check" button first to detect issues</li>
+                                                </ul>
+                                            </div>
+                                            
+                                            <div class="alert alert-info">
+                                                <h6><i class="fas fa-info-circle me-2"></i>What will be fixed:</h6>
+                                                <p>The automated fix will perform the following actions:</p>
+                                                <ul>
+                                                    <li>Configure <code>archive_mode = on</code> in PostgreSQL settings</li>
+                                                    <li>Set up <code>archive_command</code> to use pgBackRest</li>
+                                                    <li>Create/update pgBackRest configuration files</li>
+                                                    <li>Set up proper stanza configuration for this database</li>
+                                                    <li>Restart PostgreSQL to apply changes</li>
+                                                    <li>Clean up any stale lock files if found</li>
+                                                </ul>
+                                            </div>
+                                            
+                                            <div class="alert alert-warning">
+                                                <i class="fas fa-exclamation-triangle me-2"></i><strong>Warning:</strong> PostgreSQL will be restarted during this process. Any active connections will be temporarily interrupted.
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                            <form action="{{ url_for('backups.fix_config', id=job.id) }}" method="post">
+                                                <button type="submit" class="btn btn-warning">
+                                                    <i class="fas fa-wrench me-1"></i> Fix Configuration Issues
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </td>
                     </tr>
                     {% endfor %}
@@ -155,4 +212,96 @@
         {% endif %}
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Setup check buttons
+        document.querySelectorAll('.check-backup').forEach(function(button) {
+            button.addEventListener('click', function() {
+                const jobId = this.getAttribute('data-job-id');
+                const statusIndicator = document.querySelector(`.backup-status-indicator[data-job-id="${jobId}"]`);
+                const originalContent = button.innerHTML;
+                
+                // Show loading state
+                button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
+                button.disabled = true;
+                statusIndicator.innerHTML = '<span class="badge bg-warning">Checking...</span>';
+                
+                // Send AJAX request
+                fetch(`{{ url_for('backups.check', id=0) }}`.replace('0', jobId))
+                    .then(response => response.json())
+                    .then(data => {
+                        // Reset button
+                        button.innerHTML = originalContent;
+                        button.disabled = false;
+                        
+                        // Update status indicator
+                        if (data.success) {
+                            let backupCount = data.backups ? data.backups.length : 0;
+                            
+                            statusIndicator.innerHTML = `
+                                <span class="badge bg-success">
+                                    <i class="fas fa-check-circle me-1"></i> Healthy
+                                </span>
+                                <small class="d-block mt-1">${backupCount} backups available</small>
+                            `;
+                        } else {
+                            let issueText = '';
+                            if (data.issues && data.issues.length > 0) {
+                                issueText = data.issues[0]; // Show first issue
+                                if (data.issues.length > 1) {
+                                    issueText += ` (+${data.issues.length - 1} more)`;
+                                }
+                            } else {
+                                issueText = data.message || 'Unknown issue';
+                            }
+                            
+                            // Create a fix button for any issues
+                            let fixButton = '';
+                            if (data.issues && data.issues.length > 0) {
+                                fixButton = `
+                                    <button type="button" class="btn btn-sm btn-danger mt-2" data-bs-toggle="modal" data-bs-target="#fixConfigModal${jobId}">
+                                        <i class="fas fa-wrench me-1"></i> Fix Issues
+                                    </button>
+                                `;
+                            }
+                            
+                            // Add details to status indicator
+                            statusIndicator.innerHTML = `
+                                <span class="badge bg-danger">
+                                    <i class="fas fa-exclamation-triangle me-1"></i> Issues
+                                </span>
+                                <small class="d-block mt-1 text-danger">${issueText}</small>
+                                ${fixButton}
+                            `;
+                            
+                            // Update fix config modal with issues list if it exists
+                            const fixConfigModal = document.querySelector(`#fixConfigModal${jobId} .issue-list`);
+                            if (fixConfigModal && data.issues && data.issues.length > 0) {
+                                let issuesHtml = '';
+                                data.issues.forEach(issue => {
+                                    issuesHtml += `<li class="text-danger"><i class="fas fa-times-circle me-1"></i> ${issue}</li>`;
+                                });
+                                fixConfigModal.innerHTML = issuesHtml;
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error checking backup:', error);
+                        button.innerHTML = originalContent;
+                        button.disabled = false;
+                        statusIndicator.innerHTML = '<span class="badge bg-danger">Check failed</span>';
+                    });
+            });
+        });
+        
+        // Automatically check status of all backup jobs on page load
+        document.querySelectorAll('.check-backup').forEach(button => {
+            // Add slight delay for each to avoid overwhelming the server
+            setTimeout(() => button.click(), 500);
+        });
+    });
+</script>
 {% endblock %} 
