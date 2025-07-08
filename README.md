@@ -88,6 +88,30 @@ NEXPOSTGRES is a hassle-free PostgreSQL database management solution for managin
    - Default login: `admin` / `admin`
    - You'll be prompted to change the password on first login
 
+### Local Development Setup
+
+For local development without Docker:
+
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/nexwinds/nexpostgres.git
+   cd nexpostgres
+   ```
+
+2. Install Python dependencies:
+   ```bash
+   pip3 install -r requirements.txt
+   ```
+
+3. Run the Flask application:
+   ```bash
+   python3 -m flask run
+   ```
+
+4. Access the web interface at http://127.0.0.1:5000
+   - Default login: `admin` / `admin`
+   - You'll be prompted to change the password on first login
+
 ## Configuration
 
 ### Environment Variables
@@ -268,4 +292,4 @@ This project is licensed under the [GPLv3 License](LICENSE)
 
 ## Contact
 
-Project Link: [https://github.com/nexwinds/nexpostgres](https://github.com/yourusername/nexpostgres) 
+Project Link: [https://github.com/nexwinds/nexpostgres](https://github.com/yourusername/nexpostgres)
