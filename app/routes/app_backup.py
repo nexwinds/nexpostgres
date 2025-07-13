@@ -6,8 +6,9 @@ import tempfile
 import logging
 from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, flash, send_file, current_app
+from flask_login import login_required
 from werkzeug.utils import secure_filename
-from app.routes.auth import login_required, first_login_required
+from app.routes.auth import first_login_required
 from app.models.database import db, User, VpsServer, PostgresDatabase, BackupJob, BackupLog, RestoreLog
 
 # Set up logger
@@ -292,4 +293,4 @@ def format_size(size_bytes):
     elif size_bytes < 1024 * 1024 * 1024:
         return f"{size_bytes / (1024 * 1024):.2f} MB"
     else:
-        return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB" 
+        return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"

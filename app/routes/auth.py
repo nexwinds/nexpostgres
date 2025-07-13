@@ -1,24 +1,17 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
+from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 from app.models.database import User, db
 from functools import wraps
 
 auth_bp = Blueprint('auth', __name__)
 
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            flash('Please login to access this page', 'warning')
-            return redirect(url_for('auth.login', next=request.url))
-        return f(*args, **kwargs)
-    return decorated_function
+# Remove custom login_required decorator since we're using Flask-Login's
 
 def first_login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        user = User.query.get(session.get('user_id'))
-        if user and user.is_first_login:
+        if current_user.is_authenticated and current_user.is_first_login:
             flash('You need to change your password', 'warning')
             return redirect(url_for('auth.change_password'))
         return f(*args, **kwargs)
@@ -33,8 +26,7 @@ def login():
         user = User.query.filter_by(username=username).first()
         
         if user and user.check_password(password):
-            session.permanent = True
-            session['user_id'] = user.id
+            login_user(user, remember=True)
             
             if user.is_first_login:
                 flash('First login detected. Please change your password.', 'warning')
@@ -49,7 +41,7 @@ def login():
 @auth_bp.route('/change-password', methods=['GET', 'POST'])
 @login_required
 def change_password():
-    user = User.query.get(session['user_id'])
+    user = current_user
     
     if request.method == 'POST':
         current_password = request.form.get('current_password')
@@ -74,6 +66,6 @@ def change_password():
 
 @auth_bp.route('/logout')
 def logout():
-    session.clear()
+    logout_user()
     flash('You have been logged out', 'info')
-    return redirect(url_for('auth.login')) 
+    return redirect(url_for('auth.login'))

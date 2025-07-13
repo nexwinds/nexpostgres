@@ -23,14 +23,15 @@ logger = logging.getLogger('nexpostgres.scheduler')
 
 def init_scheduler(app):
     """Initialize the scheduler"""
-    scheduler.init_app(app)
-    scheduler.start()
-    
-    # Load existing jobs from database
-    with app.app_context():
-        jobs = BackupJob.query.filter_by(enabled=True).all()
-        for job in jobs:
-            schedule_backup_job(job)
+    if not scheduler.running:
+        scheduler.init_app(app)
+        scheduler.start()
+        
+        # Load existing jobs from database
+        with app.app_context():
+            jobs = BackupJob.query.filter_by(enabled=True).all()
+            for job in jobs:
+                schedule_backup_job(job)
 
 def schedule_backup_job(job):
     """Schedule a backup job"""
@@ -201,4 +202,4 @@ def execute_backup_job(job_id):
 
 def execute_manual_backup(job_id):
     """Execute a manual backup job"""
-    return execute_backup(job_id, manual=True) 
+    return execute_backup(job_id, manual=True)

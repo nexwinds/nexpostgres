@@ -1,9 +1,10 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
-from app.models.database import BackupJob, BackupLog, PostgresDatabase, RestoreLog, S3Storage, db
+from flask_login import login_required, current_user
+from app.models.database import BackupJob, BackupLog, PostgresDatabase, RestoreLog, S3Storage, VpsServer, db
 from app.utils.ssh_manager import SSHManager
 from app.utils.postgres_manager import PostgresManager
 from app.utils.scheduler import schedule_backup_job, execute_manual_backup
-from app.routes.auth import login_required, first_login_required
+from app.routes.auth import first_login_required
 from datetime import datetime, timedelta
 import functools
 import os
@@ -30,14 +31,14 @@ def get_managers(server):
 @login_required
 @first_login_required
 def index():
-    backup_jobs = BackupJob.query.all()
+    backup_jobs = BackupJob.query.join(VpsServer).all()
     return render_template('backups/index.html', backup_jobs=backup_jobs)
 
 @backups_bp.route('/add', methods=['GET', 'POST'])
 @login_required
 @first_login_required
 def add():
-    databases = PostgresDatabase.query.all()
+    databases = PostgresDatabase.query.join(VpsServer).all()
     s3_storages = S3Storage.query.all()
     
     if not databases:
@@ -147,8 +148,8 @@ def _check_and_configure_backup(database, s3_storage):
 @login_required
 @first_login_required
 def edit(id):
-    backup_job = BackupJob.query.get_or_404(id)
-    databases = PostgresDatabase.query.all()
+    backup_job = BackupJob.query.join(VpsServer).filter(BackupJob.id == id).first_or_404()
+    databases = PostgresDatabase.query.join(VpsServer).all()
     s3_storages = S3Storage.query.all()
     
     if request.method == 'POST':
@@ -1022,4 +1023,4 @@ def debug_restore_log(id):
         "backup_job_name": backup_log.backup_job.name if backup_log and hasattr(backup_log, 'backup_job') else None
     }
     
-    return jsonify(debug_info) 
+    return jsonify(debug_info)

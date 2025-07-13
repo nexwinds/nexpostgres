@@ -1,12 +1,19 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, Response
+from flask_login import login_required, current_user
 from app.models.database import VpsServer, db
 from app.utils.ssh_manager import test_ssh_connection, SSHManager
 from app.utils.postgres_manager import PostgresManager
-from app.routes.auth import login_required, first_login_required
+from app.routes.auth import first_login_required
 import os
 import json
+import time
+import threading
+from queue import Queue
 
 servers_bp = Blueprint('servers', __name__, url_prefix='/servers')
+
+# Global dictionary to store progress queues for each server initialization
+progress_queues = {}
 
 @servers_bp.route('/')
 @login_required
@@ -48,6 +55,7 @@ def add():
                 return render_template('servers/add.html', server=server)
         
         # Create server record
+        # Removed user_id assignment for single-user mode
         db.session.add(server)
         db.session.commit()
         
@@ -62,12 +70,10 @@ def add():
             )
             
             if ssh.connect():
-                # Initialize server
+                # Initialize server with specified PostgreSQL version
+                postgres_version = request.form.get('postgres_version', '17')
                 pg_manager = PostgresManager(ssh)
-                success, message = pg_manager.initialize_server()
-                
-                # Disconnect
-                ssh.disconnect()
+                success, message = pg_manager.initialize_server(postgres_version)
                 
                 if success:
                     server.initialized = True
@@ -75,6 +81,9 @@ def add():
                     flash('Server added successfully and initialized with PostgreSQL and pgBackRest', 'success')
                 else:
                     flash(f'Server added successfully but initialization failed: {message}', 'warning')
+                
+                # Disconnect
+                ssh.disconnect()
             else:
                 flash('Server added successfully but initialization could not start', 'warning')
         except Exception as e:
@@ -88,7 +97,7 @@ def add():
 @login_required
 @first_login_required
 def edit(id):
-    server = VpsServer.query.get_or_404(id)
+    server = VpsServer.query.filter_by(id=id).first_or_404()
     
     # No need to load SSH key content from file anymore
     # as we no longer store SSH keys on disk
@@ -128,7 +137,7 @@ def edit(id):
 @login_required
 @first_login_required
 def delete(id):
-    server = VpsServer.query.get_or_404(id)
+    server = VpsServer.query.filter_by(id=id).first_or_404()
     db.session.delete(server)
     db.session.commit()
     flash('Server deleted successfully', 'success')
@@ -158,67 +167,163 @@ def test_connection():
     else:
         return jsonify({'success': False, 'message': 'Connection failed'})
 
+@servers_bp.route('/initialize-progress/<int:id>')
+@login_required
+@first_login_required
+def initialize_progress(id):
+    """Server-Sent Events endpoint for real-time initialization progress"""
+    server = VpsServer.query.filter_by(id=id).first_or_404()
+    
+    def generate_progress():
+        # Create a unique queue for this initialization
+        queue_key = f"server_{id}_{int(time.time())}"
+        progress_queues[queue_key] = Queue()
+        
+        try:
+            # Send initial connection message with queue key
+            yield f"data: {json.dumps({'step': 'connecting', 'message': 'Waiting for initialization to start...', 'progress': 5, 'queue_key': queue_key})}\n\n"
+            
+            # Wait for progress updates from the initialization thread
+            while True:
+                try:
+                    # Wait for progress update with timeout
+                    progress_data = progress_queues[queue_key].get(timeout=60)
+                    
+                    if progress_data is None:  # Sentinel value to end stream
+                        break
+                        
+                    yield f"data: {json.dumps(progress_data)}\n\n"
+                    
+                    # If this is the final step, break
+                    if progress_data.get('step') == 'completed' or progress_data.get('step') == 'error':
+                        break
+                        
+                except:
+                    # Timeout or error - send keep-alive
+                    yield f"data: {json.dumps({'step': 'keep-alive', 'message': 'Processing...'})}\n\n"
+                    
+        finally:
+            # Clean up the queue
+            if queue_key in progress_queues:
+                del progress_queues[queue_key]
+    
+    return Response(generate_progress(), mimetype='text/event-stream')
+
 @servers_bp.route('/initialize/<int:id>', methods=['POST'])
 @login_required
 @first_login_required
 def initialize_server(id):
-    server = VpsServer.query.get_or_404(id)
+    server = VpsServer.query.filter_by(id=id).first_or_404()
     
-    try:
-        # Connect to server via SSH
-        ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_content=server.ssh_key_content
-        )
-        
-        if not ssh.connect():
-            return jsonify({
-                'success': False,
-                'message': 'Failed to connect to server via SSH'
-            })
-        
-        # Initialize server
-        pg_manager = PostgresManager(ssh)
-        success, message = pg_manager.initialize_server()
-        
-        # Disconnect
-        ssh.disconnect()
-        
-        if success:
+    # Get the postgres_version from request if provided
+    # Default to None to install the latest available version in the repository
+    postgres_version = request.form.get('postgres_version', None)
+    
+    # Get the queue key from the request (sent by frontend)
+    queue_key = request.form.get('queue_key')
+    
+    if not queue_key or queue_key not in progress_queues:
+        return jsonify({
+            'success': False,
+            'message': 'No progress stream found. Please refresh and try again.'
+        })
+    
+    def run_initialization():
+        try:
+            progress_queue = progress_queues[queue_key]
+            
+            # Step 1: SSH Connection
+            progress_queue.put({'step': 'ssh_connect', 'message': 'Establishing SSH connection...', 'progress': 20})
+            
+            ssh = SSHManager(
+                host=server.host,
+                port=server.port,
+                username=server.username,
+                ssh_key_content=server.ssh_key_content
+            )
+            
+            if not ssh.connect():
+                progress_queue.put({'step': 'error', 'message': 'Failed to connect to server via SSH', 'progress': 0})
+                progress_queue.put(None)  # End stream
+                return
+            
+            # Step 2: System Check
+            progress_queue.put({'step': 'system_check', 'message': 'Checking system requirements...', 'progress': 30})
+            
+            # Step 3: PostgreSQL Installation
+            version_msg = f'PostgreSQL {postgres_version}' if postgres_version else 'PostgreSQL (latest available)'
+            progress_queue.put({'step': 'postgres_install', 'message': f'Installing {version_msg}...', 'progress': 50})
+            
+            pg_manager = PostgresManager(ssh)
+            
+            # Check if PostgreSQL is already installed
+            if not pg_manager.check_postgres_installed():
+                success, message = pg_manager.install_postgres(postgres_version)
+                if not success:
+                    progress_queue.put({'step': 'error', 'message': f'Failed to install PostgreSQL: {message}', 'progress': 50})
+                    progress_queue.put(None)
+                    ssh.disconnect()
+                    return
+            
+            # Step 4: pgBackRest Installation
+            progress_queue.put({'step': 'pgbackrest_install', 'message': 'Installing pgBackRest...', 'progress': 70})
+            
+            success, message = pg_manager.backup_manager.install_pgbackrest()
+            if not success:
+                progress_queue.put({'step': 'warning', 'message': f'pgBackRest installation warning: {message}', 'progress': 70})
+            
+            # Step 5: PostgreSQL Service Start
+            progress_queue.put({'step': 'postgres_start', 'message': 'Starting PostgreSQL service...', 'progress': 85})
+            
+            success, message = pg_manager.restart_postgres()
+            if not success:
+                progress_queue.put({'step': 'error', 'message': f'Failed to start PostgreSQL: {message}', 'progress': 85})
+                progress_queue.put(None)
+                ssh.disconnect()
+                return
+            
+            # Step 6: Final Configuration
+            progress_queue.put({'step': 'final_config', 'message': 'Completing configuration...', 'progress': 95})
+            
             # Update server status in database
             server.initialized = True
             db.session.commit()
             
-            return jsonify({
-                'success': True,
-                'message': message
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': message
-            })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        })
+            # Step 7: Completion
+            progress_queue.put({'step': 'completed', 'message': 'PostgreSQL server initialized successfully!', 'progress': 100})
+            
+            # Disconnect
+            ssh.disconnect()
+            
+        except Exception as e:
+            if queue_key in progress_queues:
+                progress_queues[queue_key].put({'step': 'error', 'message': str(e), 'progress': 0})
+        finally:
+            if queue_key in progress_queues:
+                progress_queues[queue_key].put(None)  # End stream
+    
+    # Start initialization in background thread
+    thread = threading.Thread(target=run_initialization)
+    thread.daemon = True
+    thread.start()
+    
+    return jsonify({
+        'success': True,
+        'message': 'Initialization started. Check progress stream for updates.'
+    })
 
 @servers_bp.route('/status/<int:id>')
 @login_required
 @first_login_required
 def status(id):
-    server = VpsServer.query.get_or_404(id)
+    server = VpsServer.query.filter_by(id=id).first_or_404()
     return render_template('servers/status.html', server=server)
 
 @servers_bp.route('/status-data/<int:id>', methods=['GET'])
 @login_required
 @first_login_required
 def status_data(id):
-    server = VpsServer.query.get_or_404(id)
+    server = VpsServer.query.filter_by(id=id).first_or_404()
     
     try:
         # Connect to server via SSH
@@ -297,11 +402,57 @@ def status_data(id):
             'message': str(e)
         })
 
+@servers_bp.route('/postgres-version/<int:id>', methods=['GET'])
+@login_required
+@first_login_required
+def get_postgres_version(id):
+    """Get PostgreSQL version directly from the server"""
+    server = VpsServer.query.filter_by(id=id).first_or_404()
+    
+    try:
+        # Connect to server via SSH
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            return jsonify({
+                'success': False,
+                'message': 'Failed to connect to server via SSH'
+            })
+        
+        # Get PostgreSQL version
+        pg_manager = PostgresManager(ssh)
+        version = pg_manager.get_postgres_version()
+        
+        # Disconnect
+        ssh.disconnect()
+        
+        if version:
+            return jsonify({
+                'success': True,
+                'version': version
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'PostgreSQL not installed or version could not be determined'
+            })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        })
+
 @servers_bp.route('/restart/<int:id>', methods=['POST'])
 @login_required
 @first_login_required
 def restart_server(id):
-    server = VpsServer.query.get_or_404(id)
+    server = VpsServer.query.filter_by(id=id).first_or_404()
     
     try:
         # Connect to server via SSH
@@ -339,7 +490,7 @@ def restart_server(id):
 @login_required
 @first_login_required
 def update_server(id):
-    server = VpsServer.query.get_or_404(id)
+    server = VpsServer.query.filter_by(id=id).first_or_404()
     
     try:
         # Connect to server via SSH
@@ -383,7 +534,7 @@ def update_server(id):
 @login_required
 @first_login_required
 def validate_postgres_config(id):
-    server = VpsServer.query.get_or_404(id)
+    server = VpsServer.query.filter_by(id=id).first_or_404()
     
     try:
         # Connect to server via SSH
@@ -417,4 +568,4 @@ def validate_postgres_config(id):
         return jsonify({
             'success': False,
             'message': str(e)
-        }) 
+        })

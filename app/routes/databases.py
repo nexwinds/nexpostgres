@@ -1,809 +1,545 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
-from app.models.database import VpsServer, PostgresDatabase, RestoreLog, PostgresDatabaseUser, db
-from app.utils.ssh_manager import SSHManager
-from app.utils.postgres_manager import PostgresManager
-from app.routes.auth import login_required, first_login_required
-import random
+from flask_login import login_required, current_user
+from app.models.database import VpsServer, PostgresDatabase, PostgresDatabaseUser, RestoreLog, db
+from app.utils.database_service import DatabaseService, DatabaseImportService
+from app.utils.validation_service import ValidationService
+import secrets
 import string
 from datetime import datetime
-import time
-import re
 
-databases_bp = Blueprint('databases', __name__, url_prefix='/databases')
+databases_bp = Blueprint('databases', __name__)
 
-def generate_random_password(length=39):
-    """Generate a random password of specified length with uppercase, lowercase and digits."""
-    charset = string.ascii_uppercase + string.ascii_lowercase + string.digits
-    return ''.join(random.choice(charset) for _ in range(length))
 
-def validate_username(username):
-    """Validate that username follows PostgreSQL rules (lowercase only, no special chars)."""
-    # PostgreSQL usernames: lowercase letters, numbers, underscores
-    return bool(re.match(r'^[a-z][a-z0-9_]*$', username))
-
-@databases_bp.route('/')
+@databases_bp.route('/databases')
 @login_required
-@first_login_required
-def index():
-    databases = PostgresDatabase.query.all()
-    return render_template('databases/index.html', databases=databases)
+def databases():
+    """Display all databases for the current user."""
+    user_databases = PostgresDatabase.query.join(VpsServer).filter(
+        # Removed user_id filtering for single-user mode
+    ).all()
+    return render_template('databases.html', databases=user_databases)
 
-@databases_bp.route('/server/<int:server_id>')
-@login_required
-@first_login_required
-def by_server(server_id):
-    server = VpsServer.query.get_or_404(server_id)
-    databases = PostgresDatabase.query.filter_by(vps_server_id=server_id).all()
-    return render_template('databases/by_server.html', server=server, databases=databases)
 
-@databases_bp.route('/add', methods=['GET', 'POST'])
+@databases_bp.route('/databases/add', methods=['GET', 'POST'])
 @login_required
-@first_login_required
-def add():
-    servers = VpsServer.query.all()
+def add_database():
+    """Add a new database."""
+    if request.method == 'GET':
+        servers = VpsServer.query.all()
+        return render_template('add_database.html', servers=servers)
     
-    if not servers:
-        flash('You need to add a server first', 'warning')
-        return redirect(url_for('servers.add'))
+    # POST request - process form
+    data = request.form.to_dict()
     
-    if request.method == 'POST':
-        name = request.form.get('name')
-        username = name.lower()  # Automatically derive username from database name
-        password = request.form.get('password')
-        server_id = request.form.get('server_id', type=int)
-        
-        # Validate data
-        server = VpsServer.query.get(server_id)
-        if not server:
-            flash('Selected server does not exist', 'danger')
-            return render_template('databases/add.html', servers=servers)
-        
-        # Check if database already exists on server
-        existing = PostgresDatabase.query.filter_by(name=name, vps_server_id=server_id).first()
-        if existing:
-            flash(f'Database "{name}" already exists on this server', 'danger')
-            return render_template('databases/add.html', servers=servers)
-        
-        # Create database record
-        database = PostgresDatabase(
-            name=name,
-            vps_server_id=server_id
+    # Validate required fields
+    required_fields = ['name', 'vps_server_id']
+    field_errors = ValidationService.validate_required_fields(data, required_fields)
+    if field_errors:
+        for error in field_errors:
+            flash(error, 'error')
+        return redirect(url_for('databases.add_database'))
+    
+    # Validate database name
+    name_valid, name_error = ValidationService.validate_database_name(data['name'])
+    if not name_valid:
+        flash(name_error, 'error')
+        return redirect(url_for('databases.add_database'))
+    
+    # Check if database already exists
+    if DatabaseService.validate_database_exists(data['name'], int(data['vps_server_id'])):
+        flash('A database with this name already exists on the selected server', 'error')
+        return redirect(url_for('databases.add_database'))
+    
+    # Get server and validate ownership
+    server = VpsServer.query.filter_by(
+        id=data['vps_server_id'], 
+        # Removed user_id for single-user mode
+    ).first()
+    
+    if not server:
+        flash('Invalid server selected', 'error')
+        return redirect(url_for('databases.add_database'))
+    
+    # Generate username and password
+    existing_users = [user.username for user in PostgresDatabaseUser.query.all()]
+    username = ValidationService.generate_username(data['name'], existing_users)
+    password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
+    
+    # Create database on server
+    success, message = DatabaseService.execute_with_postgres(
+        server, 
+        'Database creation',
+        DatabaseService.create_database_operation,
+        data['name'], username, password
+    )
+    
+    if not success:
+        flash(message, 'error')
+        return redirect(url_for('databases.add_database'))
+    
+    # Save to database
+    try:
+        new_database = PostgresDatabase(
+            name=data['name'],
+            vps_server_id=server.id
         )
+        db.session.add(new_database)
+        db.session.flush()  # Get the ID
         
-        db.session.add(database)
-        db.session.commit()
-        
-        # Create primary user record
-        primary_user = PostgresDatabaseUser(
+        new_user = PostgresDatabaseUser(
             username=username,
             password=password,
-            database_id=database.id,
+            database_id=new_database.id,
+            permission_level='admin',
             is_primary=True
         )
-        
-        db.session.add(primary_user)
+        db.session.add(new_user)
         db.session.commit()
         
-        # Create the database on the server
-        try:
-            # Connect to server via SSH
-            ssh = SSHManager(
-                host=server.host,
-                port=server.port,
-                username=server.username,
-                ssh_key_content=server.ssh_key_content
-            )
-            
-            if not ssh.connect():
-                flash(f'Database record created, but failed to connect to server to create database', 'warning')
-                return redirect(url_for('databases.index'))
-            
-            # Check PostgreSQL installation
-            pg_manager = PostgresManager(ssh)
-            
-            if not pg_manager.check_postgres_installed():
-                ssh.disconnect()
-                flash(f'Database record created, but PostgreSQL is not installed on the server', 'warning')
-                return redirect(url_for('databases.index'))
-            
-            # Create the database
-            success, message = pg_manager.create_database(name, username, password)
-            
-            # Disconnect
-            ssh.disconnect()
-            
-            if success:
-                flash(f'Database added successfully and deployed to server: {message}', 'success')
-            else:
-                flash(f'Database record created, but deployment failed: {message}', 'warning')
-            
-        except Exception as e:
-            flash(f'Database record created, but deployment failed: {str(e)}', 'warning')
+        flash('Database created successfully', 'success')
+        return redirect(url_for('databases.databases'))
         
-        return redirect(url_for('databases.index'))
-    
-    return render_template('databases/add.html', servers=servers)
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Failed to save database information: {str(e)}', 'error')
+        return redirect(url_for('databases.add_database'))
 
-@databases_bp.route('/edit/<int:id>', methods=['GET', 'POST'])
+
+@databases_bp.route('/databases/<int:database_id>/edit', methods=['GET', 'POST'])
 @login_required
-@first_login_required
-def edit(id):
-    database = PostgresDatabase.query.get_or_404(id)
-    servers = VpsServer.query.all()
+def edit_database(database_id):
+    """Edit database credentials."""
+    database = PostgresDatabase.query.join(VpsServer).filter(
+        PostgresDatabase.id == database_id,
+        # Removed user_id filtering for single-user mode
+    ).first_or_404()
     
-    # Get the primary user
-    primary_user = PostgresDatabaseUser.query.filter_by(database_id=database.id, is_primary=True).first()
+    if request.method == 'GET':
+        primary_user = PostgresDatabaseUser.query.filter_by(
+            database_id=database.id, 
+            is_primary=True
+        ).first()
+        
+        current_permission = DatabaseService.get_current_user_permission(
+            database.vps_server, database.name, primary_user.username if primary_user else ''
+        )
+        
+        return render_template('edit_database.html', 
+                             database=database, 
+                             primary_user=primary_user,
+                             current_permission=current_permission)
+    
+    # POST request - update password
+    new_password = request.form.get('new_password', '').strip()
+    
+    # Validate password
+    password_valid, password_error = ValidationService.validate_password(new_password)
+    if not password_valid:
+        flash(password_error, 'error')
+        return redirect(url_for('databases.edit_database', database_id=database_id))
+    
+    primary_user = PostgresDatabaseUser.query.filter_by(
+        database_id=database.id, 
+        is_primary=True
+    ).first()
     
     if not primary_user:
-        flash('No primary user found for this database', 'danger')
-        return redirect(url_for('databases.index'))
+        flash('Primary user not found', 'error')
+        return redirect(url_for('databases.edit_database', database_id=database_id))
     
-    if request.method == 'POST':
-        name = request.form.get('name')
-        username = name.lower()  # Automatically derive username from database name
-        password_changed = request.form.get('password_changed') == 'true'
-        password = request.form.get('password') if password_changed else None
-        server_id = request.form.get('server_id', type=int)
-        
-        # Validate data
-        server = VpsServer.query.get(server_id)
-        if not server:
-            flash('Selected server does not exist', 'danger')
-            return render_template('databases/edit.html', database=database, primary_user=primary_user, servers=servers)
-        
-        # Check if database already exists on server (if name or server changed)
-        if (name != database.name or server_id != database.vps_server_id):
-            existing = PostgresDatabase.query.filter_by(name=name, vps_server_id=server_id).first()
-            if existing and existing.id != database.id:
-                flash(f'Database "{name}" already exists on this server', 'danger')
-                return render_template('databases/edit.html', database=database, primary_user=primary_user, servers=servers)
-        
-        # Keep track of changes
-        old_username = primary_user.username
-        username_changed = username != old_username
-        server_changed = server_id != database.vps_server_id
-        
-        # Update database record
-        database.name = name
-        database.vps_server_id = server_id
-        
-        # Update the primary user record
-        primary_user.username = username
-        if password_changed and password:
-            primary_user.password = password
-        
-        db.session.commit()
-        
-        # If password changed, update on server
-        if password_changed and password and not server_changed:
-            try:
-                # Connect to server via SSH
-                ssh = SSHManager(
-                    host=server.host,
-                    port=server.port,
-                    username=server.username,
-                    ssh_key_content=server.ssh_key_content
-                )
-                
-                if not ssh.connect():
-                    flash(f'Database record updated, but failed to connect to server to update password', 'warning')
-                    return redirect(url_for('databases.index'))
-                
-                # Check PostgreSQL installation
-                pg_manager = PostgresManager(ssh)
-                
-                if not pg_manager.check_postgres_installed():
-                    ssh.disconnect()
-                    flash(f'Database record updated, but PostgreSQL is not installed on the server', 'warning')
-                    return redirect(url_for('databases.index'))
-                
-                # Update the user password
-                success, message = pg_manager.update_database_user(username, password)
-                
-                # Disconnect
-                ssh.disconnect()
-                
-                if success:
-                    flash(f'Database updated successfully and synchronized with server', 'success')
-                else:
-                    flash(f'Database record updated, but server synchronization failed: {message}', 'warning')
-                
-            except Exception as e:
-                flash(f'Database record updated, but server synchronization failed: {str(e)}', 'warning')
-        else:
-            flash('Database updated successfully', 'success')
-        
-        return redirect(url_for('databases.index'))
+    # Update password on server
+    success, message = DatabaseService.execute_with_postgres(
+        database.vps_server,
+        'Password update',
+        DatabaseService.update_user_password_operation,
+        primary_user.username, new_password
+    )
     
-    return render_template('databases/edit.html', database=database, primary_user=primary_user, servers=servers)
-
-@databases_bp.route('/credentials/<int:id>')
-@login_required
-@first_login_required
-def credentials(id):
-    database = PostgresDatabase.query.get_or_404(id)
-    server = database.server
+    if not success:
+        flash(message, 'error')
+        return redirect(url_for('databases.edit_database', database_id=database_id))
     
-    # Get all users for this database from local DB
-    users = PostgresDatabaseUser.query.filter_by(database_id=database.id).all()
-    
-    # If no users exist (backward compatibility), create a primary user
-    if not users:
-        flash('No users found for this database. Please recreate the database.', 'danger')
-        return redirect(url_for('databases.index'))
-    
-    # Get the primary user for the connection URL
-    primary_user = next((user for user in users if user.is_primary), users[0])
-    connection_url = f"postgresql://{primary_user.username}:{primary_user.password}@{server.host}:{server.postgres_port}/{database.name}"
-    
-    # Add JDBC connection URL
-    jdbc_url = f"jdbc:postgresql://{server.host}:{server.postgres_port}/{database.name}"
-    
-    # Get user permissions directly from the PostgreSQL server
-    user_permissions = {}
+    # Update in database
     try:
-        ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_content=server.ssh_key_content
-        )
-        
-        if ssh.connect():
-            pg_manager = PostgresManager(ssh)
-            server_users = pg_manager.list_database_users(database.name)
-            
-            # Create a mapping of username to permission level
-            for server_user in server_users:
-                user_permissions[server_user['username']] = server_user['permission_level']
-                
-            ssh.disconnect()
+        primary_user.password = new_password
+        db.session.commit()
+        flash('Password updated successfully', 'success')
     except Exception as e:
-        flash(f'Warning: Could not retrieve user permissions from server: {str(e)}', 'warning')
+        db.session.rollback()
+        flash(f'Failed to update password in database: {str(e)}', 'error')
     
-    return render_template('databases/credentials.html', 
-                        database=database, 
-                        server=server,
-                        users=users,
-                        primary_user=primary_user,
-                        user_permissions=user_permissions,
-                        connection_url=connection_url,
-                        jdbc_url=jdbc_url)
+    return redirect(url_for('databases.edit_database', database_id=database_id))
 
-@databases_bp.route('/user/add/<int:database_id>', methods=['GET', 'POST'])
+
+@databases_bp.route('/databases/<int:database_id>/users/add', methods=['GET', 'POST'])
 @login_required
-@first_login_required
-def add_user(database_id):
-    database = PostgresDatabase.query.get_or_404(database_id)
-    server = database.server
+def add_database_user(database_id):
+    """Add a new user to a database."""
+    database = PostgresDatabase.query.join(VpsServer).filter(
+        PostgresDatabase.id == database_id,
+        # Removed user_id filtering for single-user mode
+    ).first_or_404()
     
-    if request.method == 'POST':
-        username = request.form.get('username')
-        permission_level = request.form.get('permission_level')
-        password = generate_random_password()
-        
-        # Validate username - must be lowercase and contain only lowercase letters, numbers, underscore
-        if not validate_username(username):
-            flash('Username must contain only lowercase letters, numbers, and underscores, and start with a letter', 'danger')
-            return render_template('databases/add_user.html', database=database)
-        
-        # Check if username already exists for this database
-        existing_user = PostgresDatabaseUser.query.filter_by(database_id=database_id, username=username).first()
-        if existing_user:
-            flash(f'User "{username}" already exists for this database', 'danger')
-            return render_template('databases/add_user.html', database=database)
-        
-        # Create user in the application database
-        user = PostgresDatabaseUser(
-            username=username,
-            password=password,
+    if request.method == 'GET':
+        return render_template('add_database_user.html', database=database)
+    
+    # POST request - process form
+    data = request.form.to_dict()
+    
+    # Validate required fields
+    required_fields = ['username', 'password', 'permission_level']
+    field_errors = ValidationService.validate_required_fields(data, required_fields)
+    
+    # Validate individual fields
+    validations = [
+        ValidationService.validate_username(data.get('username', '')),
+        ValidationService.validate_password(data.get('password', '')),
+        ValidationService.validate_permission_level(data.get('permission_level', ''))
+    ]
+    
+    if field_errors:
+        for error in field_errors:
+            flash(error, 'error')
+        return redirect(url_for('databases.add_database_user', database_id=database_id))
+    
+    if not ValidationService.validate_and_flash_errors(validations):
+        return redirect(url_for('databases.add_database_user', database_id=database_id))
+    
+    # Check if user already exists
+    if DatabaseService.validate_user_exists(data['username'], database_id):
+        flash('A user with this username already exists for this database', 'error')
+        return redirect(url_for('databases.add_database_user', database_id=database_id))
+    
+    # Create user on server
+    success, message = DatabaseService.execute_with_postgres(
+        database.vps_server,
+        'User creation',
+        DatabaseService.create_user_operation,
+        data['username'], data['password'], database.name, data['permission_level']
+    )
+    
+    if not success:
+        flash(message, 'error')
+        return redirect(url_for('databases.add_database_user', database_id=database_id))
+    
+    # Save to database
+    try:
+        new_user = PostgresDatabaseUser(
+            username=data['username'],
+            password=data['password'],
             database_id=database_id,
+            permission_level=data['permission_level'],
             is_primary=False
         )
-        db.session.add(user)
+        db.session.add(new_user)
         db.session.commit()
         
-        # Create user on the PostgreSQL server
-        try:
-            ssh = SSHManager(
-                host=server.host,
-                port=server.port,
-                username=server.username,
-                ssh_key_content=server.ssh_key_content
-            )
-            
-            if not ssh.connect():
-                flash(f'User record created, but failed to connect to server', 'warning')
-                return redirect(url_for('databases.credentials', id=database_id))
-            
-            pg_manager = PostgresManager(ssh)
-            
-            if not pg_manager.check_postgres_installed():
-                ssh.disconnect()
-                flash(f'User record created, but PostgreSQL is not installed on the server', 'warning')
-                return redirect(url_for('databases.credentials', id=database_id))
-            
-            # Create the database user with appropriate permissions
-            success, message = pg_manager.create_database_user(
-                username=username, 
-                password=password, 
-                db_name=database.name,
-                permission_level=permission_level
-            )
-            
-            ssh.disconnect()
-            
-            if success:
-                flash(f'User added successfully: {message}', 'success')
-            else:
-                flash(f'User record created, but server operation failed: {message}', 'warning')
-                
-        except Exception as e:
-            flash(f'User record created, but server operation failed: {str(e)}', 'warning')
+        flash('User added successfully', 'success')
+        return redirect(url_for('databases.database_users', database_id=database_id))
         
-        return redirect(url_for('databases.credentials', id=database_id))
-    
-    return render_template('databases/add_user.html', database=database)
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Failed to save user information: {str(e)}', 'error')
+        return redirect(url_for('databases.add_database_user', database_id=database_id))
 
-@databases_bp.route('/user/edit/<int:user_id>', methods=['GET', 'POST'])
+
+@databases_bp.route('/databases/<int:database_id>/users')
 @login_required
-@first_login_required
-def edit_user(user_id):
-    user = PostgresDatabaseUser.query.get_or_404(user_id)
-    database = user.database
-    server = database.server
+def database_users(database_id):
+    """Display users for a specific database."""
+    database = PostgresDatabase.query.join(VpsServer).filter(
+        PostgresDatabase.id == database_id,
+        # Removed user_id filtering for single-user mode
+    ).first_or_404()
     
-    # Don't allow editing primary user through this route
+    users = PostgresDatabaseUser.query.filter_by(database_id=database_id).all()
+    user_permissions = DatabaseService.get_user_permissions(database.vps_server, database.name)
+    
+    return render_template('database_users.html', 
+                         database=database, 
+                         users=users, 
+                         user_permissions=user_permissions)
+
+
+@databases_bp.route('/databases/<int:database_id>/users/<int:user_id>/edit', methods=['GET', 'POST'])
+@login_required
+def edit_database_user(database_id, user_id):
+    """Edit database user permissions."""
+    database = PostgresDatabase.query.join(VpsServer).filter(
+        PostgresDatabase.id == database_id,
+        # Removed user_id filtering for single-user mode
+    ).first_or_404()
+    
+    user = PostgresDatabaseUser.query.filter_by(
+        id=user_id, 
+        database_id=database_id
+    ).first_or_404()
+    
+    if request.method == 'GET':
+        current_permission = DatabaseService.get_current_user_permission(
+            database.vps_server, database.name, user.username
+        )
+        return render_template('edit_database_user.html', 
+                             database=database, 
+                             user=user, 
+                             current_permission=current_permission)
+    
+    # POST request - update permissions
+    new_permission = request.form.get('permission_level', '').strip()
+    
+    # Validate permission level
+    permission_valid, permission_error = ValidationService.validate_permission_level(new_permission)
+    if not permission_valid:
+        flash(permission_error, 'error')
+        return redirect(url_for('databases.edit_database_user', 
+                              database_id=database_id, user_id=user_id))
+    
+    # Update permissions on server
+    success, message = DatabaseService.execute_with_postgres(
+        database.vps_server,
+        'Permission update',
+        DatabaseService.create_user_operation,  # This handles permission updates too
+        user.username, user.password, database.name, new_permission
+    )
+    
+    if not success:
+        flash(message, 'error')
+        return redirect(url_for('databases.edit_database_user', 
+                              database_id=database_id, user_id=user_id))
+    
+    # Update in database
+    try:
+        user.permission_level = new_permission
+        db.session.commit()
+        flash('Permissions updated successfully', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Failed to update permissions in database: {str(e)}', 'error')
+    
+    return redirect(url_for('databases.edit_database_user', 
+                          database_id=database_id, user_id=user_id))
+
+
+@databases_bp.route('/databases/<int:database_id>/users/<int:user_id>/delete', methods=['POST'])
+@login_required
+def delete_database_user(database_id, user_id):
+    """Delete a database user."""
+    database = PostgresDatabase.query.join(VpsServer).filter(
+        PostgresDatabase.id == database_id,
+        # Removed user_id filtering for single-user mode
+    ).first_or_404()
+    
+    user = PostgresDatabaseUser.query.filter_by(
+        id=user_id, 
+        database_id=database_id
+    ).first_or_404()
+    
     if user.is_primary:
-        flash('The primary user cannot be edited through this page. Please use the database edit page instead.', 'warning')
-        return redirect(url_for('databases.credentials', id=database.id))
+        flash('Cannot delete the primary user', 'error')
+        return redirect(url_for('databases.database_users', database_id=database_id))
     
-    # Get current permission from server
-    current_permission = 'read_write'  # Default if we can't connect
+    # Delete user from server
+    success, message = DatabaseService.execute_with_postgres(
+        database.vps_server,
+        'User deletion',
+        DatabaseService.delete_user_operation,
+        user.username
+    )
+    
+    if not success:
+        flash(message, 'error')
+        return redirect(url_for('databases.database_users', database_id=database_id))
+    
+    # Delete from database
     try:
-        ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_content=server.ssh_key_content
-        )
-        
-        if ssh.connect():
-            pg_manager = PostgresManager(ssh)
-            server_users = pg_manager.list_database_users(database.name)
-            
-            for server_user in server_users:
-                if server_user['username'] == user.username:
-                    current_permission = server_user['permission_level']
-                    break
-            
-            ssh.disconnect()
+        db.session.delete(user)
+        db.session.commit()
+        flash('User deleted successfully', 'success')
     except Exception as e:
-        flash(f'Warning: Could not retrieve current permission from server: {str(e)}', 'warning')
+        db.session.rollback()
+        flash(f'Failed to delete user from database: {str(e)}', 'error')
     
-    if request.method == 'POST':
-        permission_level = request.form.get('permission_level')
-        regenerate_password = request.form.get('regenerate_password') == 'on'
-        
-        # Generate new password if requested
-        if regenerate_password:
-            user.password = generate_random_password()
-            db.session.commit()
-        
-        # Update user on the PostgreSQL server
-        try:
-            ssh = SSHManager(
-                host=server.host,
-                port=server.port,
-                username=server.username,
-                ssh_key_content=server.ssh_key_content
-            )
-            
-            if not ssh.connect():
-                flash(f'User record updated, but failed to connect to server', 'warning')
-                return redirect(url_for('databases.credentials', id=database.id))
-            
-            pg_manager = PostgresManager(ssh)
-            
-            # Update password if regenerated
-            if regenerate_password:
-                pg_manager.update_database_user(user.username, user.password)
-            
-            # Update permissions
-            success, message = pg_manager.create_database_user(
-                username=user.username, 
-                password=user.password, 
-                db_name=database.name,
-                permission_level=permission_level
-            )
-            
-            ssh.disconnect()
-            
-            if success:
-                flash(f'User updated successfully: {message}', 'success')
-            else:
-                flash(f'User record updated, but server operation failed: {message}', 'warning')
-                
-        except Exception as e:
-            flash(f'User record updated, but server operation failed: {str(e)}', 'warning')
-            
-        return redirect(url_for('databases.credentials', id=database.id))
-    
-    return render_template('databases/edit_user.html', user=user, database=database, current_permission=current_permission)
+    return redirect(url_for('databases.database_users', database_id=database_id))
 
-@databases_bp.route('/user/delete/<int:user_id>', methods=['POST'])
-@login_required
-@first_login_required
-def delete_user(user_id):
-    user = PostgresDatabaseUser.query.get_or_404(user_id)
-    database = user.database
-    server = database.server
-    
-    # Don't allow deleting primary user
-    if user.is_primary:
-        flash('The primary user cannot be deleted', 'danger')
-        return redirect(url_for('databases.credentials', id=database.id))
-    
-    # Delete user from PostgreSQL server
-    try:
-        ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_content=server.ssh_key_content
-        )
-        
-        if ssh.connect():
-            pg_manager = PostgresManager(ssh)
-            pg_manager.delete_database_user(user.username)
-            ssh.disconnect()
-    except Exception as e:
-        flash(f'Warning: Failed to delete user from server: {str(e)}', 'warning')
-    
-    # Delete user from application database
-    db.session.delete(user)
-    db.session.commit()
-    
-    flash('User deleted successfully', 'success')
-    return redirect(url_for('databases.credentials', id=database.id))
 
-@databases_bp.route('/delete/<int:id>', methods=['POST'])
+@databases_bp.route('/databases/<int:database_id>/delete', methods=['POST'])
 @login_required
-@first_login_required
-def delete(id):
-    database = PostgresDatabase.query.get_or_404(id)
-    
-    db.session.delete(database)
-    db.session.commit()
-    
-    flash('Database deleted successfully', 'success')
-    return redirect(url_for('databases.index'))
-
-@databases_bp.route('/check/<int:id>')
-@login_required
-@first_login_required
-def check(id):
-    database = PostgresDatabase.query.get_or_404(id)
-    server = database.server
+def delete_database(database_id):
+    """Delete a database."""
+    database = PostgresDatabase.query.join(VpsServer).filter(
+        PostgresDatabase.id == database_id,
+        # Removed user_id filtering for single-user mode
+    ).first_or_404()
     
     try:
-        # Connect to server via SSH
-        ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_content=server.ssh_key_content
-        )
+        # Delete all users first
+        PostgresDatabaseUser.query.filter_by(database_id=database_id).delete()
         
-        if not ssh.connect():
-            return jsonify({
-                'success': False,
-                'message': 'Failed to connect to server via SSH'
-            })
+        # Delete the database
+        db.session.delete(database)
+        db.session.commit()
         
-        # Check PostgreSQL installation
-        pg_manager = PostgresManager(ssh)
-        
-        if not pg_manager.check_postgres_installed():
-            ssh.disconnect()
-            return jsonify({
-                'success': False,
-                'message': 'PostgreSQL is not installed on the server'
-            })
-        
-        # Get PostgreSQL version
-        pg_version = pg_manager.get_postgres_version()
-        
-        # Disconnect
-        ssh.disconnect()
-        
-        return jsonify({
-            'success': True,
-            'postgres_version': pg_version
-        })
-        
+        flash('Database deleted successfully', 'success')
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        })
+        db.session.rollback()
+        flash(f'Failed to delete database: {str(e)}', 'error')
+    
+    return redirect(url_for('databases.databases'))
 
-@databases_bp.route('/import', methods=['GET', 'POST'])
+
+@databases_bp.route('/check_postgres/<int:server_id>')
 @login_required
-@first_login_required
-def import_database():
-    databases = PostgresDatabase.query.all()
+def check_postgres(server_id):
+    """Check PostgreSQL installation and version on server."""
+    server = VpsServer.query.filter_by(
+        id=server_id, 
+        # Removed user_id for single-user mode
+    ).first_or_404()
     
-    if not databases:
-        flash('You need to add a target database first', 'warning')
-        return redirect(url_for('databases.add'))
+    result = DatabaseService.check_postgres_status(server)
+    return jsonify(result)
+
+
+@databases_bp.route('/databases/<int:database_id>/import', methods=['GET', 'POST'])
+@login_required
+def import_database(database_id):
+    """Import database from external source."""
+    database = PostgresDatabase.query.join(VpsServer).filter(
+        PostgresDatabase.id == database_id,
+        # Removed user_id filtering for single-user mode
+    ).first_or_404()
     
-    if request.method == 'POST':
-        # Get form data
-        connection_type = request.form.get('connection_type')
-        target_database_id = request.form.get('target_database_id', type=int)
+    if request.method == 'GET':
+        return render_template('import_database.html', database=database)
+    
+    # POST request - process import
+    data = request.form.to_dict()
+    
+    # Determine connection method
+    if data.get('connection_method') == 'url':
+        connection_string = data.get('connection_url', '').strip()
         
-        # Connection details
-        host = request.form.get('host')
-        port = request.form.get('port', type=int)
-        username = request.form.get('username')
-        password = request.form.get('password')
-        database_name = request.form.get('database_name')
-        connection_url = request.form.get('connection_url')
+        # Validate connection string
+        url_valid, url_error = ValidationService.validate_connection_string(connection_string)
+        if not url_valid:
+            flash(url_error, 'error')
+            return redirect(url_for('databases.import_database', database_id=database_id))
+    else:
+        # Build connection string from individual fields
+        required_fields = ['source_host', 'source_port', 'source_username', 
+                          'source_password', 'source_database']
+        field_errors = ValidationService.validate_required_fields(data, required_fields)
         
-        # Validate input
-        if not target_database_id:
-            flash('Please select a target database', 'danger')
-            return render_template('databases/import.html', databases=databases)
+        if field_errors:
+            for error in field_errors:
+                flash(error, 'error')
+            return redirect(url_for('databases.import_database', database_id=database_id))
         
-        # Get target database
-        target_db = PostgresDatabase.query.get(target_database_id)
-        if not target_db:
-            flash('Selected target database does not exist', 'danger')
-            return render_template('databases/import.html', databases=databases)
-        
-        # Validate connection details
-        if connection_type == 'standard':
-            if not host or not port or not username or not password or not database_name:
-                flash('Please fill in all connection details', 'danger')
-                return render_template('databases/import.html', databases=databases)
-        elif connection_type == 'url':
-            if not connection_url:
-                flash('Please provide a connection URL', 'danger')
-                return render_template('databases/import.html', databases=databases)
-        else:
-            flash('Invalid connection type', 'danger')
-            return render_template('databases/import.html', databases=databases)
-        
-        # Create restore log entry
+        connection_string = (
+            f"postgresql://{data['source_username']}:{data['source_password']}"
+            f"@{data['source_host']}:{data['source_port']}/{data['source_database']}"
+        )
+    
+    # Create restore log
+    try:
         restore_log = RestoreLog(
-            database_id=target_db.id,
+            database_id=database_id,
             status='in_progress',
-            log_output='Starting database import from external source...'
+            log_output='Import process started',
+            created_at=datetime.utcnow()
         )
         db.session.add(restore_log)
         db.session.commit()
         
-        # Redirect to the import progress page
-        return redirect(url_for('databases.import_progress', restore_log_id=restore_log.id, 
-                               connection_type=connection_type,
-                               host=host, port=port, username=username, 
-                               password=password, database_name=database_name,
-                               connection_url=connection_url))
-    
-    return render_template('databases/import.html', databases=databases)
-
-@databases_bp.route('/import/progress')
-@login_required
-@first_login_required
-def import_progress():
-    restore_log_id = request.args.get('restore_log_id', type=int)
-    connection_type = request.args.get('connection_type')
-    
-    # Get connection parameters
-    host = request.args.get('host')
-    port = request.args.get('port', type=int)
-    username = request.args.get('username')
-    password = request.args.get('password')
-    database_name = request.args.get('database_name')
-    connection_url = request.args.get('connection_url')
-    
-    if not restore_log_id:
-        flash('Missing restore log ID', 'danger')
-        return redirect(url_for('databases.import_database'))
-    
-    # Get restore log
-    restore_log = RestoreLog.query.get(restore_log_id)
-    if not restore_log:
-        flash('Restore log not found', 'danger')
-        return redirect(url_for('databases.import_database'))
-    
-    # Get target database
-    target_db = restore_log.database
-    if not target_db:
-        flash('Target database not found', 'danger')
-        return redirect(url_for('databases.import_database'))
-    
-    # Pass all info to template for AJAX processing
-    return render_template('databases/import_progress.html', 
-                          restore_log=restore_log, 
-                          target_db=target_db,
-                          connection_type=connection_type,
-                          host=host, port=port, 
-                          username=username, 
-                          password=password, 
-                          database_name=database_name,
-                          connection_url=connection_url)
-
-@databases_bp.route('/import/execute', methods=['POST'])
-@login_required
-@first_login_required
-def execute_import():
-    # Get parameters from JSON request
-    data = request.get_json()
-    restore_log_id = data.get('restore_log_id')
-    connection_type = data.get('connection_type')
-    target_db_id = data.get('target_db_id')
-    
-    # Connection details
-    host = data.get('host')
-    port = data.get('port')
-    username = data.get('username')
-    password = data.get('password')
-    database_name = data.get('database_name')
-    connection_url = data.get('connection_url')
-    
-    # Get restore log and target database
-    restore_log = RestoreLog.query.get(restore_log_id)
-    target_db = PostgresDatabase.query.get(target_db_id)
-    
-    if not restore_log or not target_db:
-        return jsonify({'success': False, 'message': 'Invalid restore log or target database'})
-    
-    # Get server of target database
-    server = target_db.server
-    
-    try:
-        # Connect to server via SSH
-        ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_content=server.ssh_key_content
-        )
-        
-        if not ssh.connect():
-            update_log(restore_log, 'Failed to connect to target server via SSH')
-            return jsonify({'success': False, 'message': 'Failed to connect to target server'})
-        
-        # Create PostgreSQL manager
-        pg_manager = PostgresManager(ssh)
-        
-        # Update log
-        update_log(restore_log, 'Connected to target server')
-        update_log(restore_log, f'Starting import to database: {target_db.name}')
-        
-        # Prepare source connection string
-        if connection_type == 'standard':
-            source_conn = f"postgresql://{username}:{password}@{host}:{port}/{database_name}"
-            update_log(restore_log, f'Connecting to source database at {host}:{port}/{database_name}')
-        else:
-            source_conn = connection_url
-            update_log(restore_log, 'Connecting to source database using connection URL')
-        
-        # Execute the import - this uses pg_dump and pg_restore for the actual migration
-        success, message = perform_database_import(pg_manager, source_conn, target_db.name, restore_log)
-        
-        # Disconnect SSH
-        ssh.disconnect()
-        
-        # Update restore log status
-        restore_log.status = 'success' if success else 'failed'
-        restore_log.end_time = datetime.utcnow()
-        db.session.commit()
-        
-        return jsonify({'success': success, 'message': message})
+        flash('Database import started. You can check the progress below.', 'info')
+        return redirect(url_for('databases.import_progress', 
+                              database_id=database_id, 
+                              restore_log_id=restore_log.id))
         
     except Exception as e:
-        # Update log with error
-        update_log(restore_log, f'Error during import: {str(e)}')
-        restore_log.status = 'failed'
-        restore_log.end_time = datetime.utcnow()
-        db.session.commit()
-        
-        return jsonify({'success': False, 'message': str(e)})
+        db.session.rollback()
+        flash(f'Failed to start import process: {str(e)}', 'error')
+        return redirect(url_for('databases.import_database', database_id=database_id))
 
-@databases_bp.route('/import/status/<int:restore_log_id>')
+
+@databases_bp.route('/databases/<int:database_id>/import/<int:restore_log_id>/progress')
 @login_required
-@first_login_required
-def import_status(restore_log_id):
-    # Get restore log
-    restore_log = RestoreLog.query.get(restore_log_id)
-    if not restore_log:
-        return jsonify({'success': False, 'message': 'Restore log not found'})
+def import_progress(database_id, restore_log_id):
+    """Display import progress."""
+    database = PostgresDatabase.query.join(VpsServer).filter(
+        PostgresDatabase.id == database_id,
+        # Removed user_id filtering for single-user mode
+    ).first_or_404()
     
-    # Return status and log output
+    restore_log = RestoreLog.query.filter_by(
+        id=restore_log_id, 
+        database_id=database_id
+    ).first_or_404()
+    
+    return render_template('import_progress.html', 
+                         database=database, 
+                         restore_log=restore_log)
+
+
+@databases_bp.route('/databases/<int:database_id>/import/<int:restore_log_id>/execute', methods=['POST'])
+@login_required
+def execute_import(database_id, restore_log_id):
+    """Execute the database import process."""
+    database = PostgresDatabase.query.join(VpsServer).filter(
+        PostgresDatabase.id == database_id,
+        # Removed user_id filtering for single-user mode
+    ).first_or_404()
+    
+    restore_log = RestoreLog.query.filter_by(
+        id=restore_log_id, 
+        database_id=database_id
+    ).first_or_404()
+    
+    if restore_log.status != 'in_progress':
+        return jsonify({'success': False, 'message': 'Import is not in progress'})
+    
+    # Get connection string from request
+    connection_string = request.json.get('connection_string')
+    if not connection_string:
+        return jsonify({'success': False, 'message': 'Connection string is required'})
+    
+    # Execute import
+    success, message = DatabaseService.execute_with_postgres(
+        database.vps_server,
+        'Database import',
+        DatabaseImportService.perform_database_import,
+        connection_string, database.name, restore_log
+    )
+    
+    # Update restore log status
+    try:
+        restore_log.status = 'completed' if success else 'failed'
+        if not success:
+            DatabaseImportService.update_log(restore_log, f'Import failed: {message}')
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': f'Failed to update log: {str(e)}'})
+    
+    return jsonify({'success': success, 'message': message})
+
+
+@databases_bp.route('/databases/<int:database_id>/import/<int:restore_log_id>/status')
+@login_required
+def import_status(database_id, restore_log_id):
+    """Get import status."""
+    database = PostgresDatabase.query.join(VpsServer).filter(
+        PostgresDatabase.id == database_id
+        # Removed user_id filtering for single-user mode
+    ).first_or_404()
+    
+    restore_log = RestoreLog.query.filter_by(
+        id=restore_log_id, 
+        database_id=database_id
+    ).first_or_404()
+    
     return jsonify({
-        'success': True,
         'status': restore_log.status,
         'log_output': restore_log.log_output,
-        'is_complete': restore_log.status in ['success', 'failed']
+        'created_at': restore_log.created_at.isoformat() if restore_log.created_at else None
     })
-
-# Helper function to update the restore log
-def update_log(restore_log, message):
-    restore_log.log_output = restore_log.log_output + '\n' + message
-    db.session.commit()
-
-# Function to perform the actual database import
-def perform_database_import(pg_manager, source_conn, target_db_name, restore_log):
-    # Temporary file for pg_dump output
-    temp_file = f"/tmp/db_import_{int(time.time())}.dump"
-    update_log(restore_log, 'Starting export from source database')
-    
-    # Check if pg_dump and pg_restore are available
-    tools_check = pg_manager.ssh.execute_command("which pg_dump pg_restore")
-    if tools_check['exit_code'] != 0:
-        update_log(restore_log, 'Required tools pg_dump and pg_restore not found on server')
-        return False, 'Required database tools not found on server'
-    
-    # Step 1: Dump the source database
-    dump_cmd = f"PGPASSWORD='{source_conn.split(':')[2].split('@')[0]}' pg_dump -Fc --no-acl --no-owner -h {source_conn.split('@')[1].split(':')[0]} -p {source_conn.split(':')[3].split('/')[0]} -U {source_conn.split('://')[1].split(':')[0]} -d {source_conn.split('/')[-1]} -f {temp_file}"
-    dump_result = pg_manager.ssh.execute_command(dump_cmd)
-    
-    if dump_result['exit_code'] != 0:
-        update_log(restore_log, f'Failed to export source database: {dump_result["stderr"]}')
-        return False, 'Failed to export source database'
-    
-    update_log(restore_log, 'Source database exported successfully')
-    
-    # Step 2: Create a temporary database for the import
-    temp_db_name = f"{target_db_name}_import_{int(time.time())}"
-    update_log(restore_log, f'Creating temporary database: {temp_db_name}')
-    
-    create_temp_db = pg_manager.ssh.execute_command(f"sudo -u postgres psql -c 'CREATE DATABASE {temp_db_name};'")
-    if create_temp_db['exit_code'] != 0:
-        update_log(restore_log, f'Failed to create temporary database: {create_temp_db["stderr"]}')
-        # Clean up
-        pg_manager.ssh.execute_command(f"rm {temp_file}")
-        return False, 'Failed to create temporary database'
-    
-    # Step 3: Restore dump to temporary database
-    update_log(restore_log, 'Starting import to temporary database')
-    restore_cmd = f"sudo -u postgres pg_restore --no-acl --no-owner -d {temp_db_name} {temp_file}"
-    restore_result = pg_manager.ssh.execute_command(restore_cmd)
-    
-    if restore_result['exit_code'] != 0:
-        update_log(restore_log, f'Warning: Some errors occurred during import: {restore_result["stderr"]}')
-        # Continue anyway as some errors are expected and not critical
-    
-    update_log(restore_log, 'Import to temporary database completed')
-    
-    # Step 4: Drop target database
-    update_log(restore_log, f'Dropping target database: {target_db_name}')
-    drop_cmd = pg_manager.ssh.execute_command(f"sudo -u postgres psql -c 'DROP DATABASE {target_db_name};'")
-    if drop_cmd['exit_code'] != 0:
-        update_log(restore_log, f'Failed to drop target database: {drop_cmd["stderr"]}')
-        # Clean up
-        pg_manager.ssh.execute_command(f"sudo -u postgres psql -c 'DROP DATABASE {temp_db_name};'")
-        pg_manager.ssh.execute_command(f"rm {temp_file}")
-        return False, 'Failed to drop target database'
-    
-    # Step 5: Rename temporary database to target
-    update_log(restore_log, f'Renaming temporary database to target: {target_db_name}')
-    rename_cmd = pg_manager.ssh.execute_command(f"sudo -u postgres psql -c 'ALTER DATABASE {temp_db_name} RENAME TO {target_db_name};'")
-    if rename_cmd['exit_code'] != 0:
-        update_log(restore_log, f'Failed to rename database: {rename_cmd["stderr"]}')
-        # Try to recreate original database
-        pg_manager.ssh.execute_command(f"sudo -u postgres psql -c 'CREATE DATABASE {target_db_name};'")
-        # Clean up
-        pg_manager.ssh.execute_command(f"sudo -u postgres psql -c 'DROP DATABASE {temp_db_name};'")
-        pg_manager.ssh.execute_command(f"rm {temp_file}")
-        return False, 'Failed to rename database'
-    
-    # Step 6: Clean up
-    update_log(restore_log, 'Cleaning up temporary files')
-    pg_manager.ssh.execute_command(f"rm {temp_file}")
-    
-    update_log(restore_log, 'Database import completed successfully')
-    return True, 'Database import completed successfully' 

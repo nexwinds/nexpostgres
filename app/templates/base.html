@@ -24,7 +24,7 @@
                 <span class="navbar-toggler-icon"></span>
             </button>
             
-            {% if session.get('user_id') %}
+            {% if session.get('logged_in') %}
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
@@ -38,7 +38,7 @@
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link {% if request.endpoint.startswith('databases.') %}active{% endif %}" href="{{ url_for('databases.index') }}">
+                        <a class="nav-link {% if request.endpoint.startswith('databases.') %}active{% endif %}" href="{{ url_for('databases.databases') }}">
                             <i class="fas fa-database me-1"></i> Databases
                         </a>
                     </li>
@@ -122,4 +122,4 @@
     
     {% block extra_js %}{% endblock %}
 </body>
-</html> 
+</html>

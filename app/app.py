@@ -1,8 +1,9 @@
 import os
 import logging
 from flask import Flask, redirect, url_for
+from flask_login import LoginManager
 from app.config import Config
-from app.models.database import init_db
+from app.models.database import init_db, User
 from app.utils.scheduler import init_scheduler
 from app.utils.session_manager import init_session
 from app.routes.auth import auth_bp
@@ -21,6 +22,17 @@ def create_app(config_class=Config):
     Config.init_app(app)
     init_db(app)
     init_session(app)
+    
+    # Initialize Flask-Login
+    login_manager = LoginManager()
+    login_manager.init_app(app)
+    login_manager.login_view = 'auth.login'
+    login_manager.login_message = 'Please login to access this page'
+    login_manager.login_message_category = 'warning'
+    
+    @login_manager.user_loader
+    def load_user(user_id):
+        return User.query.get(int(user_id))
     
     # Create app_backups directory
     os.makedirs(os.path.join(app.root_path, 'app_backups'), exist_ok=True)
@@ -46,4 +58,4 @@ def create_app(config_class=Config):
 
 if __name__ == '__main__':
     app = create_app()
-    app.run(host='0.0.0.0', debug=True) 
+    app.run(host='0.0.0.0', debug=True)

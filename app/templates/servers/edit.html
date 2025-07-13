@@ -33,9 +33,20 @@
             </div>
             
             <div class="mb-3">
-                <label for="postgres_port" class="form-label">PostgreSQL Port</label>
-                <input type="number" class="form-control" id="postgres_port" name="postgres_port" value="{{ server.postgres_port }}" required>
-                <div class="form-text">Port used by PostgreSQL on this server</div>
+                        <label for="postgres_port" class="form-label">PostgreSQL Port</label>
+                        <input type="number" class="form-control" id="postgres_port" name="postgres_port" value="{{ server.postgres_port or 5432 }}" required>
+                        <div class="form-text">Port used by PostgreSQL on this server</div>
+                    </div>
+            
+            <div class="mb-3">
+                <label for="postgres_version_display" class="form-label">PostgreSQL Version</label>
+                <div class="input-group">
+                    <input type="text" class="form-control" id="postgres_version_display" value="Detecting..." readonly>
+                    <button type="button" class="btn btn-outline-secondary" id="refreshVersionBtn">
+                        <i class="fas fa-sync-alt"></i> Refresh
+                    </button>
+                </div>
+                <div class="form-text">PostgreSQL version currently installed on the server</div>
             </div>
             
             <div class="mb-3">
@@ -76,6 +87,39 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const testConnectionBtn = document.getElementById('testConnectionBtn');
+        const refreshVersionBtn = document.getElementById('refreshVersionBtn');
+        const versionDisplay = document.getElementById('postgres_version_display');
+        
+        // Function to fetch PostgreSQL version
+        function fetchPostgresVersion() {
+            versionDisplay.value = 'Detecting...';
+            refreshVersionBtn.disabled = true;
+            refreshVersionBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Detecting';
+            
+            fetch('{{ url_for("servers.get_postgres_version", id=server.id) }}')
+            .then(response => response.json())
+            .then(data => {
+                refreshVersionBtn.disabled = false;
+                refreshVersionBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh';
+                
+                if (data.success) {
+                    versionDisplay.value = data.version;
+                } else {
+                    versionDisplay.value = 'Not installed or not detected';
+                }
+            })
+            .catch(error => {
+                refreshVersionBtn.disabled = false;
+                refreshVersionBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh';
+                versionDisplay.value = 'Error detecting version';
+            });
+        }
+        
+        // Load version on page load
+        fetchPostgresVersion();
+        
+        // Refresh version button click handler
+        refreshVersionBtn.addEventListener('click', fetchPostgresVersion);
         
         testConnectionBtn.addEventListener('click', function() {
             // Show loading indicator
@@ -114,4 +158,4 @@
         });
     });
 </script>
-{% endblock %} 
+{% endblock %}

@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+from flask_login import login_required, current_user
 from app.models.database import S3Storage, db
-from app.routes.auth import login_required, first_login_required
+from app.routes.auth import first_login_required
 import boto3
 from botocore.exceptions import ClientError
 
@@ -29,7 +30,7 @@ def add():
             flash('All fields are required', 'danger')
             return render_template('s3_storage/add.html')
         
-        # Check if name already exists
+        # Check if name already exists for current user
         if S3Storage.query.filter_by(name=name).first():
             flash('A storage configuration with this name already exists', 'danger')
             return render_template('s3_storage/add.html')
@@ -40,7 +41,8 @@ def add():
             bucket=bucket,
             region=region,
             access_key=access_key,
-            secret_key=secret_key
+            secret_key=secret_key,
+            # Removed user_id for single-user mode
         )
         
         db.session.add(storage)
@@ -55,7 +57,7 @@ def add():
 @login_required
 @first_login_required
 def edit(id):
-    storage = S3Storage.query.get_or_404(id)
+    storage = S3Storage.query.filter_by(id=id).first_or_404()
     
     if request.method == 'POST':
         name = request.form.get('name')
@@ -69,7 +71,7 @@ def edit(id):
             flash('All fields are required', 'danger')
             return render_template('s3_storage/edit.html', storage=storage)
         
-        # Check if name already exists (excluding current)
+        # Check if name already exists for current user (excluding current)
         existing = S3Storage.query.filter_by(name=name).first()
         if existing and existing.id != storage.id:
             flash('A storage configuration with this name already exists', 'danger')
@@ -96,7 +98,7 @@ def edit(id):
 @login_required
 @first_login_required
 def delete(id):
-    storage = S3Storage.query.get_or_404(id)
+    storage = S3Storage.query.filter_by(id=id).first_or_404()
     
     # Check if storage is being used by any backup job
     if storage.backup_jobs:
@@ -120,9 +122,9 @@ def test_connection():
     use_stored_key = request.form.get('use_stored_key')
     storage_id = request.form.get('storage_id', type=int)
     
-    # If using stored key, get it from the database
+    # If using stored key, get it from the database (ensure user owns it)
     if use_stored_key and storage_id:
-        storage = S3Storage.query.get(storage_id)
+        storage = S3Storage.query.filter_by(id=storage_id).first()
         if storage:
             secret_key = storage.secret_key
     
@@ -146,4 +148,4 @@ def test_connection():
         error_message = str(e)
         return jsonify({'success': False, 'message': f'Connection failed: {error_message}'})
     except Exception as e:
-        return jsonify({'success': False, 'message': f'Error: {str(e)}'}) 
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})

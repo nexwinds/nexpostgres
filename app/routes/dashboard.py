@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template
+from flask_login import login_required, current_user
 from app.models.database import VpsServer, PostgresDatabase, BackupJob, BackupLog, db
-from app.routes.auth import login_required, first_login_required
+from app.routes.auth import first_login_required
 from sqlalchemy import func, text
 from datetime import datetime, timedelta
 
@@ -10,33 +11,39 @@ dashboard_bp = Blueprint('dashboard', __name__)
 @login_required
 @first_login_required
 def index():
-    # Get basic stats
+    # Get basic stats for current user
+    user_servers = VpsServer.query
+    user_databases = PostgresDatabase.query.join(VpsServer)
+    user_backup_jobs = BackupJob.query.join(VpsServer)
+    
     counts = {
-        'servers': VpsServer.query.count(),
-        'databases': PostgresDatabase.query.count(),
-        'backup_jobs': BackupJob.query.count(),
-        'successful': BackupLog.query.filter_by(status='success').count(),
-        'failed': BackupLog.query.filter_by(status='failed').count(),
-        'in_progress': BackupLog.query.filter_by(status='in_progress').count()
+        'servers': user_servers.count(),
+        'databases': user_databases.count(),
+        'backup_jobs': user_backup_jobs.count(),
+        'successful': BackupLog.query.join(BackupJob).join(VpsServer).filter(BackupLog.status == 'success').count(),
+        'failed': BackupLog.query.join(BackupJob).join(VpsServer).filter(BackupLog.status == 'failed').count(),
+        'in_progress': BackupLog.query.join(BackupJob).join(VpsServer).filter(BackupLog.status == 'in_progress').count()
     }
     
-    # Get recent backup logs
-    recent_logs = BackupLog.query.order_by(BackupLog.start_time.desc()).limit(10).all()
+    # Get recent backup logs for current user
+    recent_logs = BackupLog.query.join(BackupJob).join(VpsServer).order_by(BackupLog.start_time.desc()).limit(10).all()
     
     # Calculate backup statistics for last 7 days
     seven_days_ago = datetime.utcnow() - timedelta(days=7)
     
-    # Use raw SQL for complex aggregations with SQLite
+    # Use raw SQL for complex aggregations with SQLite, filtered by user
     daily_stats = db.session.execute(
         text("""
             SELECT 
-                date(start_time) AS date, 
-                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful,
-                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
-            FROM backup_log
-            WHERE start_time >= :seven_days_ago
-            GROUP BY date(start_time)
-            ORDER BY date(start_time)
+                date(bl.start_time) AS date, 
+                SUM(CASE WHEN bl.status = 'success' THEN 1 ELSE 0 END) AS successful,
+                SUM(CASE WHEN bl.status = 'failed' THEN 1 ELSE 0 END) AS failed
+            FROM backup_log bl
+            JOIN backup_job bj ON bl.backup_job_id = bj.id
+            JOIN vps_server vs ON bj.vps_server_id = vs.id
+            WHERE bl.start_time >= :seven_days_ago
+            GROUP BY date(bl.start_time)
+            ORDER BY date(bl.start_time)
         """), 
         {"seven_days_ago": seven_days_ago}
     ).all()
@@ -65,8 +72,8 @@ def index():
             successful.append(0)
             failed.append(0)
     
-    # Get backup jobs that need attention
-    failed_jobs = BackupJob.query.join(BackupLog).filter(
+    # Get backup jobs that need attention for current user
+    failed_jobs = BackupJob.query.join(VpsServer).join(BackupLog).filter(
         BackupLog.status == 'failed',
         BackupLog.id.in_(
             db.session.query(func.max(BackupLog.id)).group_by(BackupLog.backup_job_id)
@@ -86,4 +93,4 @@ def index():
         successful_data=successful,
         failed_data=failed,
         failed_jobs=failed_jobs
-    ) 
+    )

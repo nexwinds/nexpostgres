@@ -24,6 +24,7 @@
                         <th>Host</th>
                         <th>SSH Port</th>
                         <th>PG Port</th>
+                        <th>PG Version</th>
                         <th>Username</th>
                         <th>SSH Key Type</th>
                         <th>Status</th>
@@ -37,6 +38,15 @@
                         <td>{{ server.host }}</td>
                         <td>{{ server.port }}</td>
                         <td>{{ server.postgres_port }}</td>
+                        <td>
+                            <div class="postgres-version" data-server-id="{{ server.id }}">
+                                {% if server.initialized %}
+                                <span class="badge bg-secondary">Loading...</span>
+                                {% else %}
+                                <span class="badge bg-secondary">Not Initialized</span>
+                                {% endif %}
+                            </div>
+                        </td>
                         <td>{{ server.username }}</td>
                         <td>
                             {% if server.ssh_key_content %}
@@ -114,56 +124,282 @@
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
+        // Load PostgreSQL versions for initialized servers
+        loadPostgresVersions();
+        
         // Initialize server buttons
         const initializeButtons = document.querySelectorAll('.initialize-server');
         
         initializeButtons.forEach(button => {
             button.addEventListener('click', function() {
                 const serverId = this.getAttribute('data-server-id');
-                const statusIndicator = document.querySelector(`.status-indicator[data-server-id="${serverId}"]`);
-                const originalContent = this.innerHTML;
+                showInitializationProgress(serverId);
+            });
+        });
+        
+        function showInitializationProgress(serverId) {
+            // Create progress modal
+            const modalHtml = `
+                <div class="modal fade" id="initProgressModal" tabindex="-1" aria-labelledby="initProgressModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="initProgressModalLabel">
+                                    <i class="fas fa-cog fa-spin me-2"></i>Initializing Server
+                                </h5>
+                            </div>
+                            <div class="modal-body">
+                                <div class="mb-3">
+                                    <div class="progress" style="height: 25px;">
+                                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                             role="progressbar" style="width: 10%" id="progressBar">
+                                            10%
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="alert alert-info" id="progressMessage">
+                                    <i class="fas fa-info-circle me-2"></i>Preparing to initialize server...
+                                </div>
+                                <div class="mt-3">
+                                    <h6>Installation Steps:</h6>
+                                    <ul class="list-unstyled" id="stepsList">
+                                        <li id="step-connecting"><i class="fas fa-circle text-secondary me-2"></i>Connecting to server</li>
+                                        <li id="step-ssh_connect"><i class="fas fa-circle text-secondary me-2"></i>Establishing SSH connection</li>
+                                        <li id="step-system_check"><i class="fas fa-circle text-secondary me-2"></i>Checking system requirements</li>
+                                        <li id="step-postgres_install"><i class="fas fa-circle text-secondary me-2"></i>Installing PostgreSQL</li>
+                                        <li id="step-pgbackrest_install"><i class="fas fa-circle text-secondary me-2"></i>Installing pgBackRest</li>
+                                        <li id="step-postgres_start"><i class="fas fa-circle text-secondary me-2"></i>Starting PostgreSQL service</li>
+                                        <li id="step-final_config"><i class="fas fa-circle text-secondary me-2"></i>Completing configuration</li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <div class="modal-footer" id="modalFooter">
+                                <div class="text-muted">
+                                    <i class="fas fa-clock me-1"></i>This process may take several minutes...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Remove existing modal if any
+            const existingModal = document.getElementById('initProgressModal');
+            if (existingModal) {
+                existingModal.remove();
+            }
+            
+            // Add modal to page
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            
+            // Show modal
+            const modal = new bootstrap.Modal(document.getElementById('initProgressModal'), {
+                backdrop: 'static',
+                keyboard: false
+            });
+            modal.show();
+            
+            // Start Server-Sent Events connection for progress updates
+             const eventSource = new EventSource(`/servers/initialize-progress/${serverId}`);
+             let queueKey = null;
+             
+             eventSource.onmessage = function(event) {
+                 const data = JSON.parse(event.data);
+                 
+                 // Capture queue key from the first message
+                 if (data.queue_key && !queueKey) {
+                     queueKey = data.queue_key;
+                     
+                     // Start the initialization process once we have the queue key
+                     const formData = new FormData();
+                     formData.append('queue_key', queueKey);
+                     
+                     fetch(`/servers/initialize/${serverId}`, {
+                         method: 'POST',
+                         body: formData
+                     })
+                     .then(response => response.json())
+                     .then(initData => {
+                         if (!initData.success) {
+                             eventSource.close();
+                             updateProgress({
+                                 step: 'error',
+                                 message: initData.message,
+                                 progress: 0
+                             });
+                         }
+                     })
+                     .catch(error => {
+                         eventSource.close();
+                         updateProgress({
+                             step: 'error',
+                             message: 'Failed to start initialization: ' + error.message,
+                             progress: 0
+                         });
+                     });
+                 }
+                 
+                 updateProgress(data);
+                 
+                 // Close connection when completed or error
+                 if (data.step === 'completed' || data.step === 'error') {
+                     eventSource.close();
+                     
+                     setTimeout(() => {
+                         modal.hide();
+                         // Refresh the page to show updated server status
+                         if (data.step === 'completed') {
+                             location.reload();
+                         }
+                     }, 2000);
+                 }
+             };
+             
+             eventSource.onerror = function(event) {
+                 console.error('EventSource failed:', event);
+                 eventSource.close();
+                 updateProgress({
+                     step: 'error',
+                     message: 'Connection lost. Please refresh and try again.',
+                     progress: 0
+                 });
+             };
+        }
+        
+        function updateProgress(data) {
+            const progressBar = document.getElementById('progressBar');
+            const progressMessage = document.getElementById('progressMessage');
+            const modalFooter = document.getElementById('modalFooter');
+            
+            if (!progressBar || !progressMessage) return;
+            
+            // Update progress bar
+            if (data.progress !== undefined) {
+                progressBar.style.width = data.progress + '%';
+                progressBar.textContent = data.progress + '%';
+            }
+            
+            // Update message
+            let alertClass = 'alert-info';
+            let icon = 'fas fa-info-circle';
+            
+            if (data.step === 'error') {
+                alertClass = 'alert-danger';
+                icon = 'fas fa-exclamation-triangle';
+                progressBar.classList.remove('progress-bar-animated');
+                progressBar.classList.add('bg-danger');
                 
-                // Show loading state
-                this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Initializing...';
-                this.disabled = true;
+                modalFooter.innerHTML = `
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                `;
+            } else if (data.step === 'completed') {
+                alertClass = 'alert-success';
+                icon = 'fas fa-check-circle';
+                progressBar.classList.remove('progress-bar-animated');
+                progressBar.classList.add('bg-success');
                 
-                // Send AJAX request
-                fetch(`{{ url_for('servers.initialize_server', id=0) }}`.replace('0', serverId), {
-                    method: 'POST'
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        statusIndicator.innerHTML = `
-                            <span class="badge bg-success">
-                                <i class="fas fa-check-circle me-1"></i> Initialized
-                            </span>
-                        `;
+                modalFooter.innerHTML = `
+                    <div class="text-success">
+                        <i class="fas fa-check me-1"></i>Initialization completed successfully!
+                    </div>
+                `;
+            } else if (data.step === 'warning') {
+                alertClass = 'alert-warning';
+                icon = 'fas fa-exclamation-triangle';
+            }
+            
+            progressMessage.className = `alert ${alertClass}`;
+            progressMessage.innerHTML = `<i class="${icon} me-2"></i>${data.message}`;
+            
+            // Update step indicators
+            if (data.step && data.step !== 'keep-alive') {
+                const stepElement = document.getElementById(`step-${data.step}`);
+                if (stepElement) {
+                    const icon = stepElement.querySelector('i');
+                    if (data.step === 'error') {
+                        icon.className = 'fas fa-times-circle text-danger me-2';
                     } else {
-                        // Show error
-                        statusIndicator.innerHTML = `
-                            <span class="badge bg-danger">
-                                <i class="fas fa-times-circle me-1"></i> Initialization Failed
-                            </span>
-                            <small class="d-block text-danger mt-1">${data.message}</small>
-                            <button class="btn btn-sm btn-outline-primary mt-1 initialize-server" data-server-id="${serverId}">
-                                Retry Initialization
-                            </button>
-                        `;
-                        
-                        // Setup retry button
-                        statusIndicator.querySelector('.initialize-server').addEventListener('click', function() {
-                            initializeServer(serverId, this);
-                        });
+                        icon.className = 'fas fa-check-circle text-success me-2';
                     }
-                })
-                .catch(error => {
+                }
+                
+                // Mark current step as active
+                const allSteps = document.querySelectorAll('#stepsList li i');
+                const stepOrder = ['connecting', 'ssh_connect', 'system_check', 'postgres_install', 'pgbackrest_install', 'postgres_start', 'final_config'];
+                const currentIndex = stepOrder.indexOf(data.step);
+                
+                if (currentIndex >= 0) {
+                    for (let i = 0; i <= currentIndex; i++) {
+                        const stepEl = document.getElementById(`step-${stepOrder[i]}`);
+                        if (stepEl) {
+                            const stepIcon = stepEl.querySelector('i');
+                            if (i < currentIndex) {
+                                stepIcon.className = 'fas fa-check-circle text-success me-2';
+                            } else if (i === currentIndex && data.step !== 'error') {
+                                stepIcon.className = 'fas fa-spinner fa-spin text-primary me-2';
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        
+        // Function to handle retry initialization (for failed attempts)
+        function initializeServer(serverId, button) {
+            const statusIndicator = document.querySelector(`.status-indicator[data-server-id="${serverId}"]`);
+            const originalContent = button.innerHTML;
+            
+            // Show loading state
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Initializing...';
+            button.disabled = true;
+            
+            // Send AJAX request
+            fetch(`{{ url_for('servers.initialize_server', id=0) }}`.replace('0', serverId), {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    statusIndicator.innerHTML = `
+                        <span class="badge bg-success">
+                            <i class="fas fa-check-circle me-1"></i> Initialized
+                        </span>
+                    `;
+                    
+                    // Update PostgreSQL version display
+                    const versionContainer = document.querySelector(`.postgres-version[data-server-id="${serverId}"]`);
+                    if (versionContainer) {
+                        const badge = versionContainer.querySelector('.badge');
+                        badge.className = 'badge bg-secondary';
+                        badge.textContent = 'Loading...';
+                        
+                        // Fetch the PostgreSQL version
+                        setTimeout(() => {
+                            fetch(`/postgres-version/${serverId}`)
+                            .then(response => response.json())
+                            .then(versionData => {
+                                if (versionData.success && versionData.version) {
+                                    badge.className = 'badge bg-info';
+                                    badge.textContent = versionData.version;
+                                } else {
+                                    badge.className = 'badge bg-secondary';
+                                    badge.textContent = 'Unknown';
+                                }
+                            })
+                            .catch(error => {
+                                badge.className = 'badge bg-secondary';
+                                badge.textContent = 'Error';
+                            });
+                        }, 1000); // Wait 1 second for PostgreSQL to be fully initialized
+                    }
+                } else {
                     // Show error
                     statusIndicator.innerHTML = `
                         <span class="badge bg-danger">
                             <i class="fas fa-times-circle me-1"></i> Initialization Failed
                         </span>
-                        <small class="d-block text-danger mt-1">${error.message}</small>
+                        <small class="d-block text-danger mt-1">${data.message}</small>
                         <button class="btn btn-sm btn-outline-primary mt-1 initialize-server" data-server-id="${serverId}">
                             Retry Initialization
                         </button>
@@ -173,9 +409,58 @@
                     statusIndicator.querySelector('.initialize-server').addEventListener('click', function() {
                         initializeServer(serverId, this);
                     });
-                });
+                }
+            })
+            .catch(error => {
+                 // Show error
+                 statusIndicator.innerHTML = `
+                     <span class="badge bg-danger">
+                         <i class="fas fa-times-circle me-1"></i> Initialization Failed
+                     </span>
+                     <small class="d-block text-danger mt-1">Network error: ${error.message}</small>
+                     <button class="btn btn-sm btn-outline-primary mt-1 initialize-server" data-server-id="${serverId}">
+                         Retry Initialization
+                     </button>
+                 `;
+                 
+                 // Reset button
+                 button.innerHTML = originalContent;
+                 button.disabled = false;
+                 
+                 // Setup retry button
+                 statusIndicator.querySelector('.initialize-server').addEventListener('click', function() {
+                     initializeServer(serverId, this);
+                 });
+             });
+         }
+        
+        function loadPostgresVersions() {
+            const versionContainers = document.querySelectorAll('.postgres-version');
+            
+            versionContainers.forEach(container => {
+                const serverId = container.getAttribute('data-server-id');
+                const badge = container.querySelector('.badge');
+                
+                // Only fetch version for initialized servers showing "Loading..."
+                if (badge && badge.textContent.trim() === 'Loading...') {
+                    fetch(`/postgres-version/${serverId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success && data.version) {
+                            badge.className = 'badge bg-info';
+                            badge.textContent = data.version;
+                        } else {
+                            badge.className = 'badge bg-secondary';
+                            badge.textContent = 'Unknown';
+                        }
+                    })
+                    .catch(error => {
+                        badge.className = 'badge bg-secondary';
+                        badge.textContent = 'Error';
+                    });
+                }
             });
-        });
+        }
         
         function initializeServer(serverId, button) {
             const statusIndicator = document.querySelector(`.status-indicator[data-server-id="${serverId}"]`);
@@ -197,6 +482,33 @@
                             <i class="fas fa-check-circle me-1"></i> Initialized
                         </span>
                     `;
+                    
+                    // Update PostgreSQL version display
+                    const versionContainer = document.querySelector(`.postgres-version[data-server-id="${serverId}"]`);
+                    if (versionContainer) {
+                        const badge = versionContainer.querySelector('.badge');
+                        badge.className = 'badge bg-secondary';
+                        badge.textContent = 'Loading...';
+                        
+                        // Fetch the PostgreSQL version
+                        setTimeout(() => {
+                            fetch(`/postgres-version/${serverId}`)
+                            .then(response => response.json())
+                            .then(versionData => {
+                                if (versionData.success && versionData.version) {
+                                    badge.className = 'badge bg-info';
+                                    badge.textContent = versionData.version;
+                                } else {
+                                    badge.className = 'badge bg-secondary';
+                                    badge.textContent = 'Unknown';
+                                }
+                            })
+                            .catch(error => {
+                                badge.className = 'badge bg-secondary';
+                                badge.textContent = 'Error';
+                            });
+                        }, 1000); // Wait 1 second for PostgreSQL to be fully initialized
+                    }
                 } else {
                     // Show error
                     statusIndicator.innerHTML = `
@@ -235,4 +547,4 @@
         }
     });
 </script>
-{% endblock %} 
+{% endblock %}

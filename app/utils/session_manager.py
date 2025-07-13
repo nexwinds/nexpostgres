@@ -10,13 +10,13 @@ from app.models.database import db, FlaskSession
 class SQLAlchemySession(CallbackDict, SessionMixin):
     """Custom session class for SQLAlchemy-backed session."""
     
-    def __init__(self, initial=None, sid=None, user_id=None, new=False):
+    def __init__(self, initial=None, sid=None, new=False):
         def on_update(self):
             self.modified = True
             
         CallbackDict.__init__(self, initial, on_update)
         self.sid = sid
-        self.user_id = user_id
+        # Removed user_id for single-user mode
         self.new = new
         self.modified = False
         self.permanent = True  # Sessions are permanent by default
@@ -38,7 +38,7 @@ class SQLAlchemySessionInterface(SessionInterface):
                 if stored_session and (stored_session.expiry is None or stored_session.expiry > datetime.utcnow()):
                     try:
                         data = pickle.loads(stored_session.session_data)
-                        return SQLAlchemySession(data, sid=sid, user_id=stored_session.user_id)
+                        return SQLAlchemySession(data, sid=sid)
                     except Exception:
                         pass  # Create new session if data is invalid
             except BadSignature:
@@ -58,15 +58,14 @@ class SQLAlchemySessionInterface(SessionInterface):
         # Set expiry time and session data
         expiry = self.get_expiration_time(app, session) if session.permanent else None
         session_data = pickle.dumps(dict(session))
-        user_id = session.get('user_id')
+        # Removed user_id handling for single-user mode
         
         # Clean up old sessions for this user
-        if user_id:
-            session.user_id = user_id
-            FlaskSession.query.filter(
-                FlaskSession.user_id == user_id,
-                FlaskSession.id != session.sid
-            ).delete()
+        # Removed user_id assignment for single-user mode
+        FlaskSession.query.filter(
+            # Removed user_id filtering for single-user mode
+            FlaskSession.id != session.sid
+        ).delete()
         
         # Update or create session record
         stored_session = FlaskSession.query.filter_by(id=session.sid).first()
@@ -74,13 +73,13 @@ class SQLAlchemySessionInterface(SessionInterface):
         if stored_session:
             stored_session.session_data = session_data
             stored_session.expiry = expiry
-            stored_session.user_id = getattr(session, 'user_id', None)
+            # Removed user_id assignment for single-user mode
         else:
             new_session = FlaskSession(
                 id=session.sid,
                 session_data=session_data,
                 expiry=expiry,
-                user_id=getattr(session, 'user_id', None)
+                # Removed user_id for single-user mode
             )
             db.session.add(new_session)
         
@@ -118,4 +117,4 @@ class SQLAlchemySessionInterface(SessionInterface):
 
 def init_session(app):
     """Initialize the custom session interface."""
-    app.session_interface = SQLAlchemySessionInterface() 
+    app.session_interface = SQLAlchemySessionInterface()

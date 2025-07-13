@@ -5,7 +5,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>Database Import Progress</h1>
-    <a href="{{ url_for('databases.index') }}" class="btn btn-secondary">
+    <a href="{{ url_for('databases.databases') }}" class="btn btn-secondary">
         <i class="fas fa-arrow-left me-1"></i> Back to Databases
     </a>
 </div>
@@ -58,7 +58,7 @@
         </div>
         
         <div id="completeActions" class="text-end" style="display: none;">
-            <a href="{{ url_for('databases.index') }}" class="btn btn-primary">
+            <a href="{{ url_for('databases.databases') }}" class="btn btn-primary">
                 <i class="fas fa-list me-1"></i> Back to Databases
             </a>
             <a href="{{ url_for('backups.restore_logs') }}" class="btn btn-secondary ms-2">
@@ -263,4 +263,4 @@
         font-size: 0.875rem;
     }
 </style>
-{% endblock %} 
+{% endblock %}

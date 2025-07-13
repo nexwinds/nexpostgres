@@ -5,7 +5,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>Import Database</h1>
-    <a href="{{ url_for('databases.index') }}" class="btn btn-secondary">
+    <a href="{{ url_for('databases.databases') }}" class="btn btn-secondary">
         <i class="fas fa-arrow-left me-1"></i> Back to Databases
     </a>
 </div>
@@ -97,7 +97,7 @@
             </div>
             
             <div class="d-flex justify-content-end">
-                <a href="{{ url_for('databases.index') }}" class="btn btn-secondary me-2">Cancel</a>
+                <a href="{{ url_for('databases.databases') }}" class="btn btn-secondary me-2">Cancel</a>
                 <button type="submit" class="btn btn-primary" id="importButton" disabled>
                     <i class="fas fa-file-import me-1"></i> Start Import
                 </button>
@@ -131,4 +131,4 @@
         });
     });
 </script>
-{% endblock %} 
+{% endblock %}

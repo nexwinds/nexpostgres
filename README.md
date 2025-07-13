@@ -23,6 +23,7 @@ NEXPOSTGRES is a hassle-free PostgreSQL database management solution for managin
 - **VPS Server Management**
   - Add, edit, and delete remote Ubuntu VPS servers with SSH access
   - Automatic server initialization with PostgreSQL and pgBackRest installation
+  - PostgreSQL version selection (17, 16, 15) with automatic latest patch installation
   - Server health monitoring and status checks
   - PostgreSQL port configuration at the server level
 
@@ -147,14 +148,17 @@ volumes:
    - SSH port (default: 22)
    - Username with sudo privileges
    - PostgreSQL port to use
+   - PostgreSQL version (17, 16, or 15 - defaults to 17)
 3. Provide SSH key authentication:
    - Paste key content
    - Note: Password-based authentication is not supported
 4. Test the connection before saving
 5. The server will be automatically initialized with:
-   - PostgreSQL installation/configuration
+   - PostgreSQL installation/configuration (selected version)
    - pgBackRest setup
    - Required system dependencies
+
+**Note:** The PostgreSQL version is queried directly from the server after installation to ensure consistency between the recorded version and the actual installed version.
 
 ### Managing PostgreSQL Databases
 

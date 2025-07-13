@@ -1,4 +1,5 @@
 from flask_sqlalchemy import SQLAlchemy
+from flask_login import UserMixin
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -11,7 +12,7 @@ class BaseModel(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-class User(db.Model):
+class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(128), nullable=False)
@@ -22,6 +23,11 @@ class User(db.Model):
         
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+    
+    @staticmethod
+    def get_single_user():
+        """Get the single user instance for single-user mode"""
+        return User.query.first()
 
 class VpsServer(BaseModel):
     name = db.Column(db.String(80), nullable=False)
@@ -108,7 +114,6 @@ class FlaskSession(db.Model):
     id = db.Column(db.String(255), primary_key=True)
     session_data = db.Column(db.LargeBinary)
     expiry = db.Column(db.DateTime)
-    user_id = db.Column(db.Integer)
     
     @property
     def is_expired(self):
@@ -129,4 +134,4 @@ def init_db(app):
             admin.set_password('admin')  # Default password that must be changed on first login
             admin.is_first_login = True
             db.session.add(admin)
-            db.session.commit() 
+            db.session.commit()
