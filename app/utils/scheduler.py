@@ -113,19 +113,27 @@ def execute_backup(job_id, manual=False):
             logger.warning(f"Fixing configuration for {job.database.name}")
             # Configure with or without S3 as needed
             if job.s3_storage:
-                if not pg_manager.setup_pgbackrest_config(
-                    job.database.name,
-                    job.s3_storage.bucket,
-                    job.s3_storage.region,
-                    job.s3_storage.access_key,
-                    job.s3_storage.secret_key
-                ):
+                s3_config = {
+                'bucket': job.s3_storage.bucket,
+                'region': job.s3_storage.region,
+                'access_key': job.s3_storage.access_key,
+                'secret_key': job.s3_storage.secret_key
+            }
+                success, message = pg_manager.setup_pgbackrest(s3_config)
+                if not success:
                     raise Exception("Failed to configure pgBackRest")
             else:
-                pg_manager.update_pgbackrest_config(job.database.name)
+                success, message = pg_manager.setup_pgbackrest()
+                if not success:
+                    raise Exception(f"Failed to configure pgBackRest: {message}")
+            
+            # Create backup stanza for the database
+            success, message = pg_manager.create_backup_stanza(job.database.name)
+            if not success:
+                raise Exception(f"Failed to create backup stanza: {message}")
                 
-        # Execute the backup with retention policy
-        success, log_output = pg_manager.execute_backup(job.database.name, job.backup_type, job.retention_count)
+        # Execute the backup
+        success, log_output = pg_manager.perform_backup(job.database.name, job.backup_type)
         message = "Backup completed successfully" if success else f"Backup failed: {log_output}"
         logger.info(f"Backup job {job.name} (ID: {job.id}): {message}")
         

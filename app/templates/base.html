@@ -24,7 +24,8 @@
                 <span class="navbar-toggler-icon"></span>
             </button>
             
-            {% if session.get('logged_in') %}
+            <!-- Debug: Current user authenticated = {{ current_user.is_authenticated if current_user else 'No current_user' }} -->
+            {% if current_user.is_authenticated %}
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
@@ -58,9 +59,19 @@
                             <i class="fas fa-cloud me-1"></i> S3 Storage
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint.startswith('pages.') %}active{% endif %}" href="{{ url_for('pages.index') }}">
+                            <i class="fas fa-file-alt me-1"></i> Pages
+                        </a>
+                    </li>
                 </ul>
                 
                 <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint.startswith('profile.') %}active{% endif %}" href="{{ url_for('profile.index') }}">
+                            <i class="fas fa-user me-1"></i> Profile
+                        </a>
+                    </li>
                     <li class="nav-item">
                         <a class="nav-link {% if request.endpoint.startswith('app_backup.') %}active{% endif %}" href="{{ url_for('app_backup.index') }}">
                             <i class="fas fa-database me-1"></i> App Backup

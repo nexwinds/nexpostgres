@@ -125,15 +125,22 @@ def _check_and_configure_backup(database, s3_storage):
             
             # Configure pgBackRest based on storage type
             if s3_storage:
-                pg_manager.setup_pgbackrest_config(
-                    database.name,
-                    s3_storage.bucket,
-                    s3_storage.region,
-                    s3_storage.access_key,
-                    s3_storage.secret_key
-                )
+                s3_config = {
+                    'bucket': s3_storage.bucket,
+                    'region': s3_storage.region,
+                    'endpoint': s3_storage.endpoint or '',
+                    'access_key': s3_storage.access_key,
+                    'secret_key': s3_storage.secret_key
+                }
+                pg_manager.setup_pgbackrest(s3_config)
             else:
-                pg_manager.update_pgbackrest_config(database.name)
+                pg_manager.setup_pgbackrest()
+            
+            # Create backup stanza for the database
+            success, message = pg_manager.create_backup_stanza(database.name)
+            if not success:
+                flash(f'Failed to create backup stanza: {message}', 'warning')
+                return
                 
             flash('Backup system configured successfully', 'success')
         else:
@@ -514,8 +521,8 @@ def restore():
         
         try:
             # Execute restore
-            success, log_output = pg_manager.restore_backup(
-                database.name, backup_name, recovery_time
+            success, log_output = pg_manager.restore_database(
+                database.name, backup_name
             )
             
             # Update restore log

@@ -35,6 +35,12 @@
             </div>
             
             <div class="mb-3">
+                <label for="endpoint" class="form-label">S3 Endpoint (Optional)</label>
+                <input type="text" class="form-control" id="endpoint" name="endpoint" value="{{ storage.endpoint or '' }}" placeholder="https://s3.amazonaws.com">
+                <div class="form-text">Custom S3 endpoint URL (leave empty for AWS S3, required for S3-compatible services)</div>
+            </div>
+            
+            <div class="mb-3">
                 <label for="access_key" class="form-label">S3 Access Key</label>
                 <input type="text" class="form-control" id="access_key" name="access_key" value="{{ storage.access_key }}" required>
                 <div class="form-text">Your AWS access key with permission to access the S3 bucket</div>
@@ -174,4 +180,4 @@
         });
     });
 </script>
-{% endblock %} 
+{% endblock %}

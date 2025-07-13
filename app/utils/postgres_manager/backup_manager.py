@@ -2,6 +2,7 @@
 
 import os
 import logging
+import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from .constants import PostgresConstants
@@ -101,12 +102,10 @@ class PostgresBackupManager:
             return False, message
         
         config_content = "[global]\n"
-        config_content += "repo1-type=posix\n"
-        config_content += f"repo1-path={PostgresConstants.PGBACKREST['backup_dir']}\n"
         config_content += f"log-path={PostgresConstants.PGBACKREST['log_dir']}\n"
         config_content += "process-max=2\n"
         
-        # Add S3 configuration if provided
+        # Add S3 configuration if provided, otherwise use posix
         if s3_config:
             config_content += "\n# S3 Configuration\n"
             config_content += "repo1-type=s3\n"
@@ -120,21 +119,26 @@ class PostgresBackupManager:
             # Add retention settings
             config_content += f"repo1-retention-full={PostgresConstants.PGBACKREST['default_retention_full']}\n"
             config_content += f"repo1-retention-diff={PostgresConstants.PGBACKREST['default_retention_diff']}\n"
+        else:
+            config_content += "\n# Local Configuration\n"
+            config_content += "repo1-type=posix\n"
+            config_content += f"repo1-path={PostgresConstants.PGBACKREST['backup_dir']}\n"
         
         # Write configuration file
         config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
         
         # Create temporary file
-        temp_file = '/tmp/pgbackrest.conf'
+        temp_file = os.path.join(tempfile.gettempdir(), 'pgbackrest.conf')
         with open(temp_file, 'w') as f:
             f.write(config_content)
         
         # Upload and move to final location
-        upload_result = self.ssh.upload_file(temp_file, temp_file)
+        remote_temp_file = '/tmp/pgbackrest.conf'
+        upload_result = self.ssh.upload_file(temp_file, remote_temp_file)
         if not upload_result:
             return False, "Failed to upload pgBackRest configuration"
         
-        move_result = self.ssh.execute_command(f"sudo cp {temp_file} {config_file}")
+        move_result = self.ssh.execute_command(f"sudo cp {remote_temp_file} {config_file}")
         if move_result['exit_code'] != 0:
             return False, f"Failed to create pgBackRest config: {move_result.get('stderr', 'Unknown error')}"
         
@@ -142,8 +146,14 @@ class PostgresBackupManager:
         self.ssh.execute_command(f"sudo chown postgres:postgres {config_file}")
         self.ssh.execute_command(f"sudo chmod 640 {config_file}")
         
-        # Clean up
-        self.ssh.execute_command(f"rm -f {temp_file}")
+        # Clean up local temp file
+        try:
+            os.remove(temp_file)
+        except OSError:
+            pass  # Ignore if file doesn't exist
+        
+        # Clean up remote temp file
+        self.ssh.execute_command(f"rm -f {remote_temp_file}")
         
         return True, "pgBackRest configuration created successfully"
     
@@ -167,21 +177,28 @@ class PostgresBackupManager:
         config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
         
         # Create temporary file with stanza config
-        temp_file = '/tmp/stanza_config.conf'
+        temp_file = os.path.join(tempfile.gettempdir(), 'stanza_config.conf')
         with open(temp_file, 'w') as f:
             f.write(stanza_config)
         
         # Upload and append
-        upload_result = self.ssh.upload_file(temp_file, temp_file)
+        remote_temp_file = '/tmp/stanza_config.conf'
+        upload_result = self.ssh.upload_file(temp_file, remote_temp_file)
         if not upload_result:
             return False, "Failed to upload stanza configuration"
         
-        append_result = self.ssh.execute_command(f"sudo tee -a {config_file} < {temp_file}")
+        append_result = self.ssh.execute_command(f"sudo tee -a {config_file} < {remote_temp_file}")
         if append_result['exit_code'] != 0:
             return False, f"Failed to append stanza config: {append_result.get('stderr', 'Unknown error')}"
         
-        # Clean up
-        self.ssh.execute_command(f"rm -f {temp_file}")
+        # Clean up local temp file
+        try:
+            os.remove(temp_file)
+        except OSError:
+            pass  # Ignore if file doesn't exist
+        
+        # Clean up remote temp file
+        self.ssh.execute_command(f"rm -f {remote_temp_file}")
         
         return True, f"Stanza configuration for {db_name} created successfully"
     
@@ -196,8 +213,11 @@ class PostgresBackupManager:
         """
         self.logger.info(f"Creating pgBackRest stanza: {db_name}")
         
+        # Specify the config file path explicitly
+        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+        
         result = self.system_utils.execute_as_postgres_user(
-            f"pgbackrest --stanza={db_name} stanza-create"
+            f"pgbackrest --config={config_file} --stanza={db_name} stanza-create"
         )
         
         if result['exit_code'] == 0:
@@ -214,8 +234,11 @@ class PostgresBackupManager:
         Returns:
             tuple: (success, message)
         """
+        # Specify the config file path explicitly
+        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+        
         result = self.system_utils.execute_as_postgres_user(
-            f"pgbackrest --stanza={db_name} check"
+            f"pgbackrest --config={config_file} --stanza={db_name} check"
         )
         
         if result['exit_code'] == 0:
@@ -267,8 +290,11 @@ class PostgresBackupManager:
             backup_type = 'full'
             self.logger.info("Forcing full backup due to policy")
         
+        # Specify the config file path explicitly
+        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+        
         result = self.system_utils.execute_as_postgres_user(
-            f"pgbackrest --stanza={db_name} --type={backup_type} backup"
+            f"pgbackrest --config={config_file} --stanza={db_name} --type={backup_type} backup"
         )
         
         if result['exit_code'] == 0:
@@ -310,8 +336,11 @@ class PostgresBackupManager:
         Returns:
             list: List of backup information dictionaries
         """
+        # Specify the config file path explicitly
+        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+        
         result = self.system_utils.execute_as_postgres_user(
-            f"pgbackrest --stanza={db_name} info --output=json"
+            f"pgbackrest --config={config_file} --stanza={db_name} info --output=json"
         )
         
         backups = []
@@ -361,8 +390,11 @@ class PostgresBackupManager:
         # Remove postmaster.pid if it exists
         self.ssh.execute_command(f"sudo rm -f {data_dir}/postmaster.pid")
         
+        # Specify the config file path explicitly
+        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+        
         # Build restore command
-        restore_cmd = f"pgbackrest --stanza={db_name} --delta restore"
+        restore_cmd = f"pgbackrest --config={config_file} --stanza={db_name} --delta restore"
         if backup_label:
             restore_cmd += f" --set={backup_label}"
         

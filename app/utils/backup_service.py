@@ -191,15 +191,16 @@ class BackupService:
             if check_result['exit_code'] != 0:
                 # Configure pgBackRest based on storage type
                 if s3_storage:
-                    pg_manager.setup_pgbackrest_config(
-                        database.name,
-                        s3_storage.bucket,
-                        s3_storage.region,
-                        s3_storage.access_key,
-                        s3_storage.secret_key
-                    )
+                    s3_config = {
+                        'bucket': s3_storage.bucket,
+                        'region': s3_storage.region,
+                        'endpoint': s3_storage.endpoint or '',
+                        'access_key': s3_storage.access_key,
+                        'secret_key': s3_storage.secret_key
+                    }
+                    pg_manager.setup_pgbackrest(s3_config)
                 else:
-                    pg_manager.update_pgbackrest_config(database.name)
+                    pg_manager.setup_pgbackrest()
                 
                 return 'Backup system configured successfully'
             else:
@@ -532,8 +533,8 @@ class BackupRestoreService:
             tuple: (success, message)
         """
         def restore_operation(pg_manager):
-            success, log_output = pg_manager.restore_backup(
-                database.name, backup_name, recovery_time
+            success, log_output = pg_manager.restore_database(
+                database.name, backup_name
             )
             
             # Update restore log

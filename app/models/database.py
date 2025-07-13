@@ -68,6 +68,7 @@ class S3Storage(BaseModel):
     name = db.Column(db.String(80), nullable=False)
     bucket = db.Column(db.String(120), nullable=False)
     region = db.Column(db.String(50), nullable=False)
+    endpoint = db.Column(db.String(255), nullable=True)  # S3 endpoint URL (optional for AWS S3)
     access_key = db.Column(db.String(120), nullable=False)
     secret_key = db.Column(db.String(120), nullable=False)
     

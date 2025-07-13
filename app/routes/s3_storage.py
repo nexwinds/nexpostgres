@@ -22,6 +22,7 @@ def add():
         name = request.form.get('name')
         bucket = request.form.get('bucket')
         region = request.form.get('region')
+        endpoint = request.form.get('endpoint')
         access_key = request.form.get('access_key')
         secret_key = request.form.get('secret_key')
         
@@ -40,6 +41,7 @@ def add():
             name=name,
             bucket=bucket,
             region=region,
+            endpoint=endpoint if endpoint else None,
             access_key=access_key,
             secret_key=secret_key,
             # Removed user_id for single-user mode
@@ -63,6 +65,7 @@ def edit(id):
         name = request.form.get('name')
         bucket = request.form.get('bucket')
         region = request.form.get('region')
+        endpoint = request.form.get('endpoint')
         access_key = request.form.get('access_key')
         secret_key = request.form.get('secret_key')
         
@@ -81,6 +84,7 @@ def edit(id):
         storage.name = name
         storage.bucket = bucket
         storage.region = region
+        storage.endpoint = endpoint if endpoint else None
         storage.access_key = access_key
         
         # Only update secret key if provided

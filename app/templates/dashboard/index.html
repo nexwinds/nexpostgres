@@ -202,11 +202,11 @@
                     <div class="list-group-item list-group-item-action">
                         <div class="d-flex w-100 justify-content-between">
                             <h5 class="mb-1">{{ job.name }}</h5>
-                            <small>{{ job.backup_logs[-1].start_time.strftime('%Y-%m-%d %H:%M') }}</small>
+                            <small>{{ job.logs[-1].start_time.strftime('%Y-%m-%d %H:%M') }}</small>
                         </div>
                         <p class="mb-1">Database: {{ job.database.name }} on {{ job.server.name }}</p>
                         <small>
-                            <a href="{{ url_for('backups.view_log', id=job.backup_logs[-1].id) }}">View Log</a> |
+                            <a href="{{ url_for('backups.view_log', id=job.logs[-1].id) }}">View Log</a> |
                             <a href="{{ url_for('backups.execute', id=job.id) }}" onclick="return confirm('Are you sure you want to run this backup job now?')">Run Now</a>
                         </small>
                     </div>

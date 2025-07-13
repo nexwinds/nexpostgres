@@ -23,6 +23,7 @@
                         <th>Name</th>
                         <th>Bucket</th>
                         <th>Region</th>
+                        <th>Endpoint</th>
                         <th>Created</th>
                         <th>Actions</th>
                     </tr>
@@ -33,6 +34,7 @@
                         <td>{{ storage.name }}</td>
                         <td>{{ storage.bucket }}</td>
                         <td>{{ storage.region }}</td>
+                        <td>{{ storage.endpoint or 'AWS S3' }}</td>
                         <td>{{ storage.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
                         <td>
                             <div class="btn-group btn-group-sm">
@@ -96,4 +98,4 @@
         <p>Each backup job must be associated with an S3 storage configuration.</p>
     </div>
 </div>
-{% endblock %} 
+{% endblock %}
