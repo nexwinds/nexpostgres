@@ -9,7 +9,7 @@
         <a href="{{ url_for('databases.databases') }}" class="btn btn-secondary me-2">
             <i class="fas fa-arrow-left me-1"></i> Back to All Databases
         </a>
-        <a href="{{ url_for('databases.add') }}" class="btn btn-primary">
+        <a href="{{ url_for('databases.add_database') }}" class="btn btn-primary">
             <i class="fas fa-plus me-1"></i> Add Database
         </a>
     </div>
@@ -71,7 +71,7 @@
                                 <button type="button" class="btn btn-sm btn-outline-info check-database" data-database-id="{{ database.id }}">
                                     <i class="fas fa-sync-alt"></i> Check
                                 </button>
-                                <a href="{{ url_for('databases.edit', id=database.id) }}" class="btn btn-sm btn-outline-primary">
+                                <a href="{{ url_for('databases.edit_database', database_id=database.id) }}" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-edit"></i> Edit
                                 </a>
                                 <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteDatabaseModal{{ database.id }}">
@@ -95,7 +95,7 @@
                                         </div>
                                         <div class="modal-footer">
                                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                            <form action="{{ url_for('databases.delete', id=database.id) }}" method="post">
+                                            <form action="{{ url_for('databases.delete_database', database_id=database.id) }}" method="post">
                                                 <button type="submit" class="btn btn-danger">Delete</button>
                                             </form>
                                         </div>
@@ -133,7 +133,7 @@
                 statusIndicator.innerHTML = '<span class="badge bg-warning">Checking...</span>';
                 
                 // Send AJAX request
-                fetch(`{{ url_for('databases.check', id=0) }}`.replace('0', databaseId))
+                fetch(`{{ url_for('databases.check_postgres', server_id=0) }}`.replace('0', serverId))
                     .then(response => response.json())
                     .then(data => {
                         // Reset button

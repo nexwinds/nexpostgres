@@ -24,7 +24,8 @@ class PostgresUserManager:
         result = self.system_utils.execute_postgres_sql(
             f"SELECT 1 FROM pg_roles WHERE rolname = '{username}';"
         )
-        return result['exit_code'] == 0 and result['stdout'].strip()
+        # Check if query succeeded and returned actual data (not just empty result)
+        return result['exit_code'] == 0 and bool(result['stdout'].strip()) and '1' in result['stdout']
     
     def create_user(self, username: str, password: str) -> Tuple[bool, str]:
         """Create a PostgreSQL user.
@@ -223,14 +224,21 @@ class PostgresUserManager:
         self.logger.info(f"Creating database user {username} for database {db_name} with {permission_level} permissions")
         
         # Create or update user
-        if self.user_exists(username):
+        user_existed = self.user_exists(username)
+        if user_existed:
+            self.logger.info(f"User {username} already exists, updating password")
             success, message = self.update_user_password(username, password)
             if not success:
                 return False, message
         else:
+            self.logger.info(f"Creating new user {username}")
             success, message = self.create_user(username, password)
             if not success:
                 return False, message
+            
+            # Verify user was created successfully
+            if not self.user_exists(username):
+                return False, f"User '{username}' was not created successfully"
         
         # Grant permissions
         success, perm_message = self.grant_database_permissions(username, db_name, permission_level)

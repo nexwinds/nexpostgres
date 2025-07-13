@@ -426,6 +426,10 @@ class PostgresManager:
         """Update a PostgreSQL configuration setting."""
         return self.config_manager.update_postgresql_setting(setting, value)
     
+    def fix_postgresql_config(self) -> Tuple[bool, str]:
+        """Fix malformed PostgreSQL configuration."""
+        return self.config_manager.fix_postgresql_config()
+    
     # System utilities
     def get_system_info(self) -> Dict[str, str]:
         """Get system information."""

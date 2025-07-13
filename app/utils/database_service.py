@@ -123,13 +123,29 @@ class DatabaseService:
     def create_database_operation(pg_manager: PostgresManager, name: str, 
                                 username: str, password: str) -> Tuple[bool, str]:
         """Create database operation."""
-        return pg_manager.create_database(name, username, password)
+        # First attempt to create database
+        success, message = pg_manager.create_database(name)
+        
+        # If creation failed due to configuration issues, try to fix and retry
+        if not success and ('invalid line' in message.lower() or 'listen_addresses' in message.lower()):
+            fix_success, fix_message = pg_manager.fix_postgresql_config()
+            if fix_success:
+                # Retry database creation after fixing config
+                success, message = pg_manager.create_database(name)
+                if success:
+                    message = f"Database created successfully (after fixing PostgreSQL configuration)"
+                else:
+                    message = f"Configuration fixed but database creation still failed: {message}"
+            else:
+                message = f"Database creation failed due to configuration error. Fix attempt failed: {fix_message}"
+        
+        return success, message
     
     @staticmethod
     def update_user_password_operation(pg_manager: PostgresManager, 
                                      username: str, password: str) -> Tuple[bool, str]:
         """Update user password operation."""
-        return pg_manager.update_database_user(username, password)
+        return pg_manager.update_user_password(username, password)
     
     @staticmethod
     def create_user_operation(pg_manager: PostgresManager, username: str, 

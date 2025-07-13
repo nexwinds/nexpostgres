@@ -75,7 +75,7 @@
                     <tr>
                         <th style="width: 35%">Target Database</th>
                         <td>
-                            <a href="{{ url_for('databases.edit', id=log.database_id) }}">
+                            <a href="{{ url_for('databases.edit_database', database_id=log.database_id) }}">
                                 {{ log.database.name }}
                             </a>
                         </td>
@@ -150,4 +150,4 @@
 </div>
 {% endif %}
 
-{% endblock %} 
+{% endblock %}

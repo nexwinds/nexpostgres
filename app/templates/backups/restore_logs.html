@@ -106,7 +106,7 @@
                             {% endif %}
                         </td>
                         <td>
-                            <a href="{{ url_for('databases.edit', id=log.database_id) }}">
+                            <a href="{{ url_for('databases.edit_database', database_id=log.database_id) }}">
                                 {{ log.database.name }}
                             </a>
                             on
@@ -149,4 +149,4 @@
         {% endif %}
     </div>
 </div>
-{% endblock %} 
+{% endblock %}

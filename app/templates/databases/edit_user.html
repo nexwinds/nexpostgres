@@ -5,7 +5,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>Edit Database User</h1>
-    <a href="{{ url_for('databases.credentials', id=database.id) }}" class="btn btn-secondary">
+    <a href="{{ url_for('databases.database_users', database_id=database.id) }}" class="btn btn-secondary">
         <i class="fas fa-arrow-left me-1"></i> Back to Credentials
     </a>
 </div>
@@ -49,7 +49,7 @@
             </div>
             
             <div class="d-flex justify-content-end">
-                <a href="{{ url_for('databases.credentials', id=database.id) }}" class="btn btn-secondary me-2">Cancel</a>
+                <a href="{{ url_for('databases.database_users', database_id=database.id) }}" class="btn btn-secondary me-2">Cancel</a>
                 <button type="submit" class="btn btn-success">
                     <i class="fas fa-save me-1"></i> Save Changes
                 </button>
@@ -57,4 +57,4 @@
         </form>
     </div>
 </div>
-{% endblock %} 
+{% endblock %}

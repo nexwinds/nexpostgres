@@ -13,7 +13,7 @@ backups_bp = Blueprint('backups', __name__)
 def backups():
     """Display all backup jobs."""
     backup_jobs = BackupJob.query.all()
-    return render_template('backups/backups.html', backup_jobs=backup_jobs)
+    return render_template('backups/index.html', backup_jobs=backup_jobs)
 
 
 @backups_bp.route('/backups/add', methods=['GET', 'POST'])
@@ -27,7 +27,7 @@ def add_backup():
             BackupValidationService.flash_validation_errors(errors)
             databases = PostgresDatabase.query.all()
             s3_storages = S3Storage.query.all()
-            return render_template('backups/add_backup.html', 
+            return render_template('backups/add.html', 
                                  databases=databases, 
                                  s3_storages=s3_storages)
         
@@ -42,7 +42,7 @@ def add_backup():
             flash(message, 'danger')
             databases = PostgresDatabase.query.all()
             s3_storages = S3Storage.query.all()
-            return render_template('backups/add_backup.html', 
+            return render_template('backups/add.html', 
                                  databases=databases, 
                                  s3_storages=s3_storages)
         
@@ -57,7 +57,7 @@ def add_backup():
     
     databases = PostgresDatabase.query.all()
     s3_storages = S3Storage.query.all()
-    return render_template('backups/add_backup.html', 
+    return render_template('backups/add.html', 
                          databases=databases, 
                          s3_storages=s3_storages)
 
@@ -79,7 +79,7 @@ def edit_backup(backup_job_id):
             BackupValidationService.flash_validation_errors(errors)
             databases = PostgresDatabase.query.all()
             s3_storages = S3Storage.query.all()
-            return render_template('backups/edit_backup.html', 
+            return render_template('backups/edit.html', 
                                  backup_job=backup_job,
                                  databases=databases, 
                                  s3_storages=s3_storages)
@@ -96,7 +96,7 @@ def edit_backup(backup_job_id):
     
     databases = PostgresDatabase.query.all()
     s3_storages = S3Storage.query.all()
-    return render_template('backups/edit_backup.html', 
+    return render_template('backups/edit.html', 
                          backup_job=backup_job,
                          databases=databases, 
                          s3_storages=s3_storages)
@@ -145,7 +145,7 @@ def backup_logs():
     logs = backup_service.get_backup_logs(backup_job_id, status)
     
     backup_jobs = BackupJob.query.all()
-    return render_template('backups/backup_logs.html', 
+    return render_template('backups/logs.html', 
                          logs=logs, 
                          backup_jobs=backup_jobs,
                          selected_backup_job_id=backup_job_id,

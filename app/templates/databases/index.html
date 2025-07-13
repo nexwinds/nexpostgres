@@ -6,12 +6,22 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>PostgreSQL Databases</h1>
     <div class="btn-group">
-        <a href="{{ url_for('databases.add') }}" class="btn btn-primary">
+        <a href="{{ url_for('databases.add_database') }}" class="btn btn-primary">
             <i class="fas fa-plus me-1"></i> Add Database
         </a>
-        <a href="{{ url_for('databases.import_database') }}" class="btn btn-success">
-            <i class="fas fa-file-import me-1"></i> Import Database
-        </a>
+        <div class="dropdown">
+            <button class="btn btn-success dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="fas fa-file-import me-1"></i> Import Database
+            </button>
+            <ul class="dropdown-menu">
+                {% for database in databases %}
+                <li><a class="dropdown-item" href="{{ url_for('databases.import_database', database_id=database.id) }}">{{ database.name }}</a></li>
+                {% endfor %}
+                {% if not databases %}
+                <li><span class="dropdown-item-text text-muted">No databases available</span></li>
+                {% endif %}
+            </ul>
+        </div>
     </div>
 </div>
 
@@ -39,19 +49,19 @@
                         <td>{{ database.server.name }}</td>
                         <td>{{ database.server.postgres_port }}</td>
                         <td>
-                            <span class="status-indicator" data-database-id="{{ database.id }}">
+                            <span class="status-indicator" data-database-id="{{ database.id }}" data-server-id="{{ database.server.id }}">
                                 <span class="badge bg-secondary">Unknown</span>
                             </span>
                         </td>
                         <td>
                             <div class="btn-group" role="group">
-                                <a href="{{ url_for('databases.credentials', id=database.id) }}" class="btn btn-sm btn-outline-success">
+                                <a href="{{ url_for('databases.database_users', database_id=database.id) }}" class="btn btn-sm btn-outline-success">
                                     <i class="fas fa-key"></i> Credentials
                                 </a>
-                                <button type="button" class="btn btn-sm btn-outline-info check-database" data-database-id="{{ database.id }}">
+                                <button type="button" class="btn btn-sm btn-outline-info check-database" data-database-id="{{ database.id }}" data-server-id="{{ database.server.id }}">
                                     <i class="fas fa-sync-alt"></i> Check
                                 </button>
-                                <a href="{{ url_for('databases.edit', id=database.id) }}" class="btn btn-sm btn-outline-primary">
+                                <a href="{{ url_for('databases.edit_database', database_id=database.id) }}" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-edit"></i> Edit
                                 </a>
                                 <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteDatabaseModal{{ database.id }}">
@@ -75,7 +85,7 @@
                                         </div>
                                         <div class="modal-footer">
                                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                            <form action="{{ url_for('databases.delete', id=database.id) }}" method="post">
+                                            <form action="{{ url_for('databases.delete_database', database_id=database.id) }}" method="post">
                                                 <button type="submit" class="btn btn-danger">Delete</button>
                                             </form>
                                         </div>
@@ -104,6 +114,7 @@
         document.querySelectorAll('.check-database').forEach(function(button) {
             button.addEventListener('click', function() {
                 const databaseId = this.getAttribute('data-database-id');
+                const serverId = this.getAttribute('data-server-id');
                 const statusIndicator = document.querySelector(`.status-indicator[data-database-id="${databaseId}"]`);
                 const originalContent = button.innerHTML;
                 
@@ -113,7 +124,7 @@
                 statusIndicator.innerHTML = '<span class="badge bg-warning">Checking...</span>';
                 
                 // Send AJAX request
-                fetch(`{{ url_for('databases.check', id=0) }}`.replace('0', databaseId))
+                fetch(`{{ url_for('databases.check_postgres', server_id=0) }}`.replace('0', serverId))
                     .then(response => response.json())
                     .then(data => {
                         // Reset button
@@ -154,4 +165,4 @@
         });
     });
 </script>
-{% endblock %} 
+{% endblock %}

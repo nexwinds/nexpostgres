@@ -14,10 +14,8 @@ databases_bp = Blueprint('databases', __name__)
 @login_required
 def databases():
     """Display all databases for the current user."""
-    user_databases = PostgresDatabase.query.join(VpsServer).filter(
-        # Removed user_id filtering for single-user mode
-    ).all()
-    return render_template('databases.html', databases=user_databases)
+    user_databases = PostgresDatabase.query.join(VpsServer).all()
+    return render_template('databases/index.html', databases=user_databases)
 
 
 @databases_bp.route('/databases/add', methods=['GET', 'POST'])
@@ -26,7 +24,7 @@ def add_database():
     """Add a new database."""
     if request.method == 'GET':
         servers = VpsServer.query.all()
-        return render_template('add_database.html', servers=servers)
+        return render_template('databases/add.html', servers=servers)
     
     # POST request - process form
     data = request.form.to_dict()
@@ -52,8 +50,7 @@ def add_database():
     
     # Get server and validate ownership
     server = VpsServer.query.filter_by(
-        id=data['vps_server_id'], 
-        # Removed user_id for single-user mode
+        id=data['vps_server_id']
     ).first()
     
     if not server:
@@ -77,6 +74,18 @@ def add_database():
         flash(message, 'error')
         return redirect(url_for('databases.add_database'))
     
+    # Create primary user on server
+    success, message = DatabaseService.execute_with_postgres(
+        server,
+        'Primary user creation',
+        DatabaseService.create_user_operation,
+        username, password, data['name'], 'read_write'
+    )
+    
+    if not success:
+        flash(message, 'error')
+        return redirect(url_for('databases.add_database'))
+    
     # Save to database
     try:
         new_database = PostgresDatabase(
@@ -90,7 +99,6 @@ def add_database():
             username=username,
             password=password,
             database_id=new_database.id,
-            permission_level='admin',
             is_primary=True
         )
         db.session.add(new_user)
@@ -110,8 +118,7 @@ def add_database():
 def edit_database(database_id):
     """Edit database credentials."""
     database = PostgresDatabase.query.join(VpsServer).filter(
-        PostgresDatabase.id == database_id,
-        # Removed user_id filtering for single-user mode
+        PostgresDatabase.id == database_id
     ).first_or_404()
     
     if request.method == 'GET':
@@ -121,10 +128,10 @@ def edit_database(database_id):
         ).first()
         
         current_permission = DatabaseService.get_current_user_permission(
-            database.vps_server, database.name, primary_user.username if primary_user else ''
+            database.server, database.name, primary_user.username if primary_user else ''
         )
         
-        return render_template('edit_database.html', 
+        return render_template('databases/edit.html', 
                              database=database, 
                              primary_user=primary_user,
                              current_permission=current_permission)
@@ -149,7 +156,7 @@ def edit_database(database_id):
     
     # Update password on server
     success, message = DatabaseService.execute_with_postgres(
-        database.vps_server,
+        database.server,
         'Password update',
         DatabaseService.update_user_password_operation,
         primary_user.username, new_password
@@ -176,12 +183,11 @@ def edit_database(database_id):
 def add_database_user(database_id):
     """Add a new user to a database."""
     database = PostgresDatabase.query.join(VpsServer).filter(
-        PostgresDatabase.id == database_id,
-        # Removed user_id filtering for single-user mode
+        PostgresDatabase.id == database_id
     ).first_or_404()
     
     if request.method == 'GET':
-        return render_template('add_database_user.html', database=database)
+        return render_template('databases/add_user.html', database=database)
     
     # POST request - process form
     data = request.form.to_dict()
@@ -212,7 +218,7 @@ def add_database_user(database_id):
     
     # Create user on server
     success, message = DatabaseService.execute_with_postgres(
-        database.vps_server,
+        database.server,
         'User creation',
         DatabaseService.create_user_operation,
         data['username'], data['password'], database.name, data['permission_level']
@@ -228,7 +234,6 @@ def add_database_user(database_id):
             username=data['username'],
             password=data['password'],
             database_id=database_id,
-            permission_level=data['permission_level'],
             is_primary=False
         )
         db.session.add(new_user)
@@ -248,17 +253,33 @@ def add_database_user(database_id):
 def database_users(database_id):
     """Display users for a specific database."""
     database = PostgresDatabase.query.join(VpsServer).filter(
-        PostgresDatabase.id == database_id,
-        # Removed user_id filtering for single-user mode
+        PostgresDatabase.id == database_id
     ).first_or_404()
     
     users = PostgresDatabaseUser.query.filter_by(database_id=database_id).all()
-    user_permissions = DatabaseService.get_user_permissions(database.vps_server, database.name)
+    user_permissions = DatabaseService.get_user_permissions(database.server, database.name)
     
-    return render_template('database_users.html', 
+    # Get primary user
+    primary_user = PostgresDatabaseUser.query.filter_by(
+        database_id=database_id, 
+        is_primary=True
+    ).first()
+    
+    # Generate connection strings if primary user exists
+    connection_url = ''
+    jdbc_url = ''
+    if primary_user:
+        connection_url = f"postgresql://{primary_user.username}:{primary_user.password}@{database.server.host}:{database.server.postgres_port}/{database.name}"
+        jdbc_url = f"jdbc:postgresql://{database.server.host}:{database.server.postgres_port}/{database.name}"
+    
+    return render_template('databases/credentials.html', 
                          database=database, 
                          users=users, 
-                         user_permissions=user_permissions)
+                         user_permissions=user_permissions,
+                         server=database.server,
+                         primary_user=primary_user,
+                         connection_url=connection_url,
+                         jdbc_url=jdbc_url)
 
 
 @databases_bp.route('/databases/<int:database_id>/users/<int:user_id>/edit', methods=['GET', 'POST'])
@@ -266,8 +287,7 @@ def database_users(database_id):
 def edit_database_user(database_id, user_id):
     """Edit database user permissions."""
     database = PostgresDatabase.query.join(VpsServer).filter(
-        PostgresDatabase.id == database_id,
-        # Removed user_id filtering for single-user mode
+        PostgresDatabase.id == database_id
     ).first_or_404()
     
     user = PostgresDatabaseUser.query.filter_by(
@@ -277,9 +297,9 @@ def edit_database_user(database_id, user_id):
     
     if request.method == 'GET':
         current_permission = DatabaseService.get_current_user_permission(
-            database.vps_server, database.name, user.username
+            database.server, database.name, user.username
         )
-        return render_template('edit_database_user.html', 
+        return render_template('databases/edit_user.html', 
                              database=database, 
                              user=user, 
                              current_permission=current_permission)
@@ -296,7 +316,7 @@ def edit_database_user(database_id, user_id):
     
     # Update permissions on server
     success, message = DatabaseService.execute_with_postgres(
-        database.vps_server,
+        database.server,
         'Permission update',
         DatabaseService.create_user_operation,  # This handles permission updates too
         user.username, user.password, database.name, new_permission
@@ -325,8 +345,7 @@ def edit_database_user(database_id, user_id):
 def delete_database_user(database_id, user_id):
     """Delete a database user."""
     database = PostgresDatabase.query.join(VpsServer).filter(
-        PostgresDatabase.id == database_id,
-        # Removed user_id filtering for single-user mode
+        PostgresDatabase.id == database_id
     ).first_or_404()
     
     user = PostgresDatabaseUser.query.filter_by(
@@ -340,7 +359,7 @@ def delete_database_user(database_id, user_id):
     
     # Delete user from server
     success, message = DatabaseService.execute_with_postgres(
-        database.vps_server,
+        database.server,
         'User deletion',
         DatabaseService.delete_user_operation,
         user.username
@@ -367,8 +386,7 @@ def delete_database_user(database_id, user_id):
 def delete_database(database_id):
     """Delete a database."""
     database = PostgresDatabase.query.join(VpsServer).filter(
-        PostgresDatabase.id == database_id,
-        # Removed user_id filtering for single-user mode
+        PostgresDatabase.id == database_id
     ).first_or_404()
     
     try:
@@ -392,8 +410,7 @@ def delete_database(database_id):
 def check_postgres(server_id):
     """Check PostgreSQL installation and version on server."""
     server = VpsServer.query.filter_by(
-        id=server_id, 
-        # Removed user_id for single-user mode
+        id=server_id
     ).first_or_404()
     
     result = DatabaseService.check_postgres_status(server)
@@ -405,12 +422,11 @@ def check_postgres(server_id):
 def import_database(database_id):
     """Import database from external source."""
     database = PostgresDatabase.query.join(VpsServer).filter(
-        PostgresDatabase.id == database_id,
-        # Removed user_id filtering for single-user mode
+        PostgresDatabase.id == database_id
     ).first_or_404()
     
     if request.method == 'GET':
-        return render_template('import_database.html', database=database)
+        return render_template('databases/import.html', database=database)
     
     # POST request - process import
     data = request.form.to_dict()
@@ -467,8 +483,7 @@ def import_database(database_id):
 def import_progress(database_id, restore_log_id):
     """Display import progress."""
     database = PostgresDatabase.query.join(VpsServer).filter(
-        PostgresDatabase.id == database_id,
-        # Removed user_id filtering for single-user mode
+        PostgresDatabase.id == database_id
     ).first_or_404()
     
     restore_log = RestoreLog.query.filter_by(
@@ -476,7 +491,7 @@ def import_progress(database_id, restore_log_id):
         database_id=database_id
     ).first_or_404()
     
-    return render_template('import_progress.html', 
+    return render_template('databases/import_progress.html', 
                          database=database, 
                          restore_log=restore_log)
 
@@ -486,8 +501,7 @@ def import_progress(database_id, restore_log_id):
 def execute_import(database_id, restore_log_id):
     """Execute the database import process."""
     database = PostgresDatabase.query.join(VpsServer).filter(
-        PostgresDatabase.id == database_id,
-        # Removed user_id filtering for single-user mode
+        PostgresDatabase.id == database_id
     ).first_or_404()
     
     restore_log = RestoreLog.query.filter_by(
@@ -505,7 +519,7 @@ def execute_import(database_id, restore_log_id):
     
     # Execute import
     success, message = DatabaseService.execute_with_postgres(
-        database.vps_server,
+        database.server,
         'Database import',
         DatabaseImportService.perform_database_import,
         connection_string, database.name, restore_log

@@ -251,8 +251,9 @@ class PostgresConfigManager:
         check_result = self.ssh.execute_command(check_cmd)
         
         if check_result['exit_code'] == 0:
-            # Update existing setting
-            update_cmd = f"sudo sed -i 's|^[ \\t]*{setting}[ \\t]*=.*|{setting} = {value}|' {postgresql_conf}"
+            # Update existing setting - escape quotes properly
+            escaped_value = value.replace("'", "'\"'\"'")
+            update_cmd = f"sudo sed -i 's|^[ \\t]*{setting}[ \\t]*=.*|{setting} = {escaped_value}|' {postgresql_conf}"
             result = self.ssh.execute_command(update_cmd)
             
             if result['exit_code'] == 0:
@@ -260,8 +261,9 @@ class PostgresConfigManager:
             else:
                 return False, f"Failed to update {setting}: {result.get('stderr', 'Unknown error')}"
         else:
-            # Add new setting
-            add_cmd = f"echo '{setting} = {value}' | sudo tee -a {postgresql_conf}"
+            # Add new setting - escape quotes properly
+            escaped_value = value.replace("'", "'\"'\"'")
+            add_cmd = f"echo '{setting} = {escaped_value}' | sudo tee -a {postgresql_conf}"
             result = self.ssh.execute_command(add_cmd)
             
             if result['exit_code'] == 0:
@@ -374,3 +376,39 @@ class PostgresConfigManager:
                 return False, f"Configuration updated but PostgreSQL restart failed: {message}", changes_made
         
         return True, "PostgreSQL configured for external connections", changes_made
+    
+    def fix_postgresql_config(self) -> Tuple[bool, str]:
+        """Fix malformed PostgreSQL configuration.
+        
+        Returns:
+            tuple: (success, message)
+        """
+        postgresql_conf = self.find_postgresql_conf()
+        if not postgresql_conf:
+            return False, "Could not locate postgresql.conf"
+        
+        self.logger.info("Fixing malformed PostgreSQL configuration...")
+        
+        # Backup the file first
+        success, backup_path = self.system_utils.backup_file(postgresql_conf)
+        if not success:
+            self.logger.warning(f"Could not backup postgresql.conf: {backup_path}")
+        
+        # Remove malformed listen_addresses lines
+        remove_cmd = f"sudo sed -i '/^[ \\t]*listen_addresses[ \\t]*=[ \\t]*\*[ \\t]*$/d' {postgresql_conf}"
+        result = self.ssh.execute_command(remove_cmd)
+        
+        if result['exit_code'] != 0:
+            return False, f"Failed to remove malformed listen_addresses: {result.get('stderr', 'Unknown error')}"
+        
+        # Add correct listen_addresses setting
+        success, message = self.update_postgresql_setting('listen_addresses', "'*'")
+        if not success:
+            return False, f"Failed to add correct listen_addresses: {message}"
+        
+        # Restart PostgreSQL to apply changes
+        success, message = self.system_utils.restart_service('postgresql')
+        if not success:
+            return False, f"Configuration fixed but PostgreSQL restart failed: {message}"
+        
+        return True, "PostgreSQL configuration fixed successfully"
