@@ -78,26 +78,117 @@ class SystemUtils:
                 'update': 'apt-get update',
                 'install': 'apt-get install -y',
                 'search': 'apt-cache search',
-                'list_installed': 'dpkg -l'
+                'list_installed': 'dpkg -l',
+                'madison': 'apt-cache madison',
+                'policy': 'apt-cache policy'
             }
         elif os_type == 'rhel':
-            return {
-                'update': 'yum update -y',
-                'install': 'yum install -y',
-                'search': 'yum search',
-                'list_installed': 'rpm -qa'
-            }
+            # Detect if dnf is available (newer RHEL/Fedora)
+            dnf_check = self.ssh.execute_command('which dnf')
+            if dnf_check['exit_code'] == 0:
+                return {
+                    'update': 'dnf update -y',
+                    'install': 'dnf install -y',
+                    'search': 'dnf search',
+                    'list_installed': 'rpm -qa',
+                    'list_available': 'dnf list available'
+                }
+            else:
+                return {
+                    'update': 'yum update -y',
+                    'install': 'yum install -y',
+                    'search': 'yum search',
+                    'list_installed': 'rpm -qa',
+                    'list_available': 'yum list available'
+                }
         else:
             return {}
     
-    def get_postgres_package_names(self) -> Dict[str, str]:
-        """Get PostgreSQL package names for the detected OS.
+    def get_postgres_package_names(self, version: str = None) -> List[str]:
+        """Get PostgreSQL package names for the detected OS and version.
+        
+        Args:
+            version: PostgreSQL major version (e.g., '15', '16')
+                    If None, returns base package names
         
         Returns:
-            dict: Package names
+            list: Package names for the version
         """
         os_type = self.detect_os()
-        return PostgresConstants.PACKAGE_NAMES.get(os_type, {})
+        base_packages = PostgresConstants.PACKAGE_NAMES.get(os_type, {})
+        
+        if not base_packages:
+            return []
+        
+        if not version:
+            # Return base packages without version suffix
+            return list(base_packages.values())
+        
+        packages = []
+        
+        if os_type == 'debian':
+            # For Debian/Ubuntu: postgresql-16, postgresql-contrib-16
+            packages.append(f"postgresql-{version}")
+            if 'postgresql_contrib' in base_packages:
+                packages.append(f"postgresql-contrib-{version}")
+        elif os_type == 'rhel':
+            # For RHEL/CentOS: postgresql16-server, postgresql16-contrib
+            packages.append(f"postgresql{version}-server")
+            if 'postgresql_contrib' in base_packages:
+                packages.append(f"postgresql{version}-contrib")
+        
+        return packages
+    
+    def get_available_postgres_versions(self) -> List[str]:
+        """Get list of available PostgreSQL major versions.
+        
+        Returns:
+            list: Available major versions (e.g., ['13', '14', '15', '16'])
+        """
+        os_type = self.detect_os()
+        pkg_commands = self.get_package_manager_commands()
+        
+        if not pkg_commands:
+            return []
+        
+        versions = []
+        
+        if os_type == 'debian':
+            # Search for postgresql-XX packages
+            result = self.ssh.execute_command("apt-cache search '^postgresql-[0-9]+$' | grep -o 'postgresql-[0-9]\+' | sort -V")
+            if result['exit_code'] == 0 and result['stdout']:
+                for line in result['stdout'].strip().split('\n'):
+                    if line.strip():
+                        version = line.replace('postgresql-', '')
+                        if version.isdigit():
+                            versions.append(version)
+        
+        elif os_type == 'rhel':
+            # Search for postgresqlXX-server packages
+            result = self.ssh.execute_command("yum search postgresql | grep -o 'postgresql[0-9]\+' | sort -V | uniq")
+            if result['exit_code'] == 0 and result['stdout']:
+                for line in result['stdout'].strip().split('\n'):
+                    if line.strip():
+                        version = line.replace('postgresql', '')
+                        if version.isdigit():
+                            versions.append(version)
+        
+        return versions
+    
+    def validate_postgres_version(self, version: str) -> bool:
+        """Validate if a PostgreSQL version is available for installation.
+        
+        Args:
+            version: Major version to validate (e.g., '15', '16')
+            
+        Returns:
+            bool: True if version is available
+        """
+        if not version or not version.isdigit():
+            return False
+        
+        available_versions = self.get_available_postgres_versions()
+        return version in available_versions
     
     def get_postgres_paths(self) -> Dict[str, List[str]]:
         """Get PostgreSQL paths for the detected OS.
@@ -300,3 +391,85 @@ class SystemUtils:
             return True, backup_path
         else:
             return False, f"Failed to backup {file_path}: {result.get('stderr', 'Unknown error')}"
+    
+    def setup_postgres_repository(self) -> Tuple[bool, str]:
+        """Setup the official PostgreSQL repository.
+        
+        Returns:
+            tuple: (success, message)
+        """
+        os_type = self.detect_os()
+        
+        if os_type == 'debian':
+            self.logger.info("Setting up PostgreSQL official repository for Debian/Ubuntu...")
+            
+            # Install required packages
+            install_deps = self.ssh.execute_command("sudo apt-get update && sudo apt-get install -y wget ca-certificates")
+            if install_deps['exit_code'] != 0:
+                return False, f"Failed to install dependencies: {install_deps.get('stderr', 'Unknown error')}"
+            
+            # Add PostgreSQL signing key
+            key_cmd = "wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -"
+            key_result = self.ssh.execute_command(key_cmd)
+            if key_result['exit_code'] != 0:
+                return False, f"Failed to add PostgreSQL signing key: {key_result.get('stderr', 'Unknown error')}"
+            
+            # Get OS version for repository URL
+            version_result = self.ssh.execute_command("lsb_release -cs")
+            if version_result['exit_code'] != 0:
+                return False, "Failed to detect OS version"
+            
+            os_codename = version_result['stdout'].strip()
+            
+            # Add PostgreSQL repository
+            repo_line = f"deb http://apt.postgresql.org/pub/repos/apt/ {os_codename}-pgdg main"
+            repo_cmd = f"echo '{repo_line}' | sudo tee /etc/apt/sources.list.d/pgdg.list"
+            repo_result = self.ssh.execute_command(repo_cmd)
+            if repo_result['exit_code'] != 0:
+                return False, f"Failed to add PostgreSQL repository: {repo_result.get('stderr', 'Unknown error')}"
+            
+            # Update package list
+            update_result = self.ssh.execute_command("sudo apt-get update")
+            if update_result['exit_code'] != 0:
+                return False, f"Failed to update package list: {update_result.get('stderr', 'Unknown error')}"
+            
+            return True, "PostgreSQL official repository configured successfully"
+        
+        elif os_type == 'rhel':
+            self.logger.info("Setting up PostgreSQL repository for RHEL/CentOS...")
+            
+            # Install PostgreSQL repository RPM
+            repo_cmd = "sudo yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm"
+            repo_result = self.ssh.execute_command(repo_cmd)
+            if repo_result['exit_code'] != 0:
+                return False, f"Failed to install PostgreSQL repository: {repo_result.get('stderr', 'Unknown error')}"
+            
+            return True, "PostgreSQL repository configured successfully"
+        
+        return False, "Unsupported operating system for repository setup"
+    
+    def get_postgres_repository_info(self) -> Tuple[bool, str]:
+        """Get information about PostgreSQL repository configuration.
+        
+        Returns:
+            tuple: (success, info_message)
+        """
+        os_type = self.detect_os()
+        
+        if os_type == 'debian':
+            # Check if PostgreSQL official repository is configured
+            result = self.ssh.execute_command("apt-cache policy postgresql | grep -i 'apt.postgresql.org'")
+            if result['exit_code'] == 0 and result['stdout'].strip():
+                return True, "PostgreSQL official repository is configured"
+            else:
+                return True, "Using distribution's PostgreSQL packages"
+        
+        elif os_type == 'rhel':
+            # Check for PostgreSQL repository
+            result = self.ssh.execute_command("yum repolist | grep -i postgresql")
+            if result['exit_code'] == 0 and result['stdout'].strip():
+                return True, "PostgreSQL repository is configured"
+            else:
+                return True, "Using distribution's PostgreSQL packages"
+        
+        return False, "Unable to determine repository configuration"

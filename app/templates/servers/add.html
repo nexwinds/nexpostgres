@@ -41,11 +41,15 @@
             <div class="mb-3">
                 <label for="postgres_version" class="form-label">PostgreSQL Version</label>
                 <select class="form-control" id="postgres_version" name="postgres_version" required>
-                    <option value="17" selected>PostgreSQL 17 (Latest)</option>
-                    <option value="16">PostgreSQL 16</option>
+                    <option value="17" selected>PostgreSQL 17 (Latest Stable)</option>
+                    <option value="16">PostgreSQL 16 (Current LTS)</option>
                     <option value="15">PostgreSQL 15</option>
                 </select>
-                <div class="form-text">PostgreSQL major version to install (latest patch version will be installed)</div>
+                <div class="form-text">The latest patch version for the selected major version will be automatically installed.</div>
+                <div class="alert alert-info mt-2">
+                    <i class="fas fa-info-circle me-2"></i>
+                    <strong>Recommended:</strong> PostgreSQL 17 for production environments and latest features.
+                </div>
             </div>
             
             <div class="mb-3">

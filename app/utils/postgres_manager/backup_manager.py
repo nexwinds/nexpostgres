@@ -44,9 +44,8 @@ class PostgresBackupManager:
         if not pkg_commands:
             return False, "Unsupported operating system for automatic installation"
         
-        # Get package names
-        pkg_names = self.system_utils.get_postgres_package_names()
-        pgbackrest_pkg = pkg_names.get('pgbackrest', 'pgbackrest')
+        # pgBackRest has a standard package name across distributions
+        pgbackrest_pkg = 'pgbackrest'
         
         # Update package list
         if 'update' in pkg_commands:

@@ -213,104 +213,12 @@ def initialize_progress(id):
 @login_required
 @first_login_required
 def initialize_server(id):
-    server = VpsServer.query.filter_by(id=id).first_or_404()
-    
-    # Get the postgres_version from request if provided
-    # Default to None to install the latest available version in the repository
-    postgres_version = request.form.get('postgres_version', None)
-    
-    # Get the queue key from the request (sent by frontend)
-    queue_key = request.form.get('queue_key')
-    
-    if not queue_key or queue_key not in progress_queues:
-        return jsonify({
-            'success': False,
-            'message': 'No progress stream found. Please refresh and try again.'
-        })
-    
-    def run_initialization():
-        try:
-            progress_queue = progress_queues[queue_key]
-            
-            # Step 1: SSH Connection
-            progress_queue.put({'step': 'ssh_connect', 'message': 'Establishing SSH connection...', 'progress': 20})
-            
-            ssh = SSHManager(
-                host=server.host,
-                port=server.port,
-                username=server.username,
-                ssh_key_content=server.ssh_key_content
-            )
-            
-            if not ssh.connect():
-                progress_queue.put({'step': 'error', 'message': 'Failed to connect to server via SSH', 'progress': 0})
-                progress_queue.put(None)  # End stream
-                return
-            
-            # Step 2: System Check
-            progress_queue.put({'step': 'system_check', 'message': 'Checking system requirements...', 'progress': 30})
-            
-            # Step 3: PostgreSQL Installation
-            version_msg = f'PostgreSQL {postgres_version}' if postgres_version else 'PostgreSQL (latest available)'
-            progress_queue.put({'step': 'postgres_install', 'message': f'Installing {version_msg}...', 'progress': 50})
-            
-            pg_manager = PostgresManager(ssh)
-            
-            # Check if PostgreSQL is already installed
-            if not pg_manager.check_postgres_installed():
-                success, message = pg_manager.install_postgres(postgres_version)
-                if not success:
-                    progress_queue.put({'step': 'error', 'message': f'Failed to install PostgreSQL: {message}', 'progress': 50})
-                    progress_queue.put(None)
-                    ssh.disconnect()
-                    return
-            
-            # Step 4: pgBackRest Installation
-            progress_queue.put({'step': 'pgbackrest_install', 'message': 'Installing pgBackRest...', 'progress': 70})
-            
-            success, message = pg_manager.backup_manager.install_pgbackrest()
-            if not success:
-                progress_queue.put({'step': 'warning', 'message': f'pgBackRest installation warning: {message}', 'progress': 70})
-            
-            # Step 5: PostgreSQL Service Start
-            progress_queue.put({'step': 'postgres_start', 'message': 'Starting PostgreSQL service...', 'progress': 85})
-            
-            success, message = pg_manager.restart_postgres()
-            if not success:
-                progress_queue.put({'step': 'error', 'message': f'Failed to start PostgreSQL: {message}', 'progress': 85})
-                progress_queue.put(None)
-                ssh.disconnect()
-                return
-            
-            # Step 6: Final Configuration
-            progress_queue.put({'step': 'final_config', 'message': 'Completing configuration...', 'progress': 95})
-            
-            # Update server status in database
-            server.initialized = True
-            db.session.commit()
-            
-            # Step 7: Completion
-            progress_queue.put({'step': 'completed', 'message': 'PostgreSQL server initialized successfully!', 'progress': 100})
-            
-            # Disconnect
-            ssh.disconnect()
-            
-        except Exception as e:
-            if queue_key in progress_queues:
-                progress_queues[queue_key].put({'step': 'error', 'message': str(e), 'progress': 0})
-        finally:
-            if queue_key in progress_queues:
-                progress_queues[queue_key].put(None)  # End stream
-    
-    # Start initialization in background thread
-    thread = threading.Thread(target=run_initialization)
-    thread.daemon = True
-    thread.start()
-    
+    """Manual initialization endpoint - now disabled with explicit error."""
     return jsonify({
-        'success': True,
-        'message': 'Initialization started. Check progress stream for updates.'
-    })
+        'success': False,
+        'error': 'INITIALIZATION_DISABLED',
+        'message': 'Manual server initialization has been disabled. Please contact your system administrator for server setup.'
+    }), 403
 
 @servers_bp.route('/status/<int:id>')
 @login_required

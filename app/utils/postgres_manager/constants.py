@@ -109,6 +109,30 @@ host    all             all             ::/0                    md5
         }
     }
     
+    # Supported PostgreSQL versions (major versions) - Only 17, 16, 15 supported
+    SUPPORTED_VERSIONS = {
+        'current_lts': '16',  # Current Long Term Support version
+        'latest_stable': '17',  # Latest stable version
+        'minimum_supported': '15',  # Minimum version we support
+        'recommended': '16'  # Recommended version for new installations
+    }
+    
+    # Version-specific settings - Only versions 17, 16, 15 are supported
+    VERSION_SPECIFIC = {
+        '15': {
+            'eol_date': '2027-11-11',
+            'status': 'supported'
+        },
+        '16': {
+            'eol_date': '2028-11-09',
+            'status': 'lts'
+        },
+        '17': {
+            'eol_date': '2029-11-08',
+            'status': 'latest'
+        }
+    }
+    
     # Error messages
     ERROR_MESSAGES = {
         'postgres_not_installed': 'PostgreSQL is not installed on the server',
