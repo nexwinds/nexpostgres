@@ -109,8 +109,17 @@ class PostgresBackupManager:
             config_content += "\n# S3 Configuration\n"
             config_content += "repo1-type=s3\n"
             config_content += f"repo1-s3-bucket={s3_config.get('bucket', '')}\n"
-            config_content += f"repo1-s3-region={s3_config.get('region', 'us-east-1')}\n"
-            config_content += f"repo1-s3-endpoint={s3_config.get('endpoint', '')}\n"
+            
+            # Handle S3 region and endpoint
+            region = s3_config.get('region', 'us-east-1')
+            config_content += f"repo1-s3-region={region}\n"
+            
+            # Set endpoint - if not provided, use AWS S3 endpoint for the region
+            endpoint = s3_config.get('endpoint', '')
+            if not endpoint:
+                endpoint = f"s3.{region}.amazonaws.com"
+            config_content += f"repo1-s3-endpoint={endpoint}\n"
+            
             config_content += f"repo1-s3-key={s3_config.get('access_key', '')}\n"
             config_content += f"repo1-s3-key-secret={s3_config.get('secret_key', '')}\n"
             config_content += "repo1-s3-verify-tls=n\n"
@@ -215,14 +224,58 @@ class PostgresBackupManager:
         # Specify the config file path explicitly
         config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
         
+        # First, ensure pgBackRest is started (remove any stop files)
+        self.logger.info(f"Starting pgBackRest for stanza: {db_name}")
+        start_result = self.system_utils.execute_as_postgres_user(
+            f"pgbackrest --config={config_file} --stanza={db_name} start"
+        )
+        
+        if start_result['exit_code'] != 0:
+            self.logger.warning(f"Failed to start pgBackRest for stanza {db_name}: {start_result.get('stderr', 'Unknown error')}")
+            # Try to start for all stanzas
+            global_start_result = self.system_utils.execute_as_postgres_user(
+                f"pgbackrest --config={config_file} start"
+            )
+            if global_start_result['exit_code'] != 0:
+                return False, f"Failed to start pgBackRest: {global_start_result.get('stderr', 'Unknown error')}"
+        
+        # Now attempt to create the stanza
         result = self.system_utils.execute_as_postgres_user(
             f"pgbackrest --config={config_file} --stanza={db_name} stanza-create"
         )
         
+        # Log the full result for debugging
+        self.logger.info(f"Stanza creation result - Exit code: {result['exit_code']}, Stdout: {result.get('stdout', '')}, Stderr: {result.get('stderr', '')}")
+        
         if result['exit_code'] == 0:
             return True, f"Stanza {db_name} created successfully"
         else:
-            return False, f"Failed to create stanza {db_name}: {result.get('stderr', 'Unknown error')}"
+            # Capture both stdout and stderr for better error reporting
+            error_msg = result.get('stderr', '').strip()
+            stdout_msg = result.get('stdout', '').strip()
+            
+            # If stderr is empty, use stdout
+            if not error_msg and stdout_msg:
+                error_msg = stdout_msg
+            elif not error_msg and not stdout_msg:
+                error_msg = f"Command failed with exit code {result['exit_code']} but no error message was provided"
+            
+            # Check for common errors and provide helpful messages
+            if "stop file exists" in error_msg:
+                return False, f"Failed to create stanza {db_name}: pgBackRest stop file exists. Try running 'pgbackrest start' first. Error: {error_msg}"
+            elif "unable to find primary cluster" in error_msg:
+                return False, f"Failed to create stanza {db_name}: PostgreSQL cluster not found or not running. Ensure PostgreSQL is running and accessible. Error: {error_msg}"
+            elif "permission denied" in error_msg.lower():
+                return False, f"Failed to create stanza {db_name}: Permission denied. Check file permissions and ownership. Error: {error_msg}"
+            elif "already exists" in error_msg.lower():
+                # Stanza already exists, check if it's valid
+                check_success, check_msg = self.check_stanza(db_name)
+                if check_success:
+                    return True, f"Stanza {db_name} already exists and is valid"
+                else:
+                    return False, f"Stanza {db_name} exists but is invalid: {check_msg}"
+            else:
+                return False, f"Failed to create stanza {db_name}: {error_msg}"
     
     def check_stanza(self, db_name: str) -> Tuple[bool, str]:
         """Check a pgBackRest stanza.
@@ -256,11 +309,14 @@ class PostgresBackupManager:
         """
         self.logger.info("Configuring PostgreSQL for archiving...")
         
+        # Get the config file path
+        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+        
         # Update PostgreSQL settings
         settings = {
             'wal_level': 'replica',
             'archive_mode': 'on',
-            'archive_command': f"'pgbackrest --stanza={db_name} archive-push %p'",
+            'archive_command': f"'pgbackrest --config={config_file} --stanza={db_name} archive-push %p'",
             'max_wal_senders': '3',
             'archive_timeout': '60'
         }
@@ -299,7 +355,25 @@ class PostgresBackupManager:
         if result['exit_code'] == 0:
             return True, f"{backup_type.capitalize()} backup completed successfully"
         else:
-            return False, f"{backup_type.capitalize()} backup failed: {result.get('stderr', 'Unknown error')}"
+            # Get error details from stderr and stdout
+            stderr = result.get('stderr', '').strip()
+            stdout = result.get('stdout', '').strip()
+            exit_code = result.get('exit_code', 'unknown')
+            
+            # Build comprehensive error message
+            error_parts = []
+            if stderr:
+                error_parts.append(f"Error: {stderr}")
+            if stdout:
+                error_parts.append(f"Output: {stdout}")
+            error_parts.append(f"Exit code: {exit_code}")
+            
+            error_message = " | ".join(error_parts) if error_parts else "Unknown error occurred"
+            
+            # Log the full result for debugging
+            self.logger.error(f"Backup command failed. Full result: {result}")
+            
+            return False, f"{backup_type.capitalize()} backup failed: {error_message}"
     
     def _should_force_full_backup(self, db_name: str) -> bool:
         """Check if a full backup should be forced based on policy.

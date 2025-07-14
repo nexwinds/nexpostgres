@@ -9,7 +9,7 @@ itsdangerous==2.1.2
 SQLAlchemy==1.4.41
 
 # SSH and PostgreSQL management
-paramiko==3.3.1
+paramiko==3.4.1
 
 # Web server
 gunicorn==21.2.0

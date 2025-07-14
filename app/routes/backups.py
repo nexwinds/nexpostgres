@@ -54,6 +54,7 @@ def add():
         database_id = request.form.get('database_id', type=int)
         backup_type = request.form.get('backup_type')
         cron_expression = request.form.get('cron_expression')
+        enabled = request.form.get('enabled') == 'true'
         s3_storage_id = request.form.get('s3_storage_id', type=int)
         retention_count = request.form.get('retention_count', type=int, default=7)
         
@@ -78,13 +79,25 @@ def add():
             flash('Retention count must be at least 1', 'danger')
             return render_template('backups/add.html', databases=databases, s3_storages=s3_storages)
         
-        # Create backup job
+        # Validate backup configuration before creating the job (only if enabled)
+        if enabled:
+            try:
+                success, message = _validate_backup_configuration(database, s3_storage)
+                if not success:
+                    flash(f'Backup configuration validation failed: {message}', 'danger')
+                    return render_template('backups/add.html', databases=databases, s3_storages=s3_storages)
+            except Exception as e:
+                flash(f'Backup configuration validation error: {str(e)}', 'danger')
+                return render_template('backups/add.html', databases=databases, s3_storages=s3_storages)
+        
+        # Create backup job only after validation passes
         backup_job = BackupJob(
             name=name,
             database_id=database_id,
             vps_server_id=database.vps_server_id,
             backup_type=backup_type,
             cron_expression=cron_expression,
+            enabled=enabled,
             s3_storage_id=s3_storage_id,
             retention_count=retention_count
         )
@@ -92,37 +105,38 @@ def add():
         db.session.add(backup_job)
         db.session.commit()
         
-        # Verify and setup backup configuration if needed
-        _check_and_configure_backup(database, s3_storage)
-        
-        # Schedule the backup job
-        try:
-            schedule_backup_job(backup_job)
-            flash('Backup job created and scheduled successfully', 'success')
-        except Exception as e:
-            flash(f'Backup job created but scheduling failed: {str(e)}', 'warning')
+        # Schedule the backup job if enabled (configuration already validated)
+        if enabled:
+            try:
+                schedule_backup_job(backup_job)
+                flash('Backup job created and scheduled successfully', 'success')
+            except Exception as e:
+                # If scheduling fails, delete the job to maintain consistency
+                db.session.delete(backup_job)
+                db.session.commit()
+                flash(f'Failed to schedule backup job: {str(e)}', 'danger')
+                return render_template('backups/add.html', databases=databases, s3_storages=s3_storages)
+        else:
+            flash('Backup job created successfully (job is disabled)', 'success')
         
         return redirect(url_for('backups.index'))
     
     return render_template('backups/add.html', databases=databases, s3_storages=s3_storages)
 
-def _check_and_configure_backup(database, s3_storage):
-    """Helper function to check and configure backup if needed"""
+def _validate_backup_configuration(database, s3_storage):
+    """Helper function to validate and configure backup before creating job"""
     try:
         # Connect to server and check backup configuration
         ssh, pg_manager = get_managers(database.server)
         
         if not ssh or not pg_manager:
-            flash('Unable to connect to server to verify backup configuration', 'warning')
-            return
+            return False, 'Unable to connect to server to verify backup configuration'
             
         # Check if configuration is valid
         check_cmd = f"sudo -u postgres pgbackrest --stanza={database.name} check"
         check_result = ssh.execute_command(check_cmd)
         
         if check_result['exit_code'] != 0:
-            flash('Configuring backup system...', 'info')
-            
             # Configure pgBackRest based on storage type
             if s3_storage:
                 s3_config = {
@@ -139,17 +153,23 @@ def _check_and_configure_backup(database, s3_storage):
             # Create backup stanza for the database
             success, message = pg_manager.create_backup_stanza(database.name)
             if not success:
-                flash(f'Failed to create backup stanza: {message}', 'warning')
-                return
+                ssh.disconnect()
+                return False, f'Failed to create backup stanza: {message}'
                 
-            flash('Backup system configured successfully', 'success')
-        else:
-            flash('Backup configuration is valid', 'success')
+            # Verify the stanza was created successfully
+            verify_cmd = f"sudo -u postgres pgbackrest --stanza={database.name} check"
+            verify_result = ssh.execute_command(verify_cmd)
             
+            if verify_result['exit_code'] != 0:
+                ssh.disconnect()
+                return False, f'Backup stanza verification failed: {verify_result["stderr"]}'
+        
         # Clean up
         ssh.disconnect()
+        return True, 'Backup configuration is valid'
+        
     except Exception as e:
-        flash(f'Configuration check failed: {str(e)}', 'warning')
+        return False, f'Configuration validation failed: {str(e)}'
 
 @backups_bp.route('/edit/<int:id>', methods=['GET', 'POST'])
 @login_required
@@ -203,7 +223,14 @@ def edit(id):
 
         # Check configuration if job is enabled
         if enabled:
-            _check_and_configure_backup(database, s3_storage)
+            try:
+                success, message = _validate_backup_configuration(database, s3_storage)
+                if not success:
+                    flash(f'Backup configuration validation failed: {message}', 'danger')
+                    return render_template('backups/edit.html', backup_job=backup_job, databases=databases, s3_storages=s3_storages)
+            except Exception as e:
+                flash(f'Backup configuration validation error: {str(e)}', 'danger')
+                return render_template('backups/edit.html', backup_job=backup_job, databases=databases, s3_storages=s3_storages)
             
             # Reschedule the job
             try:

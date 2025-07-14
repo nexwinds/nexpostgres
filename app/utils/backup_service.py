@@ -226,6 +226,21 @@ class BackupService:
         except Exception as e:
             return False, f'Scheduling failed: {str(e)}'
     
+    def execute_backup(self, backup_job):
+        """Execute backup job.
+        
+        Args:
+            backup_job: BackupJob object to execute
+            
+        Returns:
+            tuple: (success, message)
+        """
+        try:
+            success, message = execute_manual_backup(backup_job.id)
+            return success, message
+        except Exception as e:
+            return False, f'Error executing backup: {str(e)}'
+    
     @staticmethod
     def execute_backup_safe(backup_job_id):
         """Execute backup with error handling.
