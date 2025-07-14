@@ -374,6 +374,24 @@ class UnifiedValidationService:
         return existing_database is not None
     
     @staticmethod
+    def validate_user_exists(username: str, database_id: int) -> bool:
+        """Check if a database user with the given username already exists for the specified database.
+        
+        Args:
+            username: Username to check
+            database_id: ID of the database to check
+            
+        Returns:
+            True if user exists, False otherwise
+        """
+        from app.models.database import PostgresDatabaseUser
+        existing_user = PostgresDatabaseUser.query.filter_by(
+            username=username,
+            database_id=database_id
+        ).first()
+        return existing_user is not None
+    
+    @staticmethod
     def validate_s3_storage_exists(s3_storage_id: Any) -> Tuple[bool, Optional[str], Optional[S3Storage]]:
         """Validate that S3 storage configuration exists.
         
@@ -505,6 +523,23 @@ class UnifiedValidationService:
                 break
         
         return username
+    
+    @staticmethod
+    def generate_password(length: int = 39) -> str:
+        """Generate a random password.
+        
+        Args:
+            length: Length of the password (default: 39)
+            
+        Returns:
+            Generated password string
+        """
+        import secrets
+        import string
+        
+        # Use letters and digits only
+        charset = string.ascii_letters + string.digits
+        return ''.join(secrets.choice(charset) for _ in range(length))
     
     @classmethod
     def validate_backup_form_data(cls, form_data: Dict[str, Any]) -> Tuple[bool, List[str], Dict[str, Any]]:

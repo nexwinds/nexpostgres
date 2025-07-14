@@ -122,34 +122,10 @@ def add_database():
 @databases_bp.route('/databases/<int:database_id>/edit', methods=['GET', 'POST'])
 @login_required
 def edit_database(database_id):
-    """Edit database credentials."""
+    """Edit primary database user (simplified to match secondary user editing)."""
     database = PostgresDatabase.query.join(VpsServer).filter(
         PostgresDatabase.id == database_id
     ).first_or_404()
-    
-    if request.method == 'GET':
-        primary_user = PostgresDatabaseUser.query.filter_by(
-            database_id=database.id, 
-            is_primary=True
-        ).first()
-        
-        current_permission = DatabaseService.get_current_user_permission(
-            database.server, database.name, primary_user.username if primary_user else ''
-        )
-        
-        return render_template('databases/edit.html', 
-                             database=database, 
-                             primary_user=primary_user,
-                             current_permission=current_permission)
-    
-    # POST request - update password
-    new_password = request.form.get('new_password', '').strip()
-    
-    # Validate password
-    password_valid, password_error = UnifiedValidationService.validate_password(new_password)
-    if not password_valid:
-        flash(password_error, 'error')
-        return redirect(url_for('databases.edit_database', database_id=database_id))
     
     primary_user = PostgresDatabaseUser.query.filter_by(
         database_id=database.id, 
@@ -158,14 +134,38 @@ def edit_database(database_id):
     
     if not primary_user:
         flash('Primary user not found', 'error')
+        return redirect(url_for('databases.database_users', database_id=database_id))
+    
+    if request.method == 'GET':
+        current_permission = DatabaseService.get_current_user_permission(
+            database.server, database.name, primary_user.username
+        )
+        return render_template('databases/edit_user.html', 
+                             database=database, 
+                             user=primary_user, 
+                             current_permission=current_permission)
+    
+    # POST request - update permissions and/or regenerate password
+    new_permission = request.form.get('permission_level', '').strip()
+    regenerate_password = request.form.get('regenerate_password') == 'on'
+    
+    # Validate permission level
+    permission_valid, permission_error = UnifiedValidationService.validate_permission_level(new_permission)
+    if not permission_valid:
+        flash(permission_error, 'error')
         return redirect(url_for('databases.edit_database', database_id=database_id))
     
-    # Update password on server
+    # Generate new password if requested
+    new_password = primary_user.password
+    if regenerate_password:
+        new_password = UnifiedValidationService.generate_password()
+    
+    # Update permissions and password on server
     success, message = DatabaseService.execute_with_postgres(
         database.server,
-        'Password update',
-        DatabaseService.update_user_password_operation,
-        primary_user.username, new_password
+        'Primary user update',
+        DatabaseService.create_user_operation,  # This handles permission updates too
+        primary_user.username, new_password, database.name, new_permission
     )
     
     if not success:
@@ -174,14 +174,20 @@ def edit_database(database_id):
     
     # Update in database
     try:
-        primary_user.password = new_password
+        primary_user.permission_level = new_permission
+        if regenerate_password:
+            primary_user.password = new_password
         db.session.commit()
-        flash('Password updated successfully', 'success')
+        
+        if regenerate_password:
+            flash(f'Primary user updated successfully. New password: {new_password}', 'success')
+        else:
+            flash('Primary user permissions updated successfully', 'success')
     except Exception as e:
         db.session.rollback()
-        flash(f'Failed to update password in database: {str(e)}', 'error')
+        flash(f'Failed to update primary user in database: {str(e)}', 'error')
     
-    return redirect(url_for('databases.edit_database', database_id=database_id))
+    return redirect(url_for('databases.database_users', database_id=database_id))
 
 
 @databases_bp.route('/databases/<int:database_id>/users/add', methods=['GET', 'POST'])
@@ -316,8 +322,9 @@ def edit_database_user(database_id, user_id):
                              user=user, 
                              current_permission=current_permission)
     
-    # POST request - update permissions
+    # POST request - update permissions and/or regenerate password
     new_permission = request.form.get('permission_level', '').strip()
+    regenerate_password = request.form.get('regenerate_password') == 'on'
     
     # Validate permission level
     permission_valid, permission_error = UnifiedValidationService.validate_permission_level(new_permission)
@@ -326,12 +333,17 @@ def edit_database_user(database_id, user_id):
         return redirect(url_for('databases.edit_database_user', 
                               database_id=database_id, user_id=user_id))
     
-    # Update permissions on server
+    # Generate new password if requested
+    new_password = user.password
+    if regenerate_password:
+        new_password = UnifiedValidationService.generate_password()
+    
+    # Update permissions and password on server
     success, message = DatabaseService.execute_with_postgres(
         database.server,
-        'Permission update',
+        'User update',
         DatabaseService.create_user_operation,  # This handles permission updates too
-        user.username, user.password, database.name, new_permission
+        user.username, new_password, database.name, new_permission
     )
     
     if not success:
@@ -342,14 +354,19 @@ def edit_database_user(database_id, user_id):
     # Update in database
     try:
         user.permission_level = new_permission
+        if regenerate_password:
+            user.password = new_password
         db.session.commit()
-        flash('Permissions updated successfully', 'success')
+        
+        if regenerate_password:
+            flash(f'User updated successfully. New password: {new_password}', 'success')
+        else:
+            flash('User permissions updated successfully', 'success')
     except Exception as e:
         db.session.rollback()
-        flash(f'Failed to update permissions in database: {str(e)}', 'error')
+        flash(f'Failed to update user in database: {str(e)}', 'error')
     
-    return redirect(url_for('databases.edit_database_user', 
-                          database_id=database_id, user_id=user_id))
+    return redirect(url_for('databases.database_users', database_id=database_id))
 
 
 @databases_bp.route('/databases/<int:database_id>/users/<int:user_id>/delete', methods=['POST'])

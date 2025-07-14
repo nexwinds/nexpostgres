@@ -96,6 +96,19 @@ body {
 [data-theme="dark"] .modal-content {
     background-color: var(--card-bg);
     color: var(--text-color);
+    border-color: #495057;
+}
+
+[data-theme="dark"] .modal-header {
+    border-bottom-color: #495057;
+}
+
+[data-theme="dark"] .modal-footer {
+    border-top-color: #495057;
+}
+
+[data-theme="dark"] .btn-close {
+    filter: invert(1) grayscale(100%) brightness(200%);
 }
 
 /* Form styling */
@@ -140,4 +153,75 @@ body {
     0% { opacity: 1; }
     50% { opacity: 0.5; }
     100% { opacity: 1; }
+}
+
+/* Modal styling improvements */
+.modal-content {
+    border-radius: 0.5rem;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+.modal-header {
+    border-bottom: 1px solid #dee2e6;
+    padding: 1rem 1.5rem;
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+.modal-footer {
+    border-top: 1px solid #dee2e6;
+    padding: 1rem 1.5rem;
+}
+
+.modal-title {
+    font-weight: 600;
+    font-size: 1.25rem;
+}
+
+/* Ensure proper spacing for inline forms in modals */
+.modal-footer form.d-inline {
+    margin: 0;
+}
+
+.modal-footer .btn {
+    min-width: 80px;
+}
+
+/* Modal body content styling */
+.modal-body .alert {
+    margin-bottom: 0;
+    margin-top: 1rem;
+}
+
+.modal-body .alert:first-child {
+    margin-top: 0;
+}
+
+.modal-body strong {
+    font-weight: 600;
+}
+
+.modal-body .fas {
+    margin-right: 0.25rem;
+}
+
+/* Dark theme modal adjustments */
+[data-theme="dark"] .modal-content {
+    background-color: var(--card-bg);
+    color: var(--text-color);
+    border-color: #495057;
+}
+
+[data-theme="dark"] .modal-header {
+    border-bottom-color: #495057;
+}
+
+[data-theme="dark"] .modal-footer {
+    border-top-color: #495057;
+}
+
+[data-theme="dark"] .btn-close {
+    filter: invert(1) grayscale(100%) brightness(200%);
 }

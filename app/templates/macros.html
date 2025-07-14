@@ -197,7 +197,7 @@
 </nav>
 {% endmacro %}
 
-{% macro confirmation_modal(modal_id, title, message, confirm_text="Confirm", cancel_text="Cancel") %}
+{% macro confirmation_modal(modal_id, title, message, action_url=None, confirm_text="Confirm", cancel_text="Cancel") %}
 <div class="modal fade" id="{{ modal_id }}" tabindex="-1" aria-labelledby="{{ modal_id }}Label" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -210,7 +210,13 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ cancel_text }}</button>
+                {% if action_url %}
+                <form action="{{ action_url }}" method="post" class="d-inline">
+                    <button type="submit" class="btn btn-danger">{{ confirm_text }}</button>
+                </form>
+                {% else %}
                 <button type="button" class="btn btn-danger" id="{{ modal_id }}Confirm">{{ confirm_text }}</button>
+                {% endif %}
             </div>
         </div>
     </div>
