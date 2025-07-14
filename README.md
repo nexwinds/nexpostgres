@@ -1,299 +1,605 @@
 # NEXPOSTGRES - PostgreSQL Remote Management Platform
 
-NEXPOSTGRES is a hassle-free PostgreSQL database management solution for managing PostgreSQL databases running on remote Ubuntu VPS servers over SSH. It automates backup procedures using pgBackRest, allowing you to schedule and monitor backups, as well as perform restores when needed.
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Flask](https://img.shields.io/badge/flask-2.3.3-green.svg)](https://flask.palletsprojects.com/)
+[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 
-## Key Benefits
+NEXPOSTGRES is a comprehensive, web-based PostgreSQL database management platform for managing PostgreSQL databases on remote Ubuntu VPS servers over SSH. It provides enterprise-grade backup automation using pgBackRest with scheduling, monitoring, and point-in-time recovery.
 
-- **Easy Setup & Maintenance** - Get started in minutes with our Docker-based deployment
-- **Highly Scalable** - Manage multiple servers and databases from a single dashboard
-- **Incremental Backups** - Save storage space and bandwidth with efficient backup strategies
-- **Lightweight Components** - Minimal resource consumption on your production servers
+## 🚀 Key Benefits
 
-![NEXPOSTGRES Dashboard](https://via.placeholder.com/800x400?text=NEXPOSTGRES+Dashboard)
+- **🐳 Easy Setup** - Docker-based deployment in minutes
+- **📈 Scalable** - Manage multiple servers and databases from unified dashboard
+- **💾 Intelligent Backups** - Automated full, incremental, and differential strategies
+- **🔒 Enterprise Security** - AES-256-CBC encryption, SSH key authentication
+- **⚡ Lightweight** - Minimal resource consumption on production servers
+- **🔄 Point-in-Time Recovery** - Restore to any point in time with pgBackRest
 
-*NEXPOSTGRES is a free and open-source solution from [Nexwinds.com](https://nexwinds.com/nexpostgres)*
+## ✨ Features
 
-## Features
+### 🔐 Authentication & Security
+- Secure admin authentication with configurable timeout
+- SSH key management and encrypted credential storage
+- Enforced security policies and mandatory password changes
 
-- **Authentication System**
-  - Secure admin user login with session management
-  - Enforced password change on first login
-  - Session timeout protection
+### 🖥️ VPS Server Management
+- Multi-server support for unlimited Ubuntu VPS servers
+- Automated PostgreSQL and pgBackRest installation
+- Support for PostgreSQL versions 15, 16, and 17
+- Real-time health monitoring and SSH connection testing
 
-- **VPS Server Management**
-  - Add, edit, and delete remote Ubuntu VPS servers with SSH access
-  - Automatic server initialization with PostgreSQL and pgBackRest installation
-  - PostgreSQL version selection (17, 16, 15) with automatic latest patch installation
-  - Server health monitoring and status checks
-  - PostgreSQL port configuration at the server level
+### 🗄️ Database Management
+- Multi-database support across servers
+- Connection testing and user management
+- Import/export functionality with progress tracking
+- Encrypted storage of database credentials
 
-- **Database Management**
-  - Track and manage PostgreSQL databases across multiple VPS servers
-  - Credential management with encryption
-  - Database connection testing
+### 💾 Advanced Backup Management
+- Full, incremental, and differential backup strategies
+- Cron-based scheduling with visual expression builder
+- Amazon S3 integration with encryption at rest
+- Configurable retention policies with automatic cleanup
+- LZ4 compression and AES-256-CBC encryption
 
-- **Automated Backup Management**
-  - Configure and schedule full and incremental backups
-  - Setup Amazon S3 backup storage with secure credential handling
-  - Automatically install and configure pgBackRest on remote servers
-  - Flexible scheduling using cron expressions
+### 🔄 Restore Capabilities
+- Point-in-Time Recovery (PITR) to any timestamp
+- Flexible restore options (original location or new database)
+- Non-destructive restores with comprehensive logging
+- Real-time progress monitoring
 
-- **Restore Capabilities**
-  - Restore databases from any available backup point
-  - Point-in-time recovery (PITR) support
-  - Non-destructive restore options (to alternate locations)
+### 📊 Monitoring & Logging
+- Unified dashboard with real-time status
+- Comprehensive logging for all operations
+- Health checks and alert system
+- Historical data with searchable logs
 
-- **Monitoring Dashboard**
-  - Real-time backup job status
-  - Comprehensive backup history logs
-  - Server resource utilization monitoring
+## 📋 Requirements
 
-## Requirements
+### Host System
+- **OS**: Linux, macOS, or Windows with Docker support
+- **Docker**: Version 20.10+ with Docker Compose v2.0+
+- **Memory**: 512MB RAM minimum (1GB+ recommended)
+- **Storage**: 1GB+ free space
+- **Network**: Internet access for Docker and S3 connectivity
 
-- Docker and Docker Compose for hosting the application
-- Remote Ubuntu VPS servers with:
-  - SSH access using key authentication
-  - Sudo privileges
-  - Compatible with PostgreSQL (v17+) and pgBackRest
-- Amazon S3 bucket for backup storage with:
-  - Proper IAM credentials (access key and secret)
-  - Appropriate bucket permissions configured
+### Remote VPS Servers
+- **OS**: Ubuntu 18.04+ (20.04 LTS or 22.04 LTS recommended)
+- **Architecture**: x86_64 (AMD64)
+- **Memory**: 1GB RAM minimum (2GB+ recommended)
+- **Network**: SSH access and internet connectivity
+- **User**: SSH key-based authentication with sudo privileges
 
-## Installation
+### Amazon S3 Storage
+- Dedicated S3 bucket for backup storage
+- IAM credentials with required permissions:
+  - `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`
+  - `s3:ListBucket`, `s3:GetBucketLocation`
+- Versioning enabled (recommended)
 
-1. Clone this repository:
+### PostgreSQL Compatibility
+- **Versions**: PostgreSQL 15.x, 16.x, 17.x
+- **pgBackRest**: Automatically installed (version 2.40+)
+- **Extensions**: None required (base installation sufficient)
+
+## 🚀 Installation
+
+### Quick Start with Docker (Recommended)
+
+1. **Clone and setup:**
    ```bash
    git clone https://github.com/nexwinds/nexpostgres.git
    cd nexpostgres
-   ```
-
-2. Create necessary directories:
-   ```bash
    mkdir -p data app/ssh_keys app/flask_session
+   chmod 700 app/ssh_keys
    ```
 
-3. Configure the application:
-   ```bash
-   # Edit docker-compose.yml to set environment variables
-   nano docker-compose.yml
-   
-   # Important: Set a secure SECRET_KEY and other configuration options
+2. **Configure environment (edit docker-compose.yml):**
+   ```yaml
+   environment:
+     - SECRET_KEY=your-secure-random-256-bit-key-here  # CHANGE THIS!
+     - LOG_LEVEL=INFO
+     - SESSION_LIFETIME_HOURS=24
+     - DEFAULT_POSTGRES_PORT=5432
+     - SCHEDULER_TIMEZONE=UTC
    ```
 
-4. Build and start the application:
+3. **Start application:**
    ```bash
    docker-compose up -d
    ```
 
-5. Access the web interface at http://localhost:5000
-   - Default login: `admin` / `admin`
-   - You'll be prompted to change the password on first login
+4. **Access interface:**
+   - URL: http://localhost:5000
+   - Default credentials: `admin` / `admin`
+   - **Change password on first login**
 
 ### Local Development Setup
 
-For local development without Docker:
+```bash
+# Prerequisites: Python 3.9+
+git clone https://github.com/nexwinds/nexpostgres.git
+cd nexpostgres
 
-1. Clone this repository:
+# Setup virtual environment
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+# Create directories
+mkdir -p app/ssh_keys app/flask_session data
+chmod 700 app/ssh_keys
+
+# Set environment variables
+export SECRET_KEY="your-development-secret-key"
+export FLASK_DEBUG=1
+
+# Run application
+python3 run.py
+```
+
+### Production Deployment
+
+1. **Security hardening:**
    ```bash
-   git clone https://github.com/nexwinds/nexpostgres.git
-   cd nexpostgres
+   # Generate secure secret key
+   python3 -c "import secrets; print(secrets.token_hex(32))"
+   # Update docker-compose.yml with generated key
    ```
 
-2. Install Python dependencies:
-   ```bash
-   pip3 install -r requirements.txt
+2. **Reverse proxy (Nginx example):**
+   ```nginx
+   server {
+       listen 80;
+       server_name your-domain.com;
+       location / {
+           proxy_pass http://localhost:5000;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+       }
+   }
    ```
 
-3. Run the Flask application:
+3. **SSL/TLS:**
    ```bash
-   python3 -m flask run
+   sudo apt install certbot python3-certbot-nginx
+   sudo certbot --nginx -d your-domain.com
    ```
 
-4. Access the web interface at http://127.0.0.1:5000
-   - Default login: `admin` / `admin`
-   - You'll be prompted to change the password on first login
-
-## Configuration
+## ⚙️ Configuration
 
 ### Environment Variables
 
-Key environment variables in `docker-compose.yml`:
-
 ```yaml
 environment:
-  - SECRET_KEY=your_secure_random_string
-  - DEBUG=False
-  - ALLOWED_HOSTS=localhost,127.0.0.1
-  - DB_PATH=/app/data/nexpostgres.db
+  # Security Settings
+  - SECRET_KEY=your_secure_random_256_bit_key          # REQUIRED
+  - SESSION_COOKIE_SECURE=0                           # Set to 1 for HTTPS
+  - SESSION_LIFETIME_HOURS=24
+  
+  # Application Settings
+  - FLASK_DEBUG=0                                     # Set to 1 for development
+  - LOG_LEVEL=INFO                                    # DEBUG, INFO, WARNING, ERROR
+  - DATABASE_URI=sqlite:///nexpostgres.sqlite
+  
+  # Default Values
+  - DEFAULT_SSH_PORT=22
+  - DEFAULT_POSTGRES_PORT=5432
+  - DEFAULT_BACKUP_RETENTION_COUNT=7
+  
+  # Scheduler Settings
+  - SCHEDULER_TIMEZONE=UTC
 ```
 
 ### Persistent Storage
 
-The application uses volumes to persist data:
-
 ```yaml
 volumes:
-  - ./data:/app/data
-  - ./app/ssh_keys:/app/ssh_keys
-  - ./app/flask_session:/app/flask_session
+  - ./data:/app/data                    # Application database and logs
+  - ./app/ssh_keys:/app/app/ssh_keys    # SSH private keys (secure)
+  - ./app/flask_session:/app/app/flask_session  # Session data
 ```
 
-## Usage
+### Security Configuration
+
+```bash
+# SSH key security
+chmod 700 app/ssh_keys
+chmod 600 app/ssh_keys/*.pem
+
+# Network security
+# Configure SESSION_COOKIE_SECURE=1 for HTTPS
+# Use strong SECRET_KEY (256-bit recommended)
+```
+
+## 📖 Usage Guide
 
 ### Adding a VPS Server
 
-1. Navigate to "VPS Servers" and click "Add Server"
-2. Enter server details:
-   - Hostname (IP or domain)
-   - SSH port (default: 22)
-   - Username with sudo privileges
-   - PostgreSQL port to use
-   - PostgreSQL version (17, 16, or 15 - defaults to 17)
-3. Provide SSH key authentication:
-   - Paste key content
-   - Note: Password-based authentication is not supported
-4. Test the connection before saving
-5. The server will be automatically initialized with:
-   - PostgreSQL installation/configuration (selected version)
-   - pgBackRest setup
-   - Required system dependencies
+1. **Navigate to "VPS Servers" → "Add Server"**
 
-**Note:** The PostgreSQL version is queried directly from the server after installation to ensure consistency between the recorded version and the actual installed version.
+2. **Enter server details:**
+   ```
+   Server Name: My Production Server
+   Hostname/IP: 192.168.1.100
+   SSH Port: 22
+   Username: ubuntu
+   PostgreSQL Port: 5432
+   PostgreSQL Version: 17
+   ```
+
+3. **Configure SSH authentication:**
+   ```bash
+   # Generate SSH key pair
+   ssh-keygen -t ed25519 -C "nexpostgres@yourhost"
+   
+   # Add public key to server
+   ssh-copy-id -i ~/.ssh/id_ed25519.pub ubuntu@your-server-ip
+   
+   # Paste private key content in NEXPOSTGRES form
+   ```
+
+4. **Test connection and initialize**
+   - Click "Test Connection" to verify SSH access
+   - NEXPOSTGRES will automatically install PostgreSQL and pgBackRest
 
 ### Managing PostgreSQL Databases
 
-1. Go to "Databases" and click "Add Database"
-2. Select the VPS server where the database is hosted
-3. Enter database details:
-   - Database name
-   - Username and password
-4. Test the connection before saving
-5. View all databases organized by server from the main Databases page
+1. **Add database:**
+   - Navigate to "Databases" → "Add Database"
+   - Select target VPS server
+   - Enter database name, username, and password
+
+2. **Test connection:**
+   - Click "Test Connection" to verify credentials
+   - Database passwords are encrypted before storage
 
 ### Configuring Backup Jobs
 
-1. Navigate to "Backups" → "Backup Jobs" and click "Add Backup Job"
-2. Select the database to back up
-3. Configure backup settings:
-   - Backup type (full/incremental/differential)
-   - Schedule using cron expression (e.g., `0 2 * * *` for daily at 2 AM)
-   - Retention policy (how many backups to keep)
-4. Configure S3 storage:
-   - Bucket name
-   - Access key and secret
-   - Region
-5. Save the backup job, which will automatically:
-   - Create pgBackRest configuration on the server
-   - Schedule the backup job in the system
-   - Perform an initial test backup
+#### Step 1: Setup S3 Storage
+1. Navigate to "S3 Storage" → "Add S3 Storage"
+2. Configure S3 settings:
+   ```
+   Configuration Name: Production S3 Backup
+   Bucket Name: my-postgres-backups
+   Region: us-east-1
+   Access Key ID: AKIA...
+   Secret Access Key: your-secret-key
+   ```
+
+#### Step 2: Create Backup Job
+1. Navigate to "Backups" → "Backup Jobs" → "Add Backup Job"
+2. Select database and configure:
+   ```
+   Job Name: MyApp Production Daily Backup
+   Backup Type: full
+   S3 Storage: Production S3 Backup
+   Retention Count: 7
+   Schedule: 0 2 * * *  (Daily at 2:00 AM)
+   ```
+
+**Note:** Each database can have only ONE backup job (one-to-one relationship)
 
 ### Restoring a Database
 
-1. Go to "Backups" → "Restore Database"
-2. Select the database to restore
-3. Choose a restore method:
-   - Latest backup
-   - Specific backup point by date/time
-   - Point-in-time recovery (specify exact timestamp)
-4. Select restore options:
-   - Restore to original database (overwrites existing data)
-   - Restore to a new database (specify name)
-5. Confirm and execute the restore operation
-6. Monitor restore progress and view logs
+1. **Navigate to "Backups" → "Restore Database"**
 
-## Monitoring
+2. **Choose restore method:**
+   - **Latest Backup**: Most recent successful backup
+   - **Specific Backup**: Select from available timestamps
+   - **Point-in-Time Recovery**: Specify exact timestamp
 
-### Dashboard
+3. **Configure restore target:**
+   - **Original Database**: ⚠️ Overwrites existing data
+   - **New Database**: ✅ Safe option, creates new database
 
-The dashboard provides:
-- Server status overview with health indicators
-- Recent backup job status
-- Failed job alerts
-- Storage utilization metrics
+4. **Execute and verify:**
+   - Review summary and start restore
+   - Monitor real-time progress
+   - Verify data integrity post-restore
 
-### Logs
+## 📊 Monitoring
 
-Access detailed logs for:
-- Backup job execution
-- Restore operations
-- Server initialization processes
-- System errors and warnings
+### Dashboard Overview
+- 🟢 Server health indicators (online/offline status)
+- 📊 PostgreSQL service status and disk utilization
+- ✅ Recent backup job status and failures
+- ⏱️ Currently running operations
+- 🚨 Critical alerts and warnings
 
-## Troubleshooting
+### Logging
+- **Backup logs**: Detailed operation logs with compression ratios
+- **Restore logs**: PITR and restore operation tracking
+- **System logs**: SSH connections, configuration changes, security events
+- **Log management**: Searchable interface with filtering and export
 
-### Common Issues
+## 🔧 Troubleshooting
 
-1. **SSH Connection Failures**
-   - Verify SSH key permissions (should be 600)
-   - Check that the server's SSH service is running
-   - Ensure the user has sudo privileges
+### SSH Connection Issues
 
-2. **PostgreSQL Errors**
-   - Verify PostgreSQL is properly installed and running
-   - Check database user permissions
-   - Ensure the specified port is open in the server firewall
+**"SSH Connection Failed":**
+```bash
+# Check SSH key permissions
+chmod 600 app/ssh_keys/*.pem
 
-3. **Backup Failures**
-   - Check S3 credentials and permissions
-   - Verify sufficient disk space on the server
-   - Review pgBackRest configuration
+# Test SSH manually
+ssh -i app/ssh_keys/server_key.pem ubuntu@your-server-ip
+```
 
-### Getting Help
+**"Permission Denied (publickey)":**
+- Ensure public key is in `~/.ssh/authorized_keys` on remote server
+- Verify username and SSH key authentication is enabled
 
-For additional assistance:
-- Check the application logs in the Docker container
-- Run diagnostic tests from the server management page
-- Visit our [GitHub issues page](https://github.com/nexwinds/nexpostgres/issues)
+### PostgreSQL Issues
 
-## Architecture
+**"Database Connection Failed":**
+```sql
+-- Check database and user permissions
+\l
+\du
+GRANT ALL PRIVILEGES ON DATABASE mydb TO myuser;
+```
 
-- **Flask Web Application**: Provides the web interface and API endpoints
-- **SQLite Database**: Stores configuration data, server info, and backup logs
-- **Paramiko SSH Client**: Manages secure connections to remote servers
-- **pgBackRest**: Handles the actual backup/restore operations on remote servers
-- **APScheduler**: Manages scheduled backup jobs
-- **Docker Container**: Provides isolated, reproducible environment
+**"PostgreSQL Service Not Running":**
+```bash
+sudo systemctl status postgresql
+sudo systemctl start postgresql
+```
 
-## Security Best Practices
+### Backup Issues
 
-- Change the default admin password immediately after first login
-- Use strong SSH keys (ED25519 or RSA 4096+) for VPS server authentication
-- Set a secure random `SECRET_KEY` in the Docker environment variables
-- Ensure S3 credentials follow the principle of least privilege
-- Consider placing the application behind a reverse proxy with HTTPS
-- Regularly update the application and underlying Docker images
-- Implement network-level security (firewall rules, VPN, etc.)
+**"Backup Job Failed":**
+```bash
+# Check pgBackRest configuration
+sudo -u postgres pgbackrest --stanza=mydb check
 
-## Upgrading
+# View logs
+sudo tail -f /var/log/pgbackrest/pgbackrest.log
+```
 
-To upgrade to a newer version:
+**"S3 Access Denied":**
+- Verify S3 credentials and bucket permissions
+- Check bucket region specification
+- Test with AWS CLI: `aws s3 ls s3://your-bucket-name`
 
-1. Pull the latest code:
-   ```bash
-   git pull origin main
-   ```
+### Docker Issues
 
-2. Rebuild and restart containers:
-   ```bash
-   docker-compose down
-   docker-compose build
-   docker-compose up -d
-   ```
+**"Container Won't Start":**
+```bash
+# Check logs and rebuild
+docker-compose logs nexpostgres
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+```
 
-## Contributing
+## 🏗️ Architecture
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+### System Components
 
+```
+┌─────────────────────────────────────────┐
+│              NEXPOSTGRES                │
+│           (Docker Container)            │
+├─────────────────────────────────────────┤
+│ Web Interface │ API │ Authentication    │
+│ SSH Manager   │ DB  │ Backup Service    │
+│ Scheduler     │ Log │ File Manager      │
+│ SQLite DB     │ Session Store           │
+└─────────────────────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────┐
+│ Remote VPS │ Amazon S3 │ PostgreSQL     │
+│ Servers    │ Storage   │ Databases      │
+└─────────────────────────────────────────┘
+```
+
+### Core Components
+- **Web Interface**: Flask application with responsive design
+- **SSH Manager**: Secure connections using Paramiko with key-based auth
+- **Database Manager**: PostgreSQL operations and connection management
+- **Backup Service**: pgBackRest integration with S3 storage
+- **Scheduler**: APScheduler for cron-like job scheduling
+- **Security**: AES-256-CBC encryption and secure credential storage
+
+### Data Flow
+1. User Interaction → Web Interface → Authentication
+2. Server Management → SSH Manager → Remote VPS
+3. Database Operations → PostgreSQL Manager → Database
+4. Backup Jobs → Scheduler → pgBackRest → S3 Storage
+5. Monitoring → Log Manager → Dashboard Updates
+
+## 🔒 Security Best Practices
+
+### Authentication & Access
+- Change default credentials immediately
+- Use strong passwords (12+ characters)
+- Configure appropriate session timeouts
+- Generate strong SSH keys (4096-bit RSA or Ed25519)
+
+### Network Security
+```bash
+# Firewall configuration
+sudo ufw allow from YOUR_IP to any port 5432  # PostgreSQL
+sudo ufw allow from TRUSTED_IPS to any port 5000  # NEXPOSTGRES
+```
+
+### Database Security
+```sql
+-- Create dedicated backup user
+CREATE USER backup_user WITH PASSWORD 'strong_password';
+GRANT CONNECT ON DATABASE mydb TO backup_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO backup_user;
+```
+
+### S3 Security
+- Use IAM user with minimal required permissions
+- Enable server-side encryption
+- Configure bucket policies for restricted access
+
+### Container Security
+```yaml
+# docker-compose.yml security
+security_opt:
+  - no-new-privileges:true
+user: "1000:1000"  # Non-root user
+cap_drop:
+  - ALL
+```
+
+## 🔄 Upgrading
+
+### Pre-Upgrade Backup
+```bash
+# Stop application and backup
+docker-compose down
+BACKUP_DIR="nexpostgres_backup_$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$BACKUP_DIR"
+cp -r data/ app/ssh_keys/ app/flask_session/ docker-compose.yml "$BACKUP_DIR/"
+```
+
+### Upgrade Methods
+
+**Git-based (Recommended):**
+```bash
+git pull origin main
+docker-compose build --no-cache
+docker-compose up -d
+```
+
+**Docker Image:**
+```bash
+docker-compose pull
+docker-compose up -d
+```
+
+### Post-Upgrade Verification
+```bash
+# Check container status
+docker-compose ps
+
+# Verify application health
+curl -f http://localhost:5000/health
+
+# Check logs for errors
+docker-compose logs nexpostgres --since=5m | grep -i error
+```
+
+### Rollback Procedure
+```bash
+# If upgrade fails
+docker-compose down
+cp -r "$BACKUP_DIR"/* .
+docker-compose up -d
+```
+
+## 🤝 Contributing
+
+### Quick Start
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Clone your fork locally
+3. Set up development environment
+4. Make your changes
+5. Submit a pull request
 
-## License
+### Development Setup
+```bash
+git clone https://github.com/YOUR_USERNAME/nexpostgres.git
+cd nexpostgres
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+pre-commit install
+```
 
-This project is licensed under the [GPLv3 License](LICENSE)
+### Contribution Guidelines
+- Follow existing code style
+- Add tests for new functionality
+- Update documentation as needed
+- Use conventional commit messages:
+  - `feat:` New feature
+  - `fix:` Bug fix
+  - `docs:` Documentation changes
 
-## Contact
+### Testing
+```bash
+# Run tests
+python -m pytest tests/
 
-Project Link: [https://github.com/nexwinds/nexpostgres](https://github.com/yourusername/nexpostgres)
+# Run with coverage
+pytest --cov=app tests/
+
+# Run linting
+flake8 app/
+black app/
+```
+
+## 📄 License
+
+NEXPOSTGRES is licensed under the **GPLv3 License**.
+
+### License Summary
+✅ Commercial use, modification, distribution, private use  
+❌ No warranty or liability  
+📋 **Requirements**: Include license, state changes, disclose source, same license for derivatives
+
+### Third-Party Dependencies
+- **Flask** (BSD-3-Clause) - Web framework
+- **PostgreSQL** (PostgreSQL License) - Database system
+- **pgBackRest** (MIT) - Backup solution
+- **Docker** (Apache 2.0) - Containerization
+
+---
+
+## 🌟 NEXPOSTGRES
+
+<div align="center">
+
+**Professional PostgreSQL Backup Management Solution**
+
+*Simplifying enterprise database backup and recovery*
+
+[![GitHub stars](https://img.shields.io/github/stars/nexwinds/nexpostgres?style=social)](https://github.com/nexwinds/nexpostgres/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/nexwinds/nexpostgres?style=social)](https://github.com/nexwinds/nexpostgres/network/members)
+
+**[🌐 Website](https://nexpostgres.com)** • 
+**[📖 Documentation](https://docs.nexpostgres.com)** • 
+**[💬 Community](https://github.com/nexwinds/nexpostgres/discussions)** • 
+**[🐛 Issues](https://github.com/nexwinds/nexpostgres/issues)**
+
+</div>
+
+### 🏢 Enterprise Support
+
+Need enterprise-grade support or custom features?
+
+- 🎯 **Priority Support** - 24/7 technical assistance
+- 🔧 **Custom Development** - Tailored features
+- 🎓 **Training & Consulting** - Expert guidance
+- 🛡️ **Security Audits** - Comprehensive assessments
+
+**Contact:** [enterprise@nexpostgres.com](mailto:enterprise@nexpostgres.com)
+
+### 🤝 Community
+
+- 💬 **[GitHub Discussions](https://github.com/nexwinds/nexpostgres/discussions)** - Questions and ideas
+- 🐛 **[Issue Tracker](https://github.com/nexwinds/nexpostgres/issues)** - Bug reports and features
+- 📧 **[Mailing List](https://groups.google.com/g/nexpostgres)** - Announcements
+
+### 📞 Contact
+
+- 📧 **General:** [info@nexpostgres.com](mailto:info@nexpostgres.com)
+- 🛠️ **Support:** [support@nexpostgres.com](mailto:support@nexpostgres.com)
+- 🔒 **Security:** [security@nexpostgres.com](mailto:security@nexpostgres.com)
+
+---
+
+<div align="center">
+
+**Made with ❤️ by the NEXPOSTGRES Team**
+
+**© 2024 NEXPOSTGRES. All rights reserved.**
+
+</div>
