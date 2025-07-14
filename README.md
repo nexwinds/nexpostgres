@@ -382,7 +382,7 @@ docker-compose up -d
                     │
                     ▼
 ┌─────────────────────────────────────────┐
-│ Remote VPS │ Amazon S3 │ PostgreSQL     │
+│ Remote VPS │ AWS S3    │ PostgreSQL     │
 │ Servers    │ Storage   │ Databases      │
 └─────────────────────────────────────────┘
 ```
@@ -406,9 +406,14 @@ docker-compose up -d
 
 ### Authentication & Access
 - Change default credentials immediately
-- Use strong passwords (14+ characters)
+- Use strong passwords (16+ characters)
+- Use Cloudflare Zero Trust for enhanced security
+
+### Network Security
+- Limit SSH access to trusted IPs
+- Use HTTPs for secure connections
 - Configure appropriate session timeouts
-- Generate strong SSH keys (4096-bit RSA or Ed25519)
+- Generate strong SSH keys (recommended Ed25519)
 
 ### Network Security
 ```bash
@@ -429,16 +434,6 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO backup_user;
 - Use IAM user with minimal required permissions
 - Enable server-side encryption
 - Configure bucket policies for restricted access
-
-### Container Security
-```yaml
-# docker-compose.yml security
-security_opt:
-  - no-new-privileges:true
-user: "1000:1000"  # Non-root user
-cap_drop:
-  - ALL
-```
 
 ## 🔄 Upgrading
 
@@ -572,19 +567,18 @@ Need enterprise-grade support or custom features?
 - 🎓 **Training & Consulting** - Expert guidance
 - 🛡️ **Security Audits** - Comprehensive assessments
 
-**Contact:** [enterprise@nexpostgres.com](mailto:enterprise@nexpostgres.com)
+**Contact:** [enterprise@nexwinds.com](mailto:enterprise@nexwinds.com)
 
 ### 🤝 Community
 
 - 💬 **[GitHub Discussions](https://github.com/nexwinds/nexpostgres/discussions)** - Questions and ideas
 - 🐛 **[Issue Tracker](https://github.com/nexwinds/nexpostgres/issues)** - Bug reports and features
-- 📧 **[Mailing List](https://groups.google.com/g/nexpostgres)** - Announcements
 
 ### 📞 Contact
 
-- 📧 **General:** [info@nexpostgres.com](mailto:info@nexpostgres.com)
-- 🛠️ **Support:** [support@nexpostgres.com](mailto:support@nexpostgres.com)
-- 🔒 **Security:** [security@nexpostgres.com](mailto:security@nexpostgres.com)
+- 📧 **General:** [info@nexwinds.com](mailto:info@nexwinds.com)
+- 🛠️ **Support:** [support@nexwinds.com](mailto:support@nexwinds.com)
+- 🔒 **Security:** [security@nexwinds.com](mailto:security@nexwinds.com)
 
 ---
 
@@ -592,6 +586,6 @@ Need enterprise-grade support or custom features?
 
 **Made with ❤️ by the NEXPOSTGRES Team**
 
-**© 2024 NEXPOSTGRES. All rights reserved.**
+**© 2025 NEXPOSTGRES by NEXWINDS. All rights reserved.**
 
 </div>
