@@ -24,7 +24,10 @@ def add_backup():
         
         if not is_valid:
             UnifiedValidationService.flash_validation_errors(errors)
-            databases = PostgresDatabase.query.all()
+            # Only show databases without backup jobs
+            databases = PostgresDatabase.query.filter(~PostgresDatabase.id.in_(
+                db.session.query(BackupJob.database_id).distinct()
+            )).all()
             s3_storages = S3Storage.query.all()
             return render_template('backups/add.html', 
                                  databases=databases, 
@@ -71,7 +74,10 @@ def add_backup():
         else:
             flash(message, 'danger')
     
-    databases = PostgresDatabase.query.all()
+    # Only show databases without backup jobs for new backup creation
+    databases = PostgresDatabase.query.filter(~PostgresDatabase.id.in_(
+        db.session.query(BackupJob.database_id).distinct()
+    )).all()
     s3_storages = S3Storage.query.all()
     return render_template('backups/add.html', 
                          databases=databases, 
@@ -88,12 +94,24 @@ def edit_backup(backup_job_id):
         return redirect(url_for('backups.backups'))
     
     if request.method == 'POST':
+        # Add backup job ID to form data for validation
+        form_data = dict(request.form)
+        form_data['backup_job_id'] = backup_job_id
+        
         # Validate form data
-        is_valid, errors, validated_data = UnifiedValidationService.validate_backup_form_data(request.form)
+        is_valid, errors, validated_data = UnifiedValidationService.validate_backup_form_data(form_data)
         
         if not is_valid:
             UnifiedValidationService.flash_validation_errors(errors)
-            databases = PostgresDatabase.query.all()
+            # For editing: show current database + databases without backup jobs
+            databases_without_backup = PostgresDatabase.query.filter(~PostgresDatabase.id.in_(
+                db.session.query(BackupJob.database_id).distinct()
+            )).all()
+            # Ensure current database is included
+            if backup_job.database not in databases_without_backup:
+                databases = [backup_job.database] + databases_without_backup
+            else:
+                databases = databases_without_backup
             s3_storages = S3Storage.query.all()
             return render_template('backups/edit.html', 
                                  backup_job=backup_job,
@@ -120,7 +138,15 @@ def edit_backup(backup_job_id):
         else:
             flash(message, 'danger')
     
-    databases = PostgresDatabase.query.all()
+    # For editing: show current database + databases without backup jobs
+    databases_without_backup = PostgresDatabase.query.filter(~PostgresDatabase.id.in_(
+        db.session.query(BackupJob.database_id).distinct()
+    )).all()
+    # Ensure current database is included
+    if backup_job.database not in databases_without_backup:
+        databases = [backup_job.database] + databases_without_backup
+    else:
+        databases = databases_without_backup
     s3_storages = S3Storage.query.all()
     return render_template('backups/edit.html', 
                          backup_job=backup_job,

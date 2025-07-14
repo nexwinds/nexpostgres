@@ -21,10 +21,14 @@
                     {% for database in databases %}
                     <option value="{{ database.id }}" {% if database.id == backup_job.database_id %}selected{% endif %}>
                         {{ database.name }} on {{ database.server.name }}
+                        {% if database.id == backup_job.database_id %} (current){% endif %}
                     </option>
                     {% endfor %}
                 </select>
-                <div class="form-text">The database to backup</div>
+                <div class="form-text">
+                    <i class="fas fa-info-circle text-info me-1"></i>
+                    Each database can have exactly one backup job. You can change to another database that doesn't have a backup job.
+                </div>
             </div>
             
             <div class="mb-3">

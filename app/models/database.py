@@ -44,16 +44,31 @@ class VpsServer(BaseModel):
     
     def __repr__(self):
         return f'<VpsServer {self.name}>'
+    
+    @property
+    def databases_without_backup(self):
+        """Get databases on this server that don't have backup jobs."""
+        return [db for db in self.databases if not db.has_backup_job]
+    
+    @property
+    def databases_with_backup(self):
+        """Get databases on this server that have backup jobs."""
+        return [db for db in self.databases if db.has_backup_job]
 
 class PostgresDatabase(BaseModel):
     name = db.Column(db.String(80), nullable=False)
     vps_server_id = db.Column(db.Integer, db.ForeignKey('vps_server.id', ondelete='CASCADE'), nullable=False)
     size = db.Column(db.String(20))
     
-    # Relationships
-    backup_jobs = db.relationship('BackupJob', backref='database', lazy=True, cascade="all, delete-orphan")
+    # Relationships - enforcing one-to-one with backup job
+    backup_job = db.relationship('BackupJob', backref='database', lazy=True, cascade="all, delete-orphan", uselist=False)
     restore_logs = db.relationship('RestoreLog', backref='database', lazy=True, cascade="all, delete-orphan")
     users = db.relationship('PostgresDatabaseUser', backref='database', lazy=True, cascade="all, delete-orphan")
+    
+    @property
+    def has_backup_job(self):
+        """Check if database has an associated backup job."""
+        return self.backup_job is not None
 
 class PostgresDatabaseUser(BaseModel):
     username = db.Column(db.String(80), nullable=False)
@@ -77,7 +92,7 @@ class S3Storage(BaseModel):
 
 class BackupJob(BaseModel):
     name = db.Column(db.String(80), nullable=False)
-    database_id = db.Column(db.Integer, db.ForeignKey('postgres_database.id', ondelete='CASCADE'), nullable=False)
+    database_id = db.Column(db.Integer, db.ForeignKey('postgres_database.id', ondelete='CASCADE'), nullable=False, unique=True)  # Enforce one-to-one at DB level
     vps_server_id = db.Column(db.Integer, db.ForeignKey('vps_server.id', ondelete='CASCADE'), nullable=False)
     backup_type = db.Column(db.String(20), default='full')  # full or incr
     cron_expression = db.Column(db.String(50), nullable=False)
@@ -87,6 +102,9 @@ class BackupJob(BaseModel):
     
     # Relationships
     logs = db.relationship('BackupLog', backref='backup_job', lazy=True, cascade="all, delete-orphan")
+    
+    def __repr__(self):
+        return f'<BackupJob {self.name} for database {self.database_id}>'
 
 class BackupLog(BaseModel):
     backup_job_id = db.Column(db.Integer, db.ForeignKey('backup_job.id', ondelete='CASCADE'), nullable=False)

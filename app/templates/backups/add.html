@@ -17,13 +17,32 @@
             
             <div class="mb-3">
                 <label for="database_id" class="form-label">Database</label>
+                {% if databases %}
                 <select class="form-select" id="database_id" name="database_id" required>
                     <option value="" selected disabled>Select a database</option>
                     {% for database in databases %}
                     <option value="{{ database.id }}">{{ database.name }} on {{ database.server.name }}</option>
                     {% endfor %}
                 </select>
-                <div class="form-text">The database to backup</div>
+                <div class="form-text">
+                    <i class="fas fa-info-circle text-info me-1"></i>
+                    Each database can have exactly one backup job. Only databases without existing backup jobs are shown.
+                </div>
+                {% else %}
+                <div class="alert alert-warning" role="alert">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    <strong>No databases available</strong><br>
+                    All existing databases already have backup jobs. Each database can have only one backup job to ensure simplicity and minimize risk.
+                    <hr class="my-2">
+                    <small class="text-muted">
+                        To create a backup job for a new database, please 
+                        <a href="{{ url_for('databases.add') }}" class="alert-link">create a new database</a> first.
+                    </small>
+                </div>
+                <select class="form-select" id="database_id" name="database_id" required disabled>
+                    <option value="" selected>No databases available</option>
+                </select>
+                {% endif %}
             </div>
             
             <div class="mb-3">

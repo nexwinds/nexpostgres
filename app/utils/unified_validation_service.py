@@ -422,6 +422,29 @@ class UnifiedValidationService:
         return True, None, backup_job
     
     @staticmethod
+    def validate_one_to_one_backup_relationship(database_id: int, backup_job_id: Optional[int] = None) -> Tuple[bool, Optional[str]]:
+        """Validate one-to-one relationship between database and backup job.
+        
+        Args:
+            database_id: Database ID to check
+            backup_job_id: Existing backup job ID (for updates, None for new jobs)
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        # Check if database already has a backup job
+        existing_backup_job = BackupJob.query.filter_by(database_id=database_id).first()
+        
+        if existing_backup_job:
+            # If we're updating an existing backup job, allow it
+            if backup_job_id and existing_backup_job.id == backup_job_id:
+                return True, None
+            # Otherwise, this database already has a backup job
+            return False, f"Database already has a backup job ('{existing_backup_job.name}'). Each database can have only one backup job."
+        
+        return True, None
+    
+    @staticmethod
     def validate_and_flash_errors(validation_results: List[Tuple[bool, Optional[str]]]) -> bool:
         """Validate multiple fields and flash error messages.
         
@@ -542,6 +565,12 @@ class UnifiedValidationService:
             else:
                 validated_data['database'] = database
                 validated_data['database_id'] = database.id
+                
+                # Validate one-to-one relationship (for new backup jobs)
+                backup_job_id = form_data.get('backup_job_id')  # Will be None for new jobs
+                is_valid, error = cls.validate_one_to_one_backup_relationship(database.id, backup_job_id)
+                if not is_valid:
+                    errors.append(error)
         
         # S3 storage existence validation
         if form_data.get('s3_storage_id'):

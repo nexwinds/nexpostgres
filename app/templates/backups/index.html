@@ -16,6 +16,11 @@
     </div>
 </div>
 
+<div class="alert alert-info mb-4">
+    <h6><i class="fas fa-info-circle me-2"></i>One-to-One Relationship</h6>
+    <p class="mb-0">Each database can have exactly one backup job, and each backup job is associated with exactly one database. This ensures consistency and minimizes backup management complexity.</p>
+</div>
+
 {% call card_container('Job List') %}
         {% if backup_jobs %}
         <div class="table-responsive">

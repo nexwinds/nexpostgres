@@ -79,8 +79,8 @@ class BackupService:
                 ssh.disconnect()
     
     @staticmethod
-    def validate_backup_job_data(name, database_id, backup_type, s3_storage_id, retention_count):
-        """Validate backup job form data.
+    def validate_backup_job_data(name, database_id, backup_type, s3_storage_id, retention_count, backup_job_id=None):
+        """Validate backup job form data with one-to-one relationship enforcement.
         
         Args:
             name: Backup job name
@@ -88,14 +88,22 @@ class BackupService:
             backup_type: Type of backup (full/incr)
             s3_storage_id: S3 storage configuration ID
             retention_count: Number of backups to retain
+            backup_job_id: Existing backup job ID (for updates, None for new jobs)
             
         Returns:
             tuple: (is_valid, error_message, database, s3_storage)
         """
+        from app.utils.unified_validation_service import UnifiedValidationService
+        
         # Validate database
         database = PostgresDatabase.query.get(database_id)
         if not database:
             return False, 'Selected database does not exist', None, None
+        
+        # Validate one-to-one relationship
+        is_valid, error = UnifiedValidationService.validate_one_to_one_backup_relationship(database_id, backup_job_id)
+        if not is_valid:
+            return False, error, None, None
         
         # Validate S3 storage
         s3_storage = S3Storage.query.get(s3_storage_id)
