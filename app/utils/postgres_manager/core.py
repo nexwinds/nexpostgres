@@ -532,6 +532,10 @@ class PostgresManager:
         """Get a PostgreSQL configuration setting."""
         return self.config_manager.get_postgresql_setting(setting)
     
+    def get_pg_hba_entries(self) -> List[Dict[str, str]]:
+        """Get current pg_hba.conf entries for external access."""
+        return self.config_manager.get_pg_hba_entries()
+    
     def update_postgresql_setting(self, setting: str, value: str) -> Tuple[bool, str]:
         """Update a PostgreSQL configuration setting."""
         return self.config_manager.update_postgresql_setting(setting, value)

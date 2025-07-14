@@ -307,6 +307,50 @@ class PostgresConfigManager:
         
         return None
     
+    def get_pg_hba_entries(self) -> List[Dict[str, str]]:
+        """Get current pg_hba.conf entries for external access.
+        
+        Returns:
+            List of dictionaries with entry details
+        """
+        pg_hba_path = self.find_pg_hba_conf()
+        if not pg_hba_path:
+            return []
+        
+        entries = []
+        try:
+            # Read pg_hba.conf content
+            result = self.ssh.execute_command(f"sudo cat {pg_hba_path}")
+            if result['exit_code'] != 0:
+                return []
+            
+            lines = result['stdout'].split('\n')
+            for line in lines:
+                line = line.strip()
+                # Skip comments and empty lines
+                if not line or line.startswith('#'):
+                    continue
+                
+                # Parse host entries
+                if line.startswith('host'):
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        entry = {
+                            'type': parts[0],
+                            'database': parts[1],
+                            'user': parts[2],
+                            'address': parts[3],
+                            'method': parts[4]
+                        }
+                        # Only include external access entries (not localhost)
+                        if entry['address'] not in ['127.0.0.1/32', '::1/128', 'localhost']:
+                            entries.append(entry)
+            
+        except Exception as e:
+            self.logger.error(f"Error reading pg_hba.conf: {str(e)}")
+        
+        return entries
+    
     def configure_external_connections(self) -> Tuple[bool, str, Dict]:
         """Configure PostgreSQL to allow external connections.
         

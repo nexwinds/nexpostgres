@@ -4,7 +4,7 @@
 {% block title %}VPS Servers - NEXPOSTGRES{% endblock %}
 
 {% block content %}
-{% call page_layout('VPS Servers', url_for('servers.add'), 'Add Server', 'fas fa-plus', 'btn-primary') %}
+{% call page_layout('VPS Servers', button_url=url_for('servers.add'), button_text='Add Server', button_icon='fas fa-plus', button_class='btn btn-primary') %}
     {% call card_container('Server List') %}
         {% if servers %}
         <div class="table-responsive">

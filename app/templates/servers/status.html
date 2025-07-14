@@ -169,14 +169,132 @@
                         <i class="fas fa-download me-1"></i> Update Server
                     </button>
                     
-                    <button id="validate-postgres-btn" class="btn btn-primary">
-                        <i class="fas fa-database me-1"></i> Validate PostgreSQL Config
+                    <button id="configure-postgres-btn" class="btn btn-info btn-sm" data-bs-toggle="modal" data-bs-target="#postgresConfigModal">
+                        <i class="fas fa-cog me-1"></i> Configure PostgreSQL Access
                     </button>
                 </div>
                 
                 <div id="action-status" class="mt-3">
                     <!-- Action status messages will appear here -->
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- PostgreSQL Configuration Modal -->
+<div class="modal fade" id="postgresConfigModal" tabindex="-1" aria-labelledby="postgresConfigModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="postgresConfigModalLabel">
+                    <i class="fas fa-database me-2"></i>PostgreSQL Access Configuration
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="postgresConfigForm">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Configure PostgreSQL for remote access.</strong> These settings control how external clients can connect to your PostgreSQL server.
+                    </div>
+                    
+                    <!-- IP Access Configuration -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h6 class="mb-0"><i class="fas fa-network-wired me-2"></i>IP Access Control</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label">Access Type</label>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="accessType" id="accessAll" value="all" checked>
+                                    <label class="form-check-label" for="accessAll">
+                                        <strong>Allow All IPs (0.0.0.0/0)</strong>
+                                        <small class="text-muted d-block">Allows connections from any IP address</small>
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="accessType" id="accessSpecific" value="specific">
+                                    <label class="form-check-label" for="accessSpecific">
+                                        <strong>Specific IP Addresses</strong>
+                                        <small class="text-muted d-block">Only allow connections from specified IPs</small>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div id="specificIpsContainer" class="d-none">
+                                <label for="allowedIps" class="form-label">Allowed IP Addresses</label>
+                                <textarea class="form-control" id="allowedIps" rows="3" placeholder="Enter IP addresses or CIDR blocks, one per line:\n192.168.1.100\n10.0.0.0/24\n203.0.113.5"></textarea>
+                                <div class="form-text">Enter IP addresses or CIDR blocks, one per line. Examples: 192.168.1.100, 10.0.0.0/24</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Authentication Method -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h6 class="mb-0"><i class="fas fa-shield-alt me-2"></i>Authentication Method</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label">Authentication Method</label>
+                                <div class="form-control-plaintext">
+                                    <strong>SCRAM-SHA-256</strong> <span class="text-muted">(Most Secure)</span>
+                                </div>
+                                <div class="form-text">Using the most secure authentication method available</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Configuration Preview -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h6 class="mb-0"><i class="fas fa-eye me-2"></i>Configuration Preview</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label">postgresql.conf changes:</label>
+                                <pre class="bg-light p-2 rounded"><code id="postgresqlConfPreview">listen_addresses = '*'</code></pre>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">pg_hba.conf entries:</label>
+                                <pre class="bg-light p-2 rounded"><code id="pgHbaConfPreview">host    all    all    0.0.0.0/0    scram-sha-256\nhost    all    all    ::/0         scram-sha-256</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Validation Options -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h6 class="mb-0"><i class="fas fa-check-circle me-2"></i>Safety Options</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="validateConfig" checked>
+                                <label class="form-check-label" for="validateConfig">
+                                    <strong>Validate configuration before applying</strong>
+                                    <small class="text-muted d-block">Test configuration syntax before restarting PostgreSQL</small>
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="backupConfig" checked>
+                                <label class="form-check-label" for="backupConfig">
+                                    <strong>Backup existing configuration files</strong>
+                                    <small class="text-muted d-block">Create backups before making changes</small>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="fas fa-times me-1"></i>Cancel
+                </button>
+                <button type="button" class="btn btn-primary" id="applyConfigBtn">
+                    <i class="fas fa-cog me-1"></i>Apply Configuration
+                </button>
             </div>
         </div>
     </div>
@@ -362,17 +480,119 @@
             });
         });
         
-        // Handle validate PostgreSQL config button
-        document.getElementById('validate-postgres-btn').addEventListener('click', function() {
+        // PostgreSQL Configuration Modal functionality
+        function updateConfigPreview() {
+            const accessType = document.querySelector('input[name="accessType"]:checked').value;
+            const authMethod = 'scram-sha-256'; // Fixed to most secure option
+            const allowedIps = document.getElementById('allowedIps').value;
+            
+            // Update postgresql.conf preview
+            document.getElementById('postgresqlConfPreview').textContent = "listen_addresses = '*'";
+            
+            // Update pg_hba.conf preview
+            let pgHbaEntries = [];
+            
+            if (accessType === 'all') {
+                pgHbaEntries.push(`host    all    all    0.0.0.0/0    ${authMethod}`);
+                pgHbaEntries.push(`host    all    all    ::/0         ${authMethod}`);
+            } else {
+                const ips = allowedIps.split('\n').filter(ip => ip.trim() !== '');
+                ips.forEach(ip => {
+                    const cleanIp = ip.trim();
+                    if (cleanIp) {
+                        pgHbaEntries.push(`host    all    all    ${cleanIp.padEnd(15)}    ${authMethod}`);
+                    }
+                });
+            }
+            
+            document.getElementById('pgHbaConfPreview').textContent = pgHbaEntries.join('\n');
+        }
+        
+        // Load current PostgreSQL configuration
+        function loadCurrentConfig() {
+            fetch(`{{ url_for('servers.get_postgres_config', id=server.id) }}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.config) {
+                    const config = data.config;
+                    
+                    // Set access type
+                    if (config.access_type === 'all') {
+                        document.getElementById('accessAll').checked = true;
+                        document.getElementById('specificIpsContainer').classList.add('d-none');
+                    } else if (config.access_type === 'specific') {
+                        document.getElementById('accessSpecific').checked = true;
+                        document.getElementById('specificIpsContainer').classList.remove('d-none');
+                        
+                        // Set allowed IPs
+                        const allowedIpsText = config.allowed_ips.join('\n');
+                        document.getElementById('allowedIps').value = allowedIpsText;
+                    } else {
+                        // Default to 'all' if no configuration found
+                        document.getElementById('accessAll').checked = true;
+                        document.getElementById('specificIpsContainer').classList.add('d-none');
+                    }
+                    
+                    // Update preview with loaded configuration
+                    updateConfigPreview();
+                }
+            })
+            .catch(error => {
+                console.error('Error loading current configuration:', error);
+                // Set defaults on error
+                document.getElementById('accessAll').checked = true;
+                document.getElementById('specificIpsContainer').classList.add('d-none');
+                updateConfigPreview();
+            });
+        }
+        
+        // Handle access type radio button changes
+        document.querySelectorAll('input[name="accessType"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const specificContainer = document.getElementById('specificIpsContainer');
+                if (this.value === 'specific') {
+                    specificContainer.classList.remove('d-none');
+                } else {
+                    specificContainer.classList.add('d-none');
+                }
+                updateConfigPreview();
+            });
+        });
+        
+        // Handle allowed IPs textarea changes
+        document.getElementById('allowedIps').addEventListener('input', updateConfigPreview);
+        
+        // Handle apply configuration button
+        document.getElementById('applyConfigBtn').addEventListener('click', function() {
             const actionStatus = document.getElementById('action-status');
+            const modal = bootstrap.Modal.getInstance(document.getElementById('postgresConfigModal'));
+            
+            // Collect form data
+            const formData = {
+                access_type: document.querySelector('input[name="accessType"]:checked').value,
+                auth_method: 'scram-sha-256', // Fixed to most secure option
+                allowed_ips: document.getElementById('allowedIps').value,
+                validate_config: document.getElementById('validateConfig').checked,
+                backup_config: document.getElementById('backupConfig').checked
+            };
+            
+            // Close modal
+            modal.hide();
+            
+            // Show loading status
             actionStatus.innerHTML = `
                 <div class="alert alert-info">
-                    <i class="fas fa-spinner fa-spin me-1"></i> Validating PostgreSQL configuration...
+                    <i class="fas fa-spinner fa-spin me-1"></i> Configuring PostgreSQL access...
                 </div>
             `;
             
-            fetch(`{{ url_for('servers.validate_postgres_config', id=server.id) }}`, {
-                method: 'POST'
+            // Send configuration request
+            fetch(`{{ url_for('servers.configure_postgres_access', id=server.id) }}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(formData)
             })
             .then(response => response.json())
             .then(data => {
@@ -387,11 +607,22 @@
                         }
                         
                         if (data.changes.listen_addresses) {
-                            changeDetails += "<li>Updated postgresql.conf: listen_addresses = '*'</li>";
+                            changeDetails += "<li>Updated postgresql.conf to allow external connections</li>";
                         }
                         
                         if (data.changes.pg_hba) {
-                            changeDetails += "<li>Updated pg_hba.conf to allow external connections</li>";
+                            const accessType = document.querySelector('input[name="accessType"]:checked').value;
+                            if (accessType === 'all') {
+                                changeDetails += "<li>Updated pg_hba.conf to allow access from all IPs (0.0.0.0/0)</li>";
+                            } else {
+                                const allowedIps = document.getElementById('allowedIps').value;
+                                const ipCount = allowedIps.split('\n').filter(ip => ip.trim() !== '').length;
+                                changeDetails += `<li>Updated pg_hba.conf to allow access from ${ipCount} specific IP${ipCount > 1 ? 's' : ''}</li>`;
+                            }
+                        }
+                        
+                        if (data.changes.validation_passed) {
+                            changeDetails += "<li><strong>Configuration validation passed</strong></li>";
                         }
                         
                         changeDetails += "</ul>";
@@ -404,27 +635,10 @@
                         </div>
                     `;
                 } else {
-                    // Handle detailed error messages that might contain newlines
-                    let errorMsg = data.message.replace(/\n/g, '<br>');
-                    
-                    // If the message contains a list of search attempts, format it nicely
-                    if (errorMsg.includes('Search attempts:')) {
-                        const parts = errorMsg.split('Search attempts:');
-                        errorMsg = parts[0] + '<br><strong>Search attempts:</strong><ul>';
-                        
-                        // Convert each search attempt into a list item
-                        const attempts = parts[1].split('<br>').filter(a => a.trim() !== '');
-                        attempts.forEach(attempt => {
-                            errorMsg += `<li>${attempt.trim()}</li>`;
-                        });
-                        
-                        errorMsg += '</ul>';
-                    }
-                    
                     actionStatus.innerHTML = `
                         <div class="alert alert-danger">
                             <i class="fas fa-times-circle me-1"></i> <strong>Error:</strong><br>
-                            ${errorMsg}
+                            ${data.message}
                         </div>
                     `;
                 }
@@ -437,6 +651,14 @@
                 `;
             });
         });
+        
+        // Handle modal show event to load current configuration
+        document.getElementById('postgresConfigModal').addEventListener('show.bs.modal', function() {
+            loadCurrentConfig();
+        });
+        
+        // Initialize preview on page load
+        updateConfigPreview();
         
         // Handle manual refresh
         document.getElementById('refresh-btn').addEventListener('click', function() {

@@ -483,3 +483,241 @@ def validate_postgres_config(id):
             'success': False,
             'message': str(e)
         })
+
+
+@servers_bp.route('/get-postgres-config/<int:id>', methods=['GET'])
+@login_required
+@first_login_required
+def get_postgres_config(id):
+    """Get current PostgreSQL configuration."""
+    server = VpsServer.query.filter_by(id=id).first_or_404()
+    
+    try:
+        # Connect to server via SSH
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            return jsonify({
+                'success': False,
+                'message': 'Failed to connect to server via SSH'
+            })
+        
+        # Initialize PostgreSQL manager
+        postgres_manager = PostgresManager(ssh)
+        
+        # Get current listen_addresses setting
+        listen_addresses = postgres_manager.get_postgresql_setting('listen_addresses')
+        
+        # Get current pg_hba.conf entries
+        pg_hba_entries = postgres_manager.get_pg_hba_entries()
+        
+        # Analyze current configuration
+        config = {
+            'listen_addresses': listen_addresses,
+            'access_type': 'none',
+            'allowed_ips': [],
+            'auth_method': 'scram-sha-256'
+        }
+        
+        # Determine access type and IPs from pg_hba entries
+        if pg_hba_entries:
+            # Check if there's a rule for all IPs
+            has_all_access = any(
+                entry['address'] in ['0.0.0.0/0', '::/0'] 
+                for entry in pg_hba_entries
+            )
+            
+            if has_all_access:
+                config['access_type'] = 'all'
+            else:
+                # Collect specific IPs
+                specific_ips = []
+                for entry in pg_hba_entries:
+                    if entry['address'] not in ['0.0.0.0/0', '::/0']:
+                        specific_ips.append(entry['address'])
+                
+                if specific_ips:
+                    config['access_type'] = 'specific'
+                    config['allowed_ips'] = specific_ips
+            
+            # Get authentication method from first entry
+            if pg_hba_entries:
+                config['auth_method'] = pg_hba_entries[0]['method']
+        
+        ssh.disconnect()
+        
+        return jsonify({
+            'success': True,
+            'config': config
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error retrieving configuration: {str(e)}'
+        })
+
+@servers_bp.route('/configure-postgres-access/<int:id>', methods=['POST'])
+@login_required
+@first_login_required
+def configure_postgres_access(id):
+    """Configure PostgreSQL access with advanced options."""
+    server = VpsServer.query.filter_by(id=id).first_or_404()
+    
+    try:
+        # Get form data
+        data = request.get_json()
+        access_type = data.get('access_type', 'all')
+        auth_method = data.get('auth_method', 'scram-sha-256')
+        allowed_ips = data.get('allowed_ips', '')
+        validate_config = data.get('validate_config', True)
+        backup_config = data.get('backup_config', True)
+        
+        # Connect to server via SSH
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            return jsonify({
+                'success': False,
+                'message': 'Failed to connect to server via SSH'
+            })
+        
+        # Create PostgreSQL manager
+        pg_manager = PostgresManager(ssh)
+        config_manager = pg_manager.config_manager
+        
+        changes_made = {
+            'listen_addresses': False,
+            'pg_hba': False,
+            'created_files': False,
+            'validation_passed': False
+        }
+        
+        # Update listen_addresses in postgresql.conf
+        current_listen = config_manager.get_postgresql_setting('listen_addresses')
+        if current_listen != '*':
+            success, message = config_manager.update_postgresql_setting('listen_addresses', "'*'")
+            if success:
+                changes_made['listen_addresses'] = True
+            else:
+                ssh.disconnect()
+                return jsonify({
+                    'success': False,
+                    'message': f'Failed to update listen_addresses: {message}'
+                })
+        
+        # Configure pg_hba.conf
+        pg_hba_path = config_manager.find_pg_hba_conf()
+        if not pg_hba_path:
+            # Try to create it
+            data_dir = config_manager.get_data_directory()
+            if data_dir:
+                pg_hba_path = f"{data_dir}/pg_hba.conf"
+                if config_manager.create_default_pg_hba(pg_hba_path):
+                    changes_made['created_files'] = True
+                else:
+                    ssh.disconnect()
+                    return jsonify({
+                        'success': False,
+                        'message': 'Could not create pg_hba.conf'
+                    })
+            else:
+                ssh.disconnect()
+                return jsonify({
+                    'success': False,
+                    'message': 'Could not locate or create pg_hba.conf'
+                })
+        
+        # Backup pg_hba.conf if requested
+        if backup_config and pg_hba_path:
+            config_manager.system_utils.backup_file(pg_hba_path)
+        
+        # Remove all existing external access rules (preserve localhost and non-host entries)
+        # Create a temporary file with only non-host entries and localhost entries
+        temp_file = f"/tmp/pg_hba_temp_{id}"
+        ssh.execute_command(f"sudo grep -v '^host' {pg_hba_path} > {temp_file}")
+        ssh.execute_command(f"sudo grep '^host.*127\\.0\\.0\\.1' {pg_hba_path} >> {temp_file} || true")
+        ssh.execute_command(f"sudo grep '^host.*::1' {pg_hba_path} >> {temp_file} || true")
+        ssh.execute_command(f"sudo grep '^host.*localhost' {pg_hba_path} >> {temp_file} || true")
+        ssh.execute_command(f"sudo mv {temp_file} {pg_hba_path}")
+        ssh.execute_command(f"sudo chown postgres:postgres {pg_hba_path}")
+        ssh.execute_command(f"sudo chmod 640 {pg_hba_path}")
+        
+        # Add new access rules based on configuration
+        if access_type == 'all':
+            # Allow all IPs
+            ipv4_rule = f"echo 'host    all    all    0.0.0.0/0    {auth_method}' | sudo tee -a {pg_hba_path}"
+            ipv6_rule = f"echo 'host    all    all    ::/0         {auth_method}' | sudo tee -a {pg_hba_path}"
+            
+            ipv4_result = ssh.execute_command(ipv4_rule)
+            ipv6_result = ssh.execute_command(ipv6_rule)
+            
+            if ipv4_result['exit_code'] == 0 or ipv6_result['exit_code'] == 0:
+                changes_made['pg_hba'] = True
+        else:
+            # Allow specific IPs
+            if allowed_ips:
+                ip_list = [ip.strip() for ip in allowed_ips.split('\n') if ip.strip()]
+                for ip in ip_list:
+                    # Validate IP format (basic validation)
+                    if '/' not in ip:
+                        ip = f"{ip}/32"  # Add /32 for single IPs
+                    
+                    rule = f"echo 'host    all    all    {ip.ljust(15)}    {auth_method}' | sudo tee -a {pg_hba_path}"
+                    result = ssh.execute_command(rule)
+                    
+                    if result['exit_code'] == 0:
+                        changes_made['pg_hba'] = True
+        
+        # Validate configuration if requested
+        if validate_config:
+            # Test PostgreSQL configuration by checking if it can start/reload
+            test_result = ssh.execute_command("sudo systemctl reload postgresql")
+            if test_result['exit_code'] == 0:
+                changes_made['validation_passed'] = True
+            else:
+                # Try alternative validation method
+                alt_test = ssh.execute_command("sudo -u postgres psql -c 'SELECT version();' > /dev/null 2>&1")
+                if alt_test['exit_code'] == 0:
+                    changes_made['validation_passed'] = True
+                else:
+                    ssh.disconnect()
+                    return jsonify({
+                        'success': False,
+                        'message': f'Configuration validation failed: PostgreSQL service cannot reload with new configuration'
+                    })
+        
+        # Restart PostgreSQL if changes were made
+        if any([changes_made['listen_addresses'], changes_made['pg_hba'], changes_made['created_files']]):
+            success, message = config_manager.system_utils.restart_service('postgresql')
+            if not success:
+                ssh.disconnect()
+                return jsonify({
+                    'success': False,
+                    'message': f'Configuration updated but PostgreSQL restart failed: {message}'
+                })
+        
+        # Disconnect
+        ssh.disconnect()
+        
+        return jsonify({
+            'success': True,
+            'message': 'PostgreSQL access configured successfully',
+            'changes': changes_made
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        })
