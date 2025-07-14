@@ -45,7 +45,7 @@ def schedule_backup_job(job):
     if job.enabled:
         scheduler.add_job(
             id=job_id,
-            func=execute_backup_job,
+            func=execute_backup,
             trigger='cron',
             args=[job.id],
             replace_existing=True,

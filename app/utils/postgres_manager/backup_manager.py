@@ -3,11 +3,14 @@
 import os
 import logging
 import tempfile
+import base64
+import secrets
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from .constants import PostgresConstants
 from .system_utils import SystemUtils
 from .config_manager import PostgresConfigManager
+from .logrotate_config import LogRotateManager
 
 class PostgresBackupManager:
     """Manages PostgreSQL backups using pgBackRest."""
@@ -18,6 +21,18 @@ class PostgresBackupManager:
         self.system_utils = system_utils
         self.config_manager = config_manager
         self.logger = logger or logging.getLogger(__name__)
+        self.logrotate_manager = LogRotateManager(ssh_manager, logger)
+    
+    def generate_cipher_passphrase(self) -> str:
+        """Generate a secure base64-encoded cipher passphrase as recommended by pgBackRest.
+        
+        Returns:
+            str: Base64-encoded secure passphrase
+        """
+        # Generate 32 random bytes (256 bits) for strong encryption
+        random_bytes = secrets.token_bytes(32)
+        # Encode as base64 as recommended by pgBackRest documentation
+        return base64.b64encode(random_bytes).decode('utf-8')
     
     def is_pgbackrest_installed(self) -> bool:
         """Check if pgBackRest is installed.
@@ -85,7 +100,7 @@ class PostgresBackupManager:
         return True, "pgBackRest directories created successfully"
     
     def create_pgbackrest_config(self, s3_config: Optional[Dict] = None) -> Tuple[bool, str]:
-        """Create pgBackRest configuration.
+        """Create pgBackRest configuration following official recommendations.
         
         Args:
             s3_config: S3 configuration dictionary
@@ -102,7 +117,34 @@ class PostgresBackupManager:
         
         config_content = "[global]\n"
         config_content += f"log-path={PostgresConstants.PGBACKREST['log_dir']}\n"
-        config_content += "process-max=2\n"
+        
+        # Process configuration - using recommended defaults
+        config_content += f"process-max={PostgresConstants.PGBACKREST['default_process_max']}\n"
+        
+        # Archive timeout - using recommended value
+        config_content += f"archive-timeout={PostgresConstants.PGBACKREST['archive_timeout']}\n"
+        
+        # Compression settings - using recommended defaults
+        config_content += f"compress-type={PostgresConstants.PGBACKREST['default_compress_type']}\n"
+        config_content += f"compress-level={PostgresConstants.PGBACKREST['default_compress_level']}\n"
+        
+        # Log level settings
+        config_content += f"log-level-console={PostgresConstants.PGBACKREST['log_level_console']}\n"
+        config_content += f"log-level-file={PostgresConstants.PGBACKREST['log_level_file']}\n"
+        config_content += f"log-level-stderr={PostgresConstants.PGBACKREST['log_level_stderr']}\n"
+        
+        # Delta optimization for faster restores
+        config_content += f"delta={'y' if PostgresConstants.PGBACKREST['delta_enabled'] else 'n'}\n"
+        
+        # Start fast for quicker backups - recommended by pgBackRest
+        config_content += "start-fast=y\n"
+        
+        # Archive header check for safety - recommended by pgBackRest
+        config_content += "archive-header-check=y\n"
+        
+        # Generate secure cipher passphrase
+        cipher_passphrase = self.generate_cipher_passphrase()
+        self.logger.info("Generated secure cipher passphrase for encryption")
         
         # Add S3 configuration if provided, otherwise use posix
         if s3_config:
@@ -122,15 +164,34 @@ class PostgresBackupManager:
             
             config_content += f"repo1-s3-key={s3_config.get('access_key', '')}\n"
             config_content += f"repo1-s3-key-secret={s3_config.get('secret_key', '')}\n"
-            config_content += "repo1-s3-verify-tls=n\n"
             
-            # Add retention settings
-            config_content += f"repo1-retention-full={PostgresConstants.PGBACKREST['default_retention_full']}\n"
-            config_content += f"repo1-retention-diff={PostgresConstants.PGBACKREST['default_retention_diff']}\n"
+            # TLS verification - recommended to enable for security
+            config_content += "repo1-s3-verify-tls=y\n"
+            
+            # S3 specific performance settings
+            config_content += "repo1-s3-uri-style=path\n"
+            
+            # Encryption for S3 - recommended for security
+            config_content += f"repo1-cipher-type={PostgresConstants.PGBACKREST['default_cipher_type']}\n"
+            config_content += f"repo1-cipher-pass={cipher_passphrase}\n"
+            
         else:
             config_content += "\n# Local Configuration\n"
             config_content += "repo1-type=posix\n"
             config_content += f"repo1-path={PostgresConstants.PGBACKREST['backup_dir']}\n"
+            
+            # Local encryption - recommended for security
+            config_content += f"repo1-cipher-type={PostgresConstants.PGBACKREST['default_cipher_type']}\n"
+            config_content += f"repo1-cipher-pass={cipher_passphrase}\n"
+        
+        # Retention settings - following pgBackRest recommendations
+        config_content += "\n# Retention Policy - Recommended Values\n"
+        config_content += f"repo1-retention-full={PostgresConstants.PGBACKREST['default_retention_full']}\n"
+        config_content += f"repo1-retention-diff={PostgresConstants.PGBACKREST['default_retention_diff']}\n"
+        
+        # Archive retention - configurable type and value
+        config_content += f"repo1-retention-archive-type={PostgresConstants.PGBACKREST['default_retention_archive_type']}\n"
+        config_content += f"repo1-retention-archive={PostgresConstants.PGBACKREST['default_retention_archive']}\n"
         
         # Write configuration file
         config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
@@ -162,6 +223,11 @@ class PostgresBackupManager:
         
         # Clean up remote temp file
         self.ssh.execute_command(f"rm -f {remote_temp_file}")
+        
+        # Set up log rotation for pgBackRest logs
+        log_success, log_message = self.setup_log_rotation()
+        if not log_success:
+            self.logger.warning(f"Log rotation setup failed: {log_message}")
         
         return True, "pgBackRest configuration created successfully"
     
@@ -299,7 +365,7 @@ class PostgresBackupManager:
             return False, f"Stanza {db_name} check failed: {result.get('stderr', 'Unknown error')}"
     
     def configure_postgresql_archiving(self, db_name: str) -> Tuple[bool, str]:
-        """Configure PostgreSQL for archiving with pgBackRest.
+        """Configure PostgreSQL for archiving with pgBackRest following official recommendations.
         
         Args:
             db_name: Database name (stanza name)
@@ -312,13 +378,19 @@ class PostgresBackupManager:
         # Get the config file path
         config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
         
-        # Update PostgreSQL settings
+        # Update PostgreSQL settings following pgBackRest recommendations
         settings = {
             'wal_level': 'replica',
             'archive_mode': 'on',
             'archive_command': f"'pgbackrest --config={config_file} --stanza={db_name} archive-push %p'",
             'max_wal_senders': '3',
-            'archive_timeout': '60'
+            # Archive timeout - recommended 60s for regular archiving
+            'archive_timeout': '60',
+            # Checkpoint settings for better backup performance
+            'checkpoint_completion_target': '0.9',
+            # WAL settings for better performance
+            'wal_buffers': '16MB',
+            'wal_writer_delay': '200ms'
         }
         
         for setting, value in settings.items():
@@ -376,7 +448,7 @@ class PostgresBackupManager:
             return False, f"{backup_type.capitalize()} backup failed: {error_message}"
     
     def _should_force_full_backup(self, db_name: str) -> bool:
-        """Check if a full backup should be forced based on policy.
+        """Check if a full backup should be forced based on pgBackRest recommended policy.
         
         Args:
             db_name: Database name (stanza name)
@@ -389,11 +461,12 @@ class PostgresBackupManager:
             if not backups:
                 return True  # No backups exist, force full
             
-            # Count recent backups
+            # Count recent backups using recommended policy
             recent_backups = backups[-PostgresConstants.PGBACKREST['max_backups_before_full']:]
             full_backup_count = sum(1 for backup in recent_backups 
                                   if backup.get('type') == 'full')
             
+            # Force full backup if no full backups in recent history
             return full_backup_count == 0
             
         except Exception as e:
@@ -606,3 +679,29 @@ class PostgresBackupManager:
         message = "Backup system is healthy" if success else f"Issues found: {'; '.join(issues)}"
         
         return success, message, health_info
+    
+    def setup_log_rotation(self) -> Tuple[bool, str]:
+         """Set up log rotation for pgBackRest logs.
+         
+         Returns:
+             tuple: (success, message)
+         """
+         try:
+             # Check and create log directory first
+             dir_success, dir_message = self.logrotate_manager.check_log_directory()
+             if not dir_success:
+                 return False, f"Log directory setup failed: {dir_message}"
+             
+             # Set up logrotate configuration
+             success, message = self.logrotate_manager.setup_pgbackrest_logrotate()
+             if success:
+                 self.logger.info("pgBackRest log rotation configured successfully")
+             else:
+                 self.logger.error(f"Failed to configure pgBackRest log rotation: {message}")
+             
+             return success, message
+             
+         except Exception as e:
+             error_msg = f"Error setting up log rotation: {str(e)}"
+             self.logger.error(error_msg)
+             return False, error_msg
