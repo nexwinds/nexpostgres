@@ -10,19 +10,9 @@
         <a href="{{ url_for('databases.add_database') }}" class="btn btn-primary">
             <i class="fas fa-plus me-1"></i> Add Database
         </a>
-        <div class="dropdown">
-            <button class="btn btn-success dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                <i class="fas fa-file-import me-1"></i> Import Database
-            </button>
-            <ul class="dropdown-menu">
-                {% for database in databases %}
-                <li><a class="dropdown-item" href="{{ url_for('databases.import_database', database_id=database.id) }}">{{ database.name }}</a></li>
-                {% endfor %}
-                {% if not databases %}
-                <li><span class="dropdown-item-text text-muted">No databases available</span></li>
-                {% endif %}
-            </ul>
-        </div>
+        <a href="{{ url_for('databases.import_database') }}" class="btn btn-success">
+            <i class="fas fa-file-import me-1"></i> Import Database
+        </a>
     </div>
 </div>
 

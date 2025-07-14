@@ -4,7 +4,7 @@
 {% block title %}S3 Storage Configurations - NEXPOSTGRES{% endblock %}
 
 {% block content %}
-{% call page_layout('S3 Storage Configurations', url_for('s3_storage.add'), 'Add S3 Storage', 'fas fa-plus', 'btn-primary') %}
+{% call page_layout('S3 Storage Configurations', button_url=url_for('s3_storage.add'), button_text='Add S3 Storage', button_icon='fas fa-plus', button_class='btn-primary') %}
     {% call card_container('Available S3 Storage Configurations') %}
         {% if storages %}
         <div class="table-responsive">

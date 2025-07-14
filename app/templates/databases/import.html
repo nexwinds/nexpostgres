@@ -17,22 +17,52 @@
     <div class="card-body">
         <div class="alert alert-info mb-4">
             <i class="fas fa-info-circle me-1"></i>
-            <strong>Info:</strong> This tool allows you to import data from an external PostgreSQL database.
-            The import process will replace all data in the target database.
+            <strong>Info:</strong> This tool will create a new PostgreSQL database and import data from an external source.
         </div>
         
         <form method="post">
-            <!-- Target Database Selection -->
+            <!-- New Database Details -->
             <div class="mb-4">
-                <label for="target_database_id" class="form-label">Target Database</label>
-                <select class="form-select" id="target_database_id" name="target_database_id" required>
-                    <option value="" selected disabled>Select Target Database</option>
-                    {% for database in databases %}
-                    <option value="{{ database.id }}">{{ database.name }} ({{ database.server.name }})</option>
-                    {% endfor %}
-                </select>
-                <div class="form-text">Select the database where you want to import data to.</div>
+                <h6 class="text-muted mb-3">New Database Details</h6>
+                
+                <div class="mb-3">
+                    <label for="vps_server_id" class="form-label">Server</label>
+                    <select class="form-select" id="vps_server_id" name="vps_server_id" required>
+                        <option value="" selected disabled>Select a server</option>
+                        {% for server in servers %}
+                        <option value="{{ server.id }}">{{ server.name }} ({{ server.host }}:{{ server.postgres_port }})</option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">The server where the new PostgreSQL database will be created</div>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="name" class="form-label">Database Name</label>
+                    <input type="text" class="form-control" id="name" name="name" required onchange="updateUsername()">
+                    <div class="form-text">The name of the new PostgreSQL database</div>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="username" class="form-label">Database Username</label>
+                    <input type="text" class="form-control" id="username" name="username" required readonly>
+                    <div class="form-text">Automatically derived from the database name (lowercase only)</div>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="password" class="form-label">Database Password</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="password" name="password" required readonly>
+                        <button type="button" class="btn btn-outline-secondary" onclick="generateDatabasePassword()">
+                            <i class="fas fa-sync-alt"></i> Regenerate
+                        </button>
+                    </div>
+                    <div class="form-text">Random 28-character password with letters and numbers</div>
+                </div>
             </div>
+            
+            <!-- Source Database Connection -->
+            <div class="mb-4">
+                <h6 class="text-muted mb-3">Source Database Connection</h6>
             
             <!-- Connection Type Tabs -->
             <div class="mb-4">
@@ -92,7 +122,7 @@
             <div class="form-check mb-4">
                 <input class="form-check-input" type="checkbox" id="confirm_import" required>
                 <label class="form-check-label" for="confirm_import">
-                    I understand that this will replace all data in the target database
+                    I understand that this will create a new database and import data from the source
                 </label>
             </div>
             
@@ -109,12 +139,54 @@
 
 {% block extra_js %}
 <script>
+    // Generate random password of 28 characters that meets validation requirements
+    function generateDatabasePassword() {
+        const uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const lowercase = "abcdefghijklmnopqrstuvwxyz";
+        const digits = "0123456789";
+        const allChars = uppercase + lowercase + digits;
+        
+        // Ensure at least one of each required character type
+        let password = "";
+        password += uppercase.charAt(Math.floor(Math.random() * uppercase.length));
+        password += lowercase.charAt(Math.floor(Math.random() * lowercase.length));
+        password += digits.charAt(Math.floor(Math.random() * digits.length));
+        
+        // Fill the rest with random characters
+        for (let i = 3; i < 28; i++) {
+            password += allChars.charAt(Math.floor(Math.random() * allChars.length));
+        }
+        
+        // Shuffle the password to avoid predictable patterns
+        password = password.split('').sort(() => Math.random() - 0.5).join('');
+        
+        const passwordField = document.getElementById("password");
+        if (passwordField) {
+            passwordField.value = password;
+        }
+    }
+    
+    // Derive username from database name (lowercase only)
+    function updateUsername() {
+        const dbName = document.getElementById("name").value;
+        document.getElementById("username").value = dbName.toLowerCase();
+    }
+    
     document.addEventListener('DOMContentLoaded', function() {
         const confirmCheckbox = document.getElementById('confirm_import');
         const importButton = document.getElementById('importButton');
         const connectionType = document.getElementById('connection_type');
         const standardTab = document.getElementById('standard-tab');
         const urlTab = document.getElementById('url-tab');
+        
+        // Generate password on page load
+        generateDatabasePassword();
+        
+        // If there's a database name already, update the username
+        const dbNameField = document.getElementById("name");
+        if (dbNameField.value) {
+            updateUsername();
+        }
         
         // Enable/disable import button based on checkbox
         confirmCheckbox.addEventListener('change', function() {

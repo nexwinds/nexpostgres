@@ -429,71 +429,160 @@ def check_postgres(server_id):
     return jsonify(result)
 
 
-@databases_bp.route('/databases/<int:database_id>/import', methods=['GET', 'POST'])
+@databases_bp.route('/databases/import', methods=['GET', 'POST'])
 @login_required
-def import_database(database_id):
-    """Import database from external source."""
-    database = PostgresDatabase.query.join(VpsServer).filter(
-        PostgresDatabase.id == database_id
-    ).first_or_404()
-    
+def import_database():
+    """Import database from external source and create new database."""
     if request.method == 'GET':
-        return render_template('databases/import.html', database=database)
+        servers = VpsServer.query.all()
+        return render_template('databases/import.html', servers=servers)
     
     # POST request - process import
     data = request.form.to_dict()
     
-    # Determine connection method
-    if data.get('connection_method') == 'url':
+    # Validate required fields for new database creation
+    required_fields = ['vps_server_id', 'name', 'password']
+    fields_valid, field_errors = UnifiedValidationService.validate_required_fields(data, required_fields)
+    if not fields_valid:
+        for error in field_errors:
+            flash(error, 'error')
+        return redirect(url_for('databases.import_database'))
+    
+    # Validate database name
+    name_valid, name_error = UnifiedValidationService.validate_database_name(data['name'])
+    if not name_valid:
+        flash(name_error, 'error')
+        return redirect(url_for('databases.import_database'))
+    
+    # Check if database already exists
+    if UnifiedValidationService.validate_database_exists_by_name(data['name'], int(data['vps_server_id'])):
+        flash('A database with this name already exists on the selected server', 'error')
+        return redirect(url_for('databases.import_database'))
+    
+    # Get server and validate
+    server = VpsServer.query.filter_by(id=data['vps_server_id']).first()
+    if not server:
+        flash('Invalid server selected', 'error')
+        return redirect(url_for('databases.import_database'))
+    
+    # Generate username and validate password
+    existing_users = [user.username for user in PostgresDatabaseUser.query.all()]
+    username = UnifiedValidationService.generate_username(data['name'], existing_users)
+    password = data.get('password', '').strip()
+    
+    password_valid, password_error = UnifiedValidationService.validate_password(password)
+    if not password_valid:
+        flash(password_error, 'error')
+        return redirect(url_for('databases.import_database'))
+    
+    # Determine source connection method
+    if data.get('connection_type') == 'url':
         connection_string = data.get('connection_url', '').strip()
         
         # Validate connection string
         url_valid, url_error = UnifiedValidationService.validate_connection_string(connection_string)
         if not url_valid:
             flash(url_error, 'error')
-            return redirect(url_for('databases.import_database', database_id=database_id))
+            return redirect(url_for('databases.import_database'))
     else:
         # Build connection string from individual fields
-        required_fields = ['source_host', 'source_port', 'source_username', 
-                          'source_password', 'source_database']
-        field_errors = UnifiedValidationService.validate_required_fields(data, required_fields)
+        source_fields = ['host', 'port', 'username', 'password', 'database_name']
+        source_data = {f'source_{field}': data.get(field, '') for field in source_fields}
         
-        if field_errors:
-            for error in field_errors:
-                flash(error, 'error')
-            return redirect(url_for('databases.import_database', database_id=database_id))
+        source_field_errors = UnifiedValidationService.validate_required_fields(source_data, [f'source_{field}' for field in source_fields])
+        
+        if source_field_errors[1]:  # If there are errors
+            for error in source_field_errors[1]:
+                flash(error.replace('source_', ''), 'error')
+            return redirect(url_for('databases.import_database'))
         
         connection_string = (
-            f"postgresql://{data['source_username']}:{data['source_password']}"
-            f"@{data['source_host']}:{data['source_port']}/{data['source_database']}"
+            f"postgresql://{data['username']}:{data['password']}"
+            f"@{data['host']}:{data['port']}/{data['database_name']}"
         )
     
-    # Create restore log
+    # Create database on server
+    success, message = DatabaseService.execute_with_postgres(
+        server, 
+        'Database creation',
+        DatabaseService.create_database_operation,
+        data['name'], username, password
+    )
+    
+    if not success:
+        flash(message, 'error')
+        return redirect(url_for('databases.import_database'))
+    
+    # Create primary user on server
+    success, message = DatabaseService.execute_with_postgres(
+        server,
+        'Primary user creation',
+        DatabaseService.create_user_operation,
+        username, password, data['name'], 'read_write'
+    )
+    
+    if not success:
+        flash(message, 'error')
+        return redirect(url_for('databases.import_database'))
+    
+    # Save to database
     try:
+        new_database = PostgresDatabase(
+            name=data['name'],
+            vps_server_id=server.id
+        )
+        db.session.add(new_database)
+        db.session.flush()  # Get the ID
+        
+        new_user = PostgresDatabaseUser(
+            username=username,
+            password=password,
+            database_id=new_database.id,
+            is_primary=True
+        )
+        db.session.add(new_user)
+        db.session.commit()
+        
+        # Create restore log for import process
         restore_log = RestoreLog(
-            database_id=database_id,
+            database_id=new_database.id,
             status='in_progress',
-            log_output='Import process started',
+            log_output='Database created successfully. Starting import process...',
             created_at=datetime.utcnow()
         )
         db.session.add(restore_log)
         db.session.commit()
         
-        flash('Database import started. You can check the progress below.', 'info')
+        flash('Database created successfully. Import process started.', 'success')
+        # Store connection string in session for the progress page
+        from flask import session
+        session['import_connection_string'] = connection_string
+        session['import_connection_type'] = data.get('connection_type', 'standard')
+        if data.get('connection_type') != 'url':
+            session['import_connection_data'] = {
+                'host': data.get('host'),
+                'port': data.get('port'),
+                'username': data.get('username'),
+                'password': data.get('password'),
+                'database_name': data.get('database_name')
+            }
+        
         return redirect(url_for('databases.import_progress', 
-                              database_id=database_id, 
+                              database_id=new_database.id, 
                               restore_log_id=restore_log.id))
         
     except Exception as e:
         db.session.rollback()
-        flash(f'Failed to start import process: {str(e)}', 'error')
-        return redirect(url_for('databases.import_database', database_id=database_id))
+        flash(f'Failed to create database: {str(e)}', 'error')
+        return redirect(url_for('databases.import_database'))
 
 
 @databases_bp.route('/databases/<int:database_id>/import/<int:restore_log_id>/progress')
 @login_required
 def import_progress(database_id, restore_log_id):
     """Display import progress."""
+    from flask import session
+    
     database = PostgresDatabase.query.join(VpsServer).filter(
         PostgresDatabase.id == database_id
     ).first_or_404()
@@ -503,9 +592,31 @@ def import_progress(database_id, restore_log_id):
         database_id=database_id
     ).first_or_404()
     
-    return render_template('databases/import_progress.html', 
-                         database=database, 
-                         restore_log=restore_log)
+    # Get connection data from session
+    connection_string = session.get('import_connection_string', '')
+    connection_type = session.get('import_connection_type', 'standard')
+    connection_data = session.get('import_connection_data', {})
+    
+    template_data = {
+        'database': database,
+        'restore_log': restore_log,
+        'connection_string': connection_string,
+        'connection_type': connection_type
+    }
+    
+    # Add connection data if standard connection
+    if connection_type == 'standard':
+        template_data.update({
+            'host': connection_data.get('host', ''),
+            'port': connection_data.get('port', 5432),
+            'username': connection_data.get('username', ''),
+            'password': connection_data.get('password', ''),
+            'database_name': connection_data.get('database_name', '')
+        })
+    else:
+        template_data['connection_url'] = connection_string
+    
+    return render_template('databases/import_progress.html', **template_data)
 
 
 @databases_bp.route('/databases/<int:database_id>/import/<int:restore_log_id>/execute', methods=['POST'])
