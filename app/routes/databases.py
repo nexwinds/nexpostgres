@@ -30,7 +30,7 @@ def add_database():
     data = request.form.to_dict()
     
     # Validate required fields
-    required_fields = ['name', 'vps_server_id']
+    required_fields = ['vps_server_id', 'name', 'password']
     field_errors = ValidationService.validate_required_fields(data, required_fields)
     if field_errors:
         for error in field_errors:
@@ -57,10 +57,16 @@ def add_database():
         flash('Invalid server selected', 'error')
         return redirect(url_for('databases.add_database'))
     
-    # Generate username and password
+    # Generate username and use password from form
     existing_users = [user.username for user in PostgresDatabaseUser.query.all()]
     username = ValidationService.generate_username(data['name'], existing_users)
-    password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
+    password = data.get('password', '').strip()
+    
+    # Validate password
+    password_valid, password_error = ValidationService.validate_password(password)
+    if not password_valid:
+        flash(password_error, 'error')
+        return redirect(url_for('databases.add_database'))
     
     # Create database on server
     success, message = DatabaseService.execute_with_postgres(
@@ -193,13 +199,12 @@ def add_database_user(database_id):
     data = request.form.to_dict()
     
     # Validate required fields
-    required_fields = ['username', 'password', 'permission_level']
+    required_fields = ['username', 'permission_level', 'password']
     field_errors = ValidationService.validate_required_fields(data, required_fields)
     
     # Validate individual fields
     validations = [
         ValidationService.validate_username(data.get('username', '')),
-        ValidationService.validate_password(data.get('password', '')),
         ValidationService.validate_permission_level(data.get('permission_level', ''))
     ]
     
@@ -216,12 +221,19 @@ def add_database_user(database_id):
         flash('A user with this username already exists for this database', 'error')
         return redirect(url_for('databases.add_database_user', database_id=database_id))
     
+    # Get password from form and validate it
+    password = data.get('password', '').strip()
+    password_valid, password_error = ValidationService.validate_password(password)
+    if not password_valid:
+        flash(password_error, 'error')
+        return redirect(url_for('databases.add_database_user', database_id=database_id))
+    
     # Create user on server
     success, message = DatabaseService.execute_with_postgres(
         database.server,
         'User creation',
         DatabaseService.create_user_operation,
-        data['username'], data['password'], database.name, data['permission_level']
+        data['username'], password, database.name, data['permission_level']
     )
     
     if not success:
@@ -232,14 +244,14 @@ def add_database_user(database_id):
     try:
         new_user = PostgresDatabaseUser(
             username=data['username'],
-            password=data['password'],
+            password=password,
             database_id=database_id,
             is_primary=False
         )
         db.session.add(new_user)
         db.session.commit()
         
-        flash('User added successfully', 'success')
+        flash(f'User added successfully with password: {password}', 'success')
         return redirect(url_for('databases.database_users', database_id=database_id))
         
     except Exception as e:

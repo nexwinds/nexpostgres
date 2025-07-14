@@ -50,7 +50,7 @@
                         <i class="fas fa-sync-alt"></i> Regenerate
                     </button>
                 </div>
-                <div class="form-text">Random 39-character password with letters and numbers</div>
+                <div class="form-text">Random 28-character password with letters and numbers</div>
             </div>
             
             <div class="d-flex justify-content-end">
@@ -71,13 +71,27 @@
 </div>
 
 <script>
-    // Generate random password of 39 characters (letters and numbers only)
+    // Generate random password of 28 characters that meets validation requirements
     function generatePassword() {
-        const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        const uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const lowercase = "abcdefghijklmnopqrstuvwxyz";
+        const digits = "0123456789";
+        const allChars = uppercase + lowercase + digits;
+        
+        // Ensure at least one of each required character type
         let password = "";
-        for (let i = 0; i < 39; i++) {
-            password += charset.charAt(Math.floor(Math.random() * charset.length));
+        password += uppercase.charAt(Math.floor(Math.random() * uppercase.length));
+        password += lowercase.charAt(Math.floor(Math.random() * lowercase.length));
+        password += digits.charAt(Math.floor(Math.random() * digits.length));
+        
+        // Fill the rest with random characters
+        for (let i = 3; i < 28; i++) {
+            password += allChars.charAt(Math.floor(Math.random() * allChars.length));
         }
+        
+        // Shuffle the password to avoid predictable patterns
+        password = password.split('').sort(() => Math.random() - 0.5).join('');
+        
         document.getElementById("password").value = password;
     }
     

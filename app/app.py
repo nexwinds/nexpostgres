@@ -13,8 +13,8 @@ from app.routes.backups import backups_bp
 from app.routes.dashboard import dashboard_bp
 from app.routes.app_backup import app_backup_bp
 from app.routes.s3_storage import s3_storage_bp
-from app.routes.pages import pages_bp
-from app.routes.profile import profile_bp
+
+
 
 def create_app(config_class=Config):
     app = Flask(__name__)
@@ -43,7 +43,7 @@ def create_app(config_class=Config):
     logging.basicConfig(level=getattr(logging, app.config['LOG_LEVEL']), format=app.config['LOG_FORMAT'])
     
     # Register blueprints
-    blueprints = [auth_bp, servers_bp, databases_bp, backups_bp, dashboard_bp, app_backup_bp, s3_storage_bp, pages_bp, profile_bp]
+    blueprints = [auth_bp, servers_bp, databases_bp, backups_bp, dashboard_bp, app_backup_bp, s3_storage_bp]
     for bp in blueprints:
         app.register_blueprint(bp)
     

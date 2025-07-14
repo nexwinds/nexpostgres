@@ -279,6 +279,14 @@ def status_data(id):
         cpu_usage = ssh.execute_command("top -bn1 | grep 'Cpu(s)' | awk '{print $2}'")
         cpu_usage_percent = cpu_usage['stdout'].strip()
         
+        # Get PostgreSQL version
+        pg_manager = PostgresManager(ssh)
+        postgres_version = pg_manager.get_postgres_version() or "Not Installed"
+        
+        # Get pgBackRest version
+        pgbackrest_version_result = ssh.execute_command("pgbackrest version 2>/dev/null || echo 'Not Installed'")
+        pgbackrest_version = pgbackrest_version_result['stdout'].strip() if pgbackrest_version_result['exit_code'] == 0 else "Not Installed"
+        
         # Disconnect
         ssh.disconnect()
         
@@ -299,7 +307,9 @@ def status_data(id):
                 'free': free_disk,
                 'usage_percent': disk_usage_percent
             },
-            'cpu_usage_percent': cpu_usage_percent
+            'cpu_usage_percent': cpu_usage_percent,
+            'postgres_version': postgres_version,
+            'pgbackrest_version': pgbackrest_version
         }
         
         return jsonify(system_info)
@@ -310,51 +320,7 @@ def status_data(id):
             'message': str(e)
         })
 
-@servers_bp.route('/postgres-version/<int:id>', methods=['GET'])
-@login_required
-@first_login_required
-def get_postgres_version(id):
-    """Get PostgreSQL version directly from the server"""
-    server = VpsServer.query.filter_by(id=id).first_or_404()
-    
-    try:
-        # Connect to server via SSH
-        ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_content=server.ssh_key_content
-        )
-        
-        if not ssh.connect():
-            return jsonify({
-                'success': False,
-                'message': 'Failed to connect to server via SSH'
-            })
-        
-        # Get PostgreSQL version
-        pg_manager = PostgresManager(ssh)
-        version = pg_manager.get_postgres_version()
-        
-        # Disconnect
-        ssh.disconnect()
-        
-        if version:
-            return jsonify({
-                'success': True,
-                'version': version
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'PostgreSQL not installed or version could not be determined'
-            })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        })
+
 
 @servers_bp.route('/restart/<int:id>', methods=['POST'])
 @login_required

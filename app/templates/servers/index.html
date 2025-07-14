@@ -24,10 +24,8 @@
                         <th>Host</th>
                         <th>SSH Port</th>
                         <th>PG Port</th>
-                        <th>PG Version</th>
                         <th>Username</th>
-                        <th>SSH Key Type</th>
-                        <th>Status</th>
+                        <th>Management</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -38,23 +36,7 @@
                         <td>{{ server.host }}</td>
                         <td>{{ server.port }}</td>
                         <td>{{ server.postgres_port }}</td>
-                        <td>
-                            <div class="postgres-version" data-server-id="{{ server.id }}">
-                                {% if server.initialized %}
-                                <span class="badge bg-secondary">Loading...</span>
-                                {% else %}
-                                <span class="badge bg-secondary">Not Initialized</span>
-                                {% endif %}
-                            </div>
-                        </td>
                         <td>{{ server.username }}</td>
-                        <td>
-                            {% if server.ssh_key_content %}
-                            <span class="badge bg-success">Stored Key</span>
-                            {% else %}
-                            <span class="badge bg-warning">None</span>
-                            {% endif %}
-                        </td>
                         <td>
                             <div class="status-indicator" data-server-id="{{ server.id }}">
                                 {% if server.initialized %}
@@ -123,40 +105,5 @@
     </div>
 </div>
 
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        // Load PostgreSQL versions for initialized servers
-        loadPostgresVersions();
-        
-        function loadPostgresVersions() {
-            const versionContainers = document.querySelectorAll('.postgres-version');
-            
-            versionContainers.forEach(container => {
-                const serverId = container.getAttribute('data-server-id');
-                const badge = container.querySelector('.badge');
-                
-                // Only fetch version for initialized servers showing "Loading..."
-                if (badge && badge.textContent.trim() === 'Loading...') {
-                    fetch(`/postgres-version/${serverId}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success && data.version) {
-                            badge.className = 'badge bg-info';
-                            badge.textContent = data.version;
-                        } else {
-                            badge.className = 'badge bg-secondary';
-                            badge.textContent = 'Unknown';
-                        }
-                    })
-                    .catch(error => {
-                        badge.className = 'badge bg-secondary';
-                        badge.textContent = 'Error';
-                    });
-                }
-            });
-        }
-        
 
-    });
-</script>
 {% endblock %}
