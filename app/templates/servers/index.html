@@ -1,20 +1,11 @@
 {% extends "base.html" %}
+{% from 'macros.html' import page_layout, card_container, confirmation_modal, info_alert %}
 
 {% block title %}VPS Servers - NEXPOSTGRES{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h1>VPS Servers</h1>
-    <a href="{{ url_for('servers.add') }}" class="btn btn-primary">
-        <i class="fas fa-plus me-1"></i> Add Server
-    </a>
-</div>
-
-<div class="card shadow">
-    <div class="card-header bg-light">
-        <h5 class="mb-0">Server List</h5>
-    </div>
-    <div class="card-body">
+{% call page_layout('VPS Servers', url_for('servers.add'), 'Add Server', 'fas fa-plus', 'btn-primary') %}
+    {% call card_container('Server List') %}
         {% if servers %}
         <div class="table-responsive">
             <table class="table table-striped">
@@ -68,29 +59,7 @@
                                 </button>
                             </div>
                             
-                            <!-- Delete Modal -->
-                            <div class="modal fade" id="deleteServerModal{{ server.id }}" tabindex="-1" aria-labelledby="deleteServerModalLabel" aria-hidden="true">
-                                <div class="modal-dialog">
-                                    <div class="modal-content">
-                                        <div class="modal-header">
-                                            <h5 class="modal-title" id="deleteServerModalLabel">Confirm Deletion</h5>
-                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                        </div>
-                                        <div class="modal-body">
-                                            Are you sure you want to delete the server <strong>{{ server.name }}</strong>?
-                                            <div class="alert alert-warning mt-3">
-                                                <i class="fas fa-exclamation-triangle me-1"></i> This will also delete all databases and backup jobs associated with this server.
-                                            </div>
-                                        </div>
-                                        <div class="modal-footer">
-                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                            <form action="{{ url_for('servers.delete', id=server.id) }}" method="post">
-                                                <button type="submit" class="btn btn-danger">Delete</button>
-                                            </form>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                            {{ confirmation_modal('deleteServerModal' + server.id|string, 'Confirm Deletion', 'Are you sure you want to delete the server <strong>' + server.name + '</strong>?<div class="alert alert-warning mt-3"><i class="fas fa-exclamation-triangle me-1"></i> This will also delete all databases and backup jobs associated with this server.</div>', url_for('servers.delete', id=server.id)) }}
                         </td>
                     </tr>
                     {% endfor %}
@@ -98,12 +67,10 @@
             </table>
         </div>
         {% else %}
-        <div class="alert alert-info">
-            No servers found. Click the "Add Server" button to add your first VPS server.
-        </div>
+        {{ info_alert('No servers found. Click the "Add Server" button to add your first VPS server.') }}
         {% endif %}
-    </div>
-</div>
+    {% endcall %}
+{% endcall %}
 
 
 {% endblock %}

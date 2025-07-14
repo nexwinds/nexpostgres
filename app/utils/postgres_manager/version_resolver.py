@@ -1,12 +1,12 @@
 """PostgreSQL version resolution utilities.
 
 This module provides centralized version resolution logic for PostgreSQL installations,
-ensuring DRY principles and maintainability.
-"""
+ensuring DRY principles and maintainability."""
 
 import logging
 from typing import Dict, List, Optional, Tuple
 from .constants import PostgresConstants
+from .error_handler import PostgresErrorHandler
 
 
 class PostgresVersionResolver:
@@ -23,6 +23,7 @@ class PostgresVersionResolver:
         self.ssh = ssh_manager
         self.system_utils = system_utils
         self.logger = logger or logging.getLogger(__name__)
+        self.error_handler = PostgresErrorHandler(self.logger)
     
     def resolve_version(self, requested_version: str = None) -> Tuple[bool, str, Dict]:
         """Resolve a PostgreSQL version to install.
@@ -115,7 +116,10 @@ class PostgresVersionResolver:
                 metadata['warnings'].append(f"Version {version} is not available even after repository setup")
                 return False, metadata
         else:
-            self.logger.warning(f"Failed to setup PostgreSQL repository: {repo_message}")
+            self.error_handler.log_warning_with_context(
+                f"Failed to setup PostgreSQL repository: {repo_message}",
+                "Repository Setup"
+            )
             metadata['warnings'].append(f"Repository setup failed: {repo_message}")
             return False, metadata
     
@@ -207,6 +211,9 @@ class PostgresVersionResolver:
         if version not in PostgresConstants.VERSION_SPECIFIC:
             return
         
+        # Use error handler for consistent warning logging
+        self.error_handler.validate_and_log_version_warning(version)
+        
         version_info = PostgresConstants.VERSION_SPECIFIC[version]
         status = version_info['status']
         eol_date = version_info['eol_date']
@@ -214,11 +221,9 @@ class PostgresVersionResolver:
         if status == 'EOL':
             warning = f"PostgreSQL {version} has reached end-of-life on {eol_date}. Consider upgrading to version {PostgresConstants.SUPPORTED_VERSIONS['recommended']}."
             metadata['warnings'].append(warning)
-            self.logger.warning(warning)
         elif status == 'deprecated':
             warning = f"PostgreSQL {version} is deprecated and will reach end-of-life on {eol_date}. Consider upgrading to version {PostgresConstants.SUPPORTED_VERSIONS['recommended']}."
             metadata['warnings'].append(warning)
-            self.logger.warning(warning)
     
     def get_version_specific_packages(self, version: str) -> List[str]:
         """Get version-specific package names.
@@ -229,26 +234,7 @@ class PostgresVersionResolver:
         Returns:
             list: Package names for the version
         """
-        os_type = self.system_utils.detect_os()
-        base_packages = PostgresConstants.PACKAGE_NAMES.get(os_type, {})
-        
-        if not base_packages:
-            return []
-        
-        packages = []
-        
-        if os_type == 'debian':
-            # For Debian/Ubuntu: postgresql-16, postgresql-contrib-16
-            packages.append(f"postgresql-{version}")
-            if 'postgresql_contrib' in base_packages:
-                packages.append(f"postgresql-contrib-{version}")
-        elif os_type == 'rhel':
-            # For RHEL/CentOS: postgresql16-server, postgresql16-contrib
-            packages.append(f"postgresql{version}-server")
-            if 'postgresql_contrib' in base_packages:
-                packages.append(f"postgresql{version}-contrib")
-        
-        return packages
+        return self.system_utils.get_postgres_package_names(version)
     
     def get_available_versions(self) -> List[str]:
         """Get list of available PostgreSQL versions.

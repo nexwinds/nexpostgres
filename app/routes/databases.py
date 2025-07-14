@@ -2,7 +2,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from app.models.database import VpsServer, PostgresDatabase, PostgresDatabaseUser, RestoreLog, db
 from app.utils.database_service import DatabaseService, DatabaseImportService
-from app.utils.validation_service import ValidationService
+from app.utils.unified_validation_service import UnifiedValidationService
 import secrets
 import string
 from datetime import datetime
@@ -31,20 +31,20 @@ def add_database():
     
     # Validate required fields
     required_fields = ['vps_server_id', 'name', 'password']
-    field_errors = ValidationService.validate_required_fields(data, required_fields)
-    if field_errors:
+    fields_valid, field_errors = UnifiedValidationService.validate_required_fields(data, required_fields)
+    if not fields_valid:
         for error in field_errors:
             flash(error, 'error')
         return redirect(url_for('databases.add_database'))
     
     # Validate database name
-    name_valid, name_error = ValidationService.validate_database_name(data['name'])
+    name_valid, name_error = UnifiedValidationService.validate_database_name(data['name'])
     if not name_valid:
         flash(name_error, 'error')
         return redirect(url_for('databases.add_database'))
     
     # Check if database already exists
-    if DatabaseService.validate_database_exists(data['name'], int(data['vps_server_id'])):
+    if UnifiedValidationService.validate_database_exists_by_name(data['name'], int(data['vps_server_id'])):
         flash('A database with this name already exists on the selected server', 'error')
         return redirect(url_for('databases.add_database'))
     
@@ -59,11 +59,11 @@ def add_database():
     
     # Generate username and use password from form
     existing_users = [user.username for user in PostgresDatabaseUser.query.all()]
-    username = ValidationService.generate_username(data['name'], existing_users)
+    username = UnifiedValidationService.generate_username(data['name'], existing_users)
     password = data.get('password', '').strip()
     
     # Validate password
-    password_valid, password_error = ValidationService.validate_password(password)
+    password_valid, password_error = UnifiedValidationService.validate_password(password)
     if not password_valid:
         flash(password_error, 'error')
         return redirect(url_for('databases.add_database'))
@@ -146,7 +146,7 @@ def edit_database(database_id):
     new_password = request.form.get('new_password', '').strip()
     
     # Validate password
-    password_valid, password_error = ValidationService.validate_password(new_password)
+    password_valid, password_error = UnifiedValidationService.validate_password(new_password)
     if not password_valid:
         flash(password_error, 'error')
         return redirect(url_for('databases.edit_database', database_id=database_id))
@@ -200,30 +200,30 @@ def add_database_user(database_id):
     
     # Validate required fields
     required_fields = ['username', 'permission_level', 'password']
-    field_errors = ValidationService.validate_required_fields(data, required_fields)
+    fields_valid, field_errors = UnifiedValidationService.validate_required_fields(data, required_fields)
     
     # Validate individual fields
     validations = [
-        ValidationService.validate_username(data.get('username', '')),
-        ValidationService.validate_permission_level(data.get('permission_level', ''))
+        UnifiedValidationService.validate_username(data.get('username', '')),
+            UnifiedValidationService.validate_permission_level(data.get('permission_level', ''))
     ]
     
-    if field_errors:
+    if not fields_valid:
         for error in field_errors:
             flash(error, 'error')
         return redirect(url_for('databases.add_database_user', database_id=database_id))
     
-    if not ValidationService.validate_and_flash_errors(validations):
+    if not UnifiedValidationService.validate_and_flash_errors(validations):
         return redirect(url_for('databases.add_database_user', database_id=database_id))
     
     # Check if user already exists
-    if DatabaseService.validate_user_exists(data['username'], database_id):
+    if UnifiedValidationService.validate_user_exists(data['username'], database_id):
         flash('A user with this username already exists for this database', 'error')
         return redirect(url_for('databases.add_database_user', database_id=database_id))
     
     # Get password from form and validate it
     password = data.get('password', '').strip()
-    password_valid, password_error = ValidationService.validate_password(password)
+    password_valid, password_error = UnifiedValidationService.validate_password(password)
     if not password_valid:
         flash(password_error, 'error')
         return redirect(url_for('databases.add_database_user', database_id=database_id))
@@ -320,7 +320,7 @@ def edit_database_user(database_id, user_id):
     new_permission = request.form.get('permission_level', '').strip()
     
     # Validate permission level
-    permission_valid, permission_error = ValidationService.validate_permission_level(new_permission)
+    permission_valid, permission_error = UnifiedValidationService.validate_permission_level(new_permission)
     if not permission_valid:
         flash(permission_error, 'error')
         return redirect(url_for('databases.edit_database_user', 
@@ -448,7 +448,7 @@ def import_database(database_id):
         connection_string = data.get('connection_url', '').strip()
         
         # Validate connection string
-        url_valid, url_error = ValidationService.validate_connection_string(connection_string)
+        url_valid, url_error = UnifiedValidationService.validate_connection_string(connection_string)
         if not url_valid:
             flash(url_error, 'error')
             return redirect(url_for('databases.import_database', database_id=database_id))
@@ -456,7 +456,7 @@ def import_database(database_id):
         # Build connection string from individual fields
         required_fields = ['source_host', 'source_port', 'source_username', 
                           'source_password', 'source_database']
-        field_errors = ValidationService.validate_required_fields(data, required_fields)
+        field_errors = UnifiedValidationService.validate_required_fields(data, required_fields)
         
         if field_errors:
             for error in field_errors:

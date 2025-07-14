@@ -85,39 +85,7 @@ class DatabaseService:
             if ssh:
                 ssh.disconnect()
     
-    @staticmethod
-    def validate_database_exists(name: str, server_id: int, exclude_id: Optional[int] = None) -> bool:
-        """Check if database already exists on server.
-        
-        Args:
-            name: Database name
-            server_id: Server ID
-            exclude_id: Database ID to exclude from check (for updates)
-            
-        Returns:
-            True if database exists, False otherwise
-        """
-        query = PostgresDatabase.query.filter_by(name=name, vps_server_id=server_id)
-        if exclude_id:
-            query = query.filter(PostgresDatabase.id != exclude_id)
-        return query.first() is not None
-    
-    @staticmethod
-    def validate_user_exists(username: str, database_id: int, exclude_id: Optional[int] = None) -> bool:
-        """Check if user already exists for database.
-        
-        Args:
-            username: Username
-            database_id: Database ID
-            exclude_id: User ID to exclude from check (for updates)
-            
-        Returns:
-            True if user exists, False otherwise
-        """
-        query = PostgresDatabaseUser.query.filter_by(username=username, database_id=database_id)
-        if exclude_id:
-            query = query.filter(PostgresDatabaseUser.id != exclude_id)
-        return query.first() is not None
+
     
     @staticmethod
     def create_database_operation(pg_manager: PostgresManager, name: str, 

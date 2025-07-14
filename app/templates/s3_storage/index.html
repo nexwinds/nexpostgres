@@ -1,20 +1,11 @@
 {% extends "base.html" %}
+{% from 'macros.html' import page_layout, card_container, confirmation_modal, info_alert %}
 
 {% block title %}S3 Storage Configurations - NEXPOSTGRES{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h1>S3 Storage Configurations</h1>
-    <a href="{{ url_for('s3_storage.add') }}" class="btn btn-primary">
-        <i class="fas fa-plus me-1"></i> Add S3 Storage
-    </a>
-</div>
-
-<div class="card shadow">
-    <div class="card-header bg-light">
-        <h5 class="mb-0">Available S3 Storage Configurations</h5>
-    </div>
-    <div class="card-body">
+{% call page_layout('S3 Storage Configurations', url_for('s3_storage.add'), 'Add S3 Storage', 'fas fa-plus', 'btn-primary') %}
+    {% call card_container('Available S3 Storage Configurations') %}
         {% if storages %}
         <div class="table-responsive">
             <table class="table table-hover">
@@ -47,27 +38,7 @@
                                 </button>
                             </div>
                             
-                            <!-- Delete Confirmation Modal -->
-                            <div class="modal fade" id="deleteModal{{ storage.id }}" tabindex="-1">
-                                <div class="modal-dialog">
-                                    <div class="modal-content">
-                                        <div class="modal-header">
-                                            <h5 class="modal-title">Delete S3 Storage Configuration</h5>
-                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                        </div>
-                                        <div class="modal-body">
-                                            <p>Are you sure you want to delete the S3 storage configuration <strong>{{ storage.name }}</strong>?</p>
-                                            <p class="text-danger">This action cannot be undone. Any backup jobs using this storage configuration will need to be updated.</p>
-                                        </div>
-                                        <div class="modal-footer">
-                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                            <form action="{{ url_for('s3_storage.delete', id=storage.id) }}" method="post">
-                                                <button type="submit" class="btn btn-danger">Delete</button>
-                                            </form>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                            {{ confirmation_modal('deleteModal' + storage.id|string, 'Delete S3 Storage Configuration', 'Are you sure you want to delete the S3 storage configuration <strong>' + storage.name + '</strong>?<p class="text-danger">This action cannot be undone. Any backup jobs using this storage configuration will need to be updated.</p>', url_for('s3_storage.delete', id=storage.id)) }}
                         </td>
                     </tr>
                     {% endfor %}
@@ -75,19 +46,11 @@
             </table>
         </div>
         {% else %}
-        <div class="alert alert-info">
-            <i class="fas fa-info-circle me-2"></i> No S3 storage configurations found. 
-            <a href="{{ url_for('s3_storage.add') }}" class="alert-link">Add your first S3 storage configuration</a>.
-        </div>
+        {{ info_alert('No S3 storage configurations found. <a href="' + url_for('s3_storage.add') + '" class="alert-link">Add your first S3 storage configuration</a>.', 'fas fa-info-circle') }}
         {% endif %}
-    </div>
-</div>
+    {% endcall %}
 
-<div class="card shadow mt-4">
-    <div class="card-header bg-light">
-        <h5 class="mb-0">About S3 Storage Configurations</h5>
-    </div>
-    <div class="card-body">
+    {% call card_container('About S3 Storage Configurations', 'mt-4') %}
         <p>S3 storage configurations allow you to reuse the same S3 bucket settings across multiple backup jobs.</p>
         <p>Benefits of using S3 storage configurations:</p>
         <ul>
@@ -96,6 +59,6 @@
             <li>Improved security by storing credentials in one place</li>
         </ul>
         <p>Each backup job must be associated with an S3 storage configuration.</p>
-    </div>
-</div>
+    {% endcall %}
+{% endcall %}
 {% endblock %}

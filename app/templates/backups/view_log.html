@@ -6,7 +6,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>Backup Log Details</h1>
     <div>
-        <a href="{{ url_for('backups.logs', job_id=log.backup_job_id) }}" class="btn btn-secondary">
+        <a href="{{ url_for('backups.backup_logs', backup_job_id=log.backup_job_id) }}" class="btn btn-secondary">
             <i class="fas fa-arrow-left me-1"></i> Back to Logs
         </a>
     </div>
@@ -174,4 +174,4 @@
 </div>
 {% endif %}
 
-{% endblock %} 
+{% endblock %}

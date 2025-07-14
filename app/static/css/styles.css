@@ -1,57 +1,30 @@
-/* Custom CSS for NEXPOSTGRES */
-
+/* Custom styles for NEXPOSTGRES */
 :root {
-    /* Light theme variables */
+    /* Light theme colors */
     --bg-color: #ffffff;
     --text-color: #212529;
     --card-bg: #ffffff;
-    --card-border: #e5e7eb;
     --navbar-bg: #0d6efd;
-    --navbar-color: #ffffff;
-    --code-bg: #f9f9f9;
-    --code-border: #e1e1e1;
-    --table-header-bg: #f9fafb;
-    --table-header-color: #495057;
-    --table-border: #dee2e6;
-    --alert-bg: #f8f9fa;
+    --code-bg: #f8f9fa;
+    --table-bg: #ffffff;
     --input-bg: #ffffff;
-    --input-border: #ced4da;
     --dropdown-bg: #ffffff;
-    --dropdown-color: #212529;
-    --dropdown-hover-bg: #f8f9fa;
-    --log-bg: #fafbfc;
-    --log-color: #333;
-    --log-border: #e0e0e0;
-    --footer-color: #6c757d;
     --link-color: #0d6efd;
-    --link-hover-color: #0a58ca;
+    --footer-bg: #f8f9fa;
 }
 
 [data-theme="dark"] {
-    /* Dark theme variables */
-    --bg-color: #121212;
-    --text-color: #e0e0e0;
-    --card-bg: #1e1e1e;
-    --card-border: #2d2d2d;
-    --navbar-bg: #0c5cce;
-    --navbar-color: #ffffff;
+    /* Dark theme colors */
+    --bg-color: #1a1a1a;
+    --text-color: #e9ecef;
+    --card-bg: #2d2d2d;
+    --navbar-bg: #0d6efd;
     --code-bg: #2d2d2d;
-    --code-border: #444444;
-    --table-header-bg: #1e1e1e;
-    --table-header-color: #b0b0b0;
-    --table-border: #2d2d2d;
-    --alert-bg: #1e1e1e;
+    --table-bg: #2d2d2d;
     --input-bg: #2d2d2d;
-    --input-border: #444444;
     --dropdown-bg: #2d2d2d;
-    --dropdown-color: #e0e0e0;
-    --dropdown-hover-bg: #3d3d3d;
-    --log-bg: #2d2d2d;
-    --log-color: #e0e0e0;
-    --log-border: #444444;
-    --footer-color: #b0b0b0;
-    --link-color: #63a2ff;
-    --link-hover-color: #8eb8ff;
+    --link-color: #66b3ff;
+    --footer-bg: #2d2d2d;
 }
 
 body {
@@ -60,17 +33,13 @@ body {
     flex-direction: column;
     background-color: var(--bg-color);
     color: var(--text-color);
-    font-family: system-ui, sans-serif;
-    transition: background-color 0.3s, color 0.3s;
-}
-
-.content {
-    flex: 1;
+    transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 /* Bootstrap overrides for dark mode */
 [data-theme="dark"] .bg-light {
-    background-color: var(--bg-color) !important;
+    background-color: var(--card-bg) !important;
+    color: var(--text-color) !important;
 }
 
 [data-theme="dark"] .navbar-dark {
@@ -79,213 +48,96 @@ body {
 
 [data-theme="dark"] .dropdown-menu {
     background-color: var(--dropdown-bg);
-    color: var(--dropdown-color);
-    border-color: var(--card-border);
+    border-color: #495057;
 }
 
 [data-theme="dark"] .dropdown-item {
-    color: var(--dropdown-color);
+    color: var(--text-color);
 }
 
-[data-theme="dark"] .dropdown-item:hover,
-[data-theme="dark"] .dropdown-item:focus {
-    background-color: var(--dropdown-hover-bg);
+[data-theme="dark"] .dropdown-item:hover {
+    background-color: #495057;
+    color: var(--text-color);
 }
 
 [data-theme="dark"] .table {
+    background-color: var(--table-bg);
     color: var(--text-color);
+}
+
+[data-theme="dark"] .table th,
+[data-theme="dark"] .table td {
+    border-color: #495057;
 }
 
 [data-theme="dark"] .form-control,
 [data-theme="dark"] .form-select {
     background-color: var(--input-bg);
-    border-color: var(--input-border);
+    border-color: #495057;
     color: var(--text-color);
 }
 
 [data-theme="dark"] .form-control:focus,
 [data-theme="dark"] .form-select:focus {
     background-color: var(--input-bg);
+    border-color: #86b7fe;
     color: var(--text-color);
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
 }
 
 [data-theme="dark"] .text-muted {
-    color: var(--footer-color) !important;
+    color: #adb5bd !important;
 }
 
 [data-theme="dark"] a {
     color: var(--link-color);
 }
 
-[data-theme="dark"] a:hover {
-    color: var(--link-hover-color);
-}
-
 [data-theme="dark"] .modal-content {
     background-color: var(--card-bg);
-    border-color: var(--card-border);
-}
-
-/* Dashboard Stats Cards */
-.card {
-    transition: transform 0.2s ease, background-color 0.3s, border-color 0.3s;
-    border: 1px solid var(--card-border);
-    border-radius: 6px;
-    box-shadow: none;
-    background-color: var(--card-bg);
-}
-
-[data-theme="dark"] .card {
-    background-color: var(--card-bg);
-    border-color: var(--card-border);
     color: var(--text-color);
 }
 
-.card:hover {
-    transform: translateY(-2px); /* Subtle hover lift */
-}
-
-/* Status Badges */
-.badge {
-    font-size: 0.85rem;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    background-color: #f1f3f5;
-    color: #343a40;
-}
-
-[data-theme="dark"] .badge {
-    background-color: #2d2d2d;
-    color: #e0e0e0;
-}
-
-/* Form Styles */
+/* Form styling */
 .form-label {
-    font-weight: 500;
-    color: var(--text-color);
+    font-weight: 600;
+    margin-bottom: 0.5rem;
 }
 
 .form-text {
-    font-size: 0.8rem;
-    color: var(--footer-color);
+    font-size: 0.875em;
+    color: #6c757d;
 }
 
-/* Table Styles */
+/* Table styling */
 .table th {
-    background-color: var(--table-header-bg);
-    font-weight: 500;
-    color: var(--table-header-color);
-    border-bottom: 1px solid var(--table-border);
+    font-weight: 600;
+    border-top: none;
 }
 
-/* Code Block for SSH Keys */
-.code-block {
-    font-family: monospace;
-    background-color: var(--code-bg);
-    border: 1px solid var(--code-border);
-    border-radius: 4px;
-    padding: 10px;
-    max-height: 300px;
-    overflow-y: auto;
-    white-space: pre;
-    color: var(--text-color);
-}
-
-/* S3 Connection Test Feedback */
-.connection-status {
-    display: none;
-    padding: 10px;
-    border-radius: 4px;
-    margin-top: 15px;
-    font-size: 0.9rem;
-}
-
-.connection-success {
-    background-color: #e6f4ea;
-    border: 1px solid #b7e0c2;
-    color: #207245;
-}
-
-.connection-failure {
-    background-color: #fbeaea;
-    border: 1px solid #f5c6cb;
-    color: #c82333;
-}
-
-/* Backup Log Details */
-.log-output {
-    font-family: monospace;
-    background-color: var(--log-bg);
-    color: var(--log-color);
-    border: 1px solid var(--log-border);
-    border-radius: 4px;
-    padding: 15px;
-    max-height: 400px;
-    overflow-y: auto;
-    white-space: pre-wrap;
-}
-
-/* Status Icons */
-.status-icon {
-    font-size: 1.1rem;
-    margin-right: 4px;
-}
-
-.status-success {
-    color: #2e7d32;
-}
-
-.status-failed {
-    color: #c62828;
-}
-
-.status-in-progress {
-    color: #f9a825;
-}
-
-/* Cron Expression Builder */
-.cron-builder label {
-    font-size: 0.9rem;
-    color: var(--text-color);
-}
-
-.cron-builder select {
-    font-size: 0.9rem;
-    border-radius: 4px;
-    border: 1px solid var(--input-border);
-    background-color: var(--input-bg);
-    color: var(--text-color);
-}
-
-/* Restore Point-in-Time UI */
-.pitr-controls {
-    padding: 15px;
-    background-color: var(--table-header-bg);
-    border-radius: 4px;
-    border: 1px solid var(--card-border);
-    margin-top: 15px;
-}
-
-/* Help tooltips */
-.help-icon {
-    color: var(--footer-color);
-    cursor: help;
-}
-
-/* Theme toggle button styles */
-#theme-toggle {
-    cursor: pointer;
-    padding: 0.5rem;
+/* Connection status */
+.status-indicator {
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.3s ease;
+    display: inline-block;
 }
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    .stats-card h2 {
-        font-size: 1.5rem;
-    }
+.status-online {
+    background-color: #28a745;
+}
+
+.status-offline {
+    background-color: #dc3545;
+}
+
+.status-loading {
+    background-color: #ffc107;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
 }

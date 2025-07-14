@@ -1,20 +1,11 @@
 {% extends "base.html" %}
+{% from 'macros.html' import page_layout, card_container, form_buttons, test_connection_button %}
 
 {% block title %}Add S3 Storage - NEXPOSTGRES{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h1>Add S3 Storage Configuration</h1>
-    <a href="{{ url_for('s3_storage.index') }}" class="btn btn-secondary">
-        <i class="fas fa-arrow-left me-1"></i> Back to S3 Storage
-    </a>
-</div>
-
-<div class="card shadow">
-    <div class="card-header bg-light">
-        <h5 class="mb-0">S3 Storage Details</h5>
-    </div>
-    <div class="card-body">
+{% call page_layout('Add S3 Storage Configuration', url_for('s3_storage.index'), 'Back to S3 Storage') %}
+    {% call card_container('S3 Storage Details') %}
         <form method="post" id="s3Form">
             <div class="mb-3">
                 <label for="name" class="form-label">Configuration Name</label>
@@ -53,79 +44,72 @@
             </div>
             
             <div class="mb-3">
-                <button type="button" id="testS3Connection" class="btn btn-outline-info">
-                    <i class="fas fa-cloud me-1"></i> Test S3 Connection
-                </button>
+                {{ test_connection_button('testS3Connection', 'Test S3 Connection', 'fas fa-cloud', 'btn btn-outline-info') }}
                 <span id="s3ConnectionResult" class="ms-3"></span>
             </div>
             
-            <div class="d-flex justify-content-end">
-                <a href="{{ url_for('s3_storage.index') }}" class="btn btn-secondary me-2">Cancel</a>
-                <button type="submit" class="btn btn-success">
-                    <i class="fas fa-save me-1"></i> Save S3 Configuration
-                </button>
-            </div>
+            {{ form_buttons(url_for('s3_storage.index'), 'Save S3 Configuration', 'fas fa-save') }}
         </form>
-    </div>
-</div>
+    {% endcall %}
+{% endcall %}
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        // Test S3 connection button
-        const testS3ConnectionBtn = document.getElementById('testS3Connection');
-        const s3ConnectionResult = document.getElementById('s3ConnectionResult');
+document.addEventListener('DOMContentLoaded', function() {
+    const testS3ConnectionBtn = document.getElementById('testS3Connection');
+    const s3ConnectionResult = document.getElementById('s3ConnectionResult');
+    
+    testS3ConnectionBtn.addEventListener('click', function() {
+        const bucket = document.getElementById('bucket').value;
+        const region = document.getElementById('region').value;
+        const accessKey = document.getElementById('access_key').value;
+        const secretKey = document.getElementById('secret_key').value;
         
-        testS3ConnectionBtn.addEventListener('click', function() {
-            const bucket = document.getElementById('bucket').value;
-            const region = document.getElementById('region').value;
-            const accessKey = document.getElementById('access_key').value;
-            const secretKey = document.getElementById('secret_key').value;
+        if (!bucket || !region || !accessKey || !secretKey) {
+            s3ConnectionResult.innerHTML = '<span class="text-danger">Please fill in all S3 fields first</span>';
+            return;
+        }
+        
+        // Show loading indicator
+        const originalContent = testS3ConnectionBtn.innerHTML;
+        testS3ConnectionBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Testing...';
+        testS3ConnectionBtn.disabled = true;
+        
+        // Create form data
+        const formData = new FormData();
+        formData.append('bucket', bucket);
+        formData.append('region', region);
+        formData.append('access_key', accessKey);
+        formData.append('secret_key', secretKey);
+        
+        // Send AJAX request
+        fetch('{{ url_for("s3_storage.test_connection") }}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Reset button
+            testS3ConnectionBtn.disabled = false;
+            testS3ConnectionBtn.innerHTML = originalContent;
             
-            if (!bucket || !region || !accessKey || !secretKey) {
-                s3ConnectionResult.innerHTML = '<span class="text-danger">Please fill in all S3 fields first</span>';
-                return;
+            // Show result
+            if (data.success) {
+                s3ConnectionResult.innerHTML = '<span class="text-success"><i class="fas fa-check-circle me-1"></i> Connection successful</span>';
+            } else {
+                s3ConnectionResult.innerHTML = `<span class="text-danger"><i class="fas fa-times-circle me-1"></i> ${data.message}</span>`;
             }
+        })
+        .catch(error => {
+            // Reset button
+            testS3ConnectionBtn.disabled = false;
+            testS3ConnectionBtn.innerHTML = originalContent;
             
-            // Show loading indicator
-            testS3ConnectionBtn.disabled = true;
-            testS3ConnectionBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Testing...';
-            
-            // Create form data
-            const formData = new FormData();
-            formData.append('bucket', bucket);
-            formData.append('region', region);
-            formData.append('access_key', accessKey);
-            formData.append('secret_key', secretKey);
-            
-            // Send AJAX request
-            fetch('{{ url_for("s3_storage.test_connection") }}', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                // Reset button
-                testS3ConnectionBtn.disabled = false;
-                testS3ConnectionBtn.innerHTML = '<i class="fas fa-cloud me-1"></i> Test S3 Connection';
-                
-                // Show result
-                if (data.success) {
-                    s3ConnectionResult.innerHTML = '<span class="text-success"><i class="fas fa-check-circle me-1"></i> Connection successful</span>';
-                } else {
-                    s3ConnectionResult.innerHTML = `<span class="text-danger"><i class="fas fa-times-circle me-1"></i> ${data.message}</span>`;
-                }
-            })
-            .catch(error => {
-                // Reset button
-                testS3ConnectionBtn.disabled = false;
-                testS3ConnectionBtn.innerHTML = '<i class="fas fa-cloud me-1"></i> Test S3 Connection';
-                
-                // Show error
-                s3ConnectionResult.innerHTML = `<span class="text-danger"><i class="fas fa-times-circle me-1"></i> Error: ${error.message}</span>`;
-            });
+            // Show error
+            s3ConnectionResult.innerHTML = `<span class="text-danger"><i class="fas fa-times-circle me-1"></i> Error: ${error.message}</span>`;
         });
     });
+});
 </script>
 {% endblock %}

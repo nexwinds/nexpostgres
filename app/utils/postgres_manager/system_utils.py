@@ -1,6 +1,7 @@
 """System utilities for PostgreSQL management."""
 
 import logging
+import time
 from typing import Dict, List, Optional, Tuple
 from .constants import PostgresConstants
 
@@ -211,7 +212,6 @@ class SystemUtils:
         Returns:
             dict: Command result
         """
-        import time
         
         max_retries = max_retries or PostgresConstants.RETRIES['max_retries']
         retry_delay = retry_delay or PostgresConstants.RETRIES['retry_delay']
@@ -290,7 +290,6 @@ class SystemUtils:
         
         if result['exit_code'] == 0:
             # Wait a moment and check if it's actually running
-            import time
             time.sleep(2)
             
             is_running, status = self.check_service_status(service_name)
@@ -330,7 +329,6 @@ class SystemUtils:
         
         if result['exit_code'] == 0:
             # Wait a moment and check if it's actually running
-            import time
             time.sleep(3)
             
             is_running, status = self.check_service_status(service_name)

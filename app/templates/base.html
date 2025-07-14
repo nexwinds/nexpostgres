@@ -1,3 +1,4 @@
+{% from 'macros.html' import flash_messages %}
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
@@ -48,8 +49,8 @@
                             <i class="fas fa-save me-1"></i> Backups
                         </a>
                         <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="{{ url_for('backups.index') }}">Backup Jobs</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('backups.logs') }}">Backup Logs</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('backups.backups') }}">Backup Jobs</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('backups.backup_logs') }}">Backup Logs</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('backups.restore') }}">Restore Database</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('backups.restore_logs') }}">Restore Logs</a></li>
                         </ul>
@@ -91,16 +92,7 @@
     </nav>
     
     <div class="container my-4">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="alert alert-{{ category }} alert-dismissible fade show">
-                        {{ message }}
-                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                    </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
+        {{ flash_messages() }}
         
         {% block content %}{% endblock %}
     </div>
@@ -119,6 +111,9 @@
     
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Common utilities -->
+    <script src="{{ url_for('static', filename='js/common.js') }}"></script>
     
     <!-- Custom JS -->
     <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>

@@ -1,6 +1,5 @@
 import os
 import sqlite3
-import json
 import shutil
 import tempfile
 import logging

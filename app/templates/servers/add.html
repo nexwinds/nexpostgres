@@ -1,42 +1,16 @@
 {% extends "base.html" %}
+{% from 'macros.html' import page_layout, card_container, form_field, form_buttons, test_connection_button, ajax_test_script %}
 
 {% block title %}Add Server - NEXPOSTGRES{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h1>Add VPS Server</h1>
-    <a href="{{ url_for('servers.index') }}" class="btn btn-secondary">
-        <i class="fas fa-arrow-left me-1"></i> Back to Servers
-    </a>
-</div>
-
-<div class="card shadow">
-    <div class="card-header bg-light">
-        <h5 class="mb-0">Server Details</h5>
-    </div>
-    <div class="card-body">
+{% call page_layout('Add VPS Server', url_for('servers.index'), 'Back to Servers') %}
+    {% call card_container('Server Details') %}
         <form method="post" id="addServerForm">
-            <div class="mb-3">
-                <label for="name" class="form-label">Server Name</label>
-                <input type="text" class="form-control" id="name" name="name" required>
-                <div class="form-text">A descriptive name for this server</div>
-            </div>
-            
-            <div class="mb-3">
-                <label for="host" class="form-label">Hostname / IP Address</label>
-                <input type="text" class="form-control" id="host" name="host" required>
-            </div>
-            
-            <div class="mb-3">
-                <label for="port" class="form-label">SSH Port</label>
-                <input type="number" class="form-control" id="port" name="port" value="22" required>
-            </div>
-            
-            <div class="mb-3">
-                <label for="postgres_port" class="form-label">PostgreSQL Port</label>
-                <input type="number" class="form-control" id="postgres_port" name="postgres_port" value="5432" required>
-                <div class="form-text">Port used by PostgreSQL on this server</div>
-            </div>
+            {{ form_field('text', 'name', 'Server Name', required=true, help_text='A descriptive name for this server') }}
+            {{ form_field('text', 'host', 'Hostname / IP Address', required=true) }}
+            {{ form_field('number', 'port', 'SSH Port', value='22', required=true) }}
+            {{ form_field('number', 'postgres_port', 'PostgreSQL Port', value='5432', required=true, help_text='Port used by PostgreSQL on this server') }}
             
             <div class="mb-3">
                 <label for="postgres_version" class="form-label">PostgreSQL Version</label>
@@ -52,75 +26,19 @@
                 </div>
             </div>
             
-            <div class="mb-3">
-                <label for="username" class="form-label">Username</label>
-                <input type="text" class="form-control" id="username" name="username" required>
-                <div class="form-text">User with SSH access to the server</div>
-            </div>
-            
-            <div class="mb-3">
-                <label for="ssh_key_content" class="form-label">SSH Key Content</label>
-                <textarea class="form-control" id="ssh_key_content" name="ssh_key_content" rows="5"></textarea>
-                <div class="form-text">Paste the content of your private key</div>
-                <input type="hidden" name="ssh_key_method" value="content">
-            </div>
+            {{ form_field('text', 'username', 'Username', required=true, help_text='User with SSH access to the server') }}
+            {{ form_field('textarea', 'ssh_key_content', 'SSH Key Content', rows=5, help_text='Paste the content of your private key') }}
+            <input type="hidden" name="ssh_key_method" value="content">
             
             <div class="d-flex justify-content-between">
-                <button type="button" id="testConnection" class="btn btn-info">
-                    <i class="fas fa-plug me-1"></i> Test Connection
-                </button>
-                <div>
-                    <a href="{{ url_for('servers.index') }}" class="btn btn-secondary me-2">Cancel</a>
-                    <button type="submit" class="btn btn-success">
-                        <i class="fas fa-save me-1"></i> Save Server
-                    </button>
-                </div>
+                {{ test_connection_button('testConnection') }}
+                {{ form_buttons(url_for('servers.index'), 'Save Server', 'fas fa-save') }}
             </div>
         </form>
-    </div>
-</div>
+    {% endcall %}
+{% endcall %}
 {% endblock %}
 
 {% block extra_js %}
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const testConnectionBtn = document.getElementById('testConnection');
-        
-        testConnectionBtn.addEventListener('click', function() {
-            // Show loading indicator
-            testConnectionBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Testing...';
-            testConnectionBtn.disabled = true;
-            
-            // Prepare form data
-            const formData = new FormData(document.getElementById('addServerForm'));
-            
-            // Send AJAX request
-            fetch('{{ url_for("servers.test_connection") }}', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                // Reset button
-                testConnectionBtn.disabled = false;
-                testConnectionBtn.innerHTML = '<i class="fas fa-plug me-1"></i> Test Connection';
-                
-                // Show result
-                if (data.success) {
-                    alert('Connection successful! SSH connection to the server was established successfully.');
-                } else {
-                    alert('Connection failed: ' + data.message);
-                }
-            })
-            .catch(error => {
-                // Reset button
-                testConnectionBtn.disabled = false;
-                testConnectionBtn.innerHTML = '<i class="fas fa-plug me-1"></i> Test Connection';
-                
-                // Show error
-                alert('Error: ' + error.message);
-            });
-        });
-    });
-</script>
+{{ ajax_test_script('testConnection', url_for('servers.test_connection'), 'addServerForm', 'Connection successful! SSH connection to the server was established successfully.') }}
 {% endblock %}

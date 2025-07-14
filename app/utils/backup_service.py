@@ -328,6 +328,32 @@ class BackupService:
         return BackupService.execute_with_postgres(
             backup_job.database.server, 'Retention policy application', retention_operation
         )
+    
+    @staticmethod
+    def get_backup_logs_for_api(backup_job_id):
+        """Get backup logs for API endpoint.
+        
+        Args:
+            backup_job_id: Backup job ID
+            
+        Returns:
+            list: List of backup log dictionaries
+        """
+        logs = BackupLog.query.filter_by(
+            backup_job_id=backup_job_id,
+            status='success'
+        ).order_by(BackupLog.end_time.desc()).all()
+        
+        return [{
+            'id': log.id,
+            'status': log.status,
+            'start_time': log.start_time.strftime('%Y-%m-%d %H:%M:%S') if log.start_time else None,
+            'end_time': log.end_time.strftime('%Y-%m-%d %H:%M:%S') if log.end_time else None,
+            'backup_type': log.backup_type or 'full',
+            'size_mb': round(log.size_bytes / (1024 * 1024), 2) if log.size_bytes else None,
+            'output': log.log_output,
+            'error_message': None
+        } for log in logs]
 
 
 class BackupRestoreService:
@@ -535,7 +561,7 @@ class BackupRestoreService:
         return restore_log
     
     @staticmethod
-    def execute_restore(database, backup_name, recovery_time, restore_log):
+    def _execute_restore_operation(database, backup_name, recovery_time, restore_log):
         """Execute restore operation.
         
         Args:
@@ -618,6 +644,49 @@ class BackupRestoreService:
                             restore_log.backup_log_id = closest_log.id
         except Exception:
             pass  # Ignore errors in this optional enhancement
+    
+    def execute_restore(self, validated_data):
+        """Execute restore operation with validated data.
+        
+        Args:
+            validated_data: Dictionary containing validated form data
+            
+        Returns:
+            tuple: (success, message)
+        """
+        try:
+            # Extract data
+            backup_job = validated_data['backup_job']
+            database = validated_data['database']
+            backup_log_id = validated_data.get('backup_log_id')
+            use_recovery_time = validated_data.get('use_recovery_time', False)
+            recovery_time = validated_data.get('recovery_time')
+            
+            # Find backup name
+            backup_name, updated_backup_log_id = self.find_backup_name(backup_job, backup_log_id)
+            if not backup_name:
+                return False, 'No suitable backup found for restore'
+            
+            # Create restore log
+            restore_log = self.create_restore_log(
+                database.id, 
+                updated_backup_log_id, 
+                recovery_time, 
+                use_recovery_time
+            )
+            
+            # Execute restore
+            success, message = self._execute_restore_operation(
+                database, 
+                backup_name, 
+                recovery_time, 
+                restore_log
+            )
+            
+            return success, message
+            
+        except Exception as e:
+            return False, f'Error during restore operation: {str(e)}'
 
 
 class S3TestService:

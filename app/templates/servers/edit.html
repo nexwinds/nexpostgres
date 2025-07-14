@@ -1,20 +1,11 @@
 {% extends "base.html" %}
+{% from 'macros.html' import page_layout, card_container, form_buttons, test_connection_button %}
 
 {% block title %}Edit Server - NEXPOSTGRES{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h1>Edit Server: {{ server.name }}</h1>
-    <a href="{{ url_for('servers.index') }}" class="btn btn-secondary">
-        <i class="fas fa-arrow-left me-1"></i> Back to Servers
-    </a>
-</div>
-
-<div class="card shadow">
-    <div class="card-header bg-light">
-        <h5 class="mb-0">Server Details</h5>
-    </div>
-    <div class="card-body">
+{% call page_layout('Edit Server: ' + server.name, url_for('servers.index'), 'Back to Servers') %}
+    {% call card_container('Server Details') %}
         <form method="post" id="editServerForm">
             <div class="mb-3">
                 <label for="name" class="form-label">Server Name</label>
@@ -68,19 +59,12 @@
             </div>
             
             <div class="d-flex justify-content-between">
-                <button type="button" id="testConnectionBtn" class="btn btn-info">
-                    <i class="fas fa-plug me-1"></i> Test Connection
-                </button>
-                <div>
-                    <a href="{{ url_for('servers.index') }}" class="btn btn-secondary me-2">Cancel</a>
-                    <button type="submit" class="btn btn-success">
-                        <i class="fas fa-save me-1"></i> Save Changes
-                    </button>
-                </div>
+                {{ test_connection_button('testConnectionBtn') }}
+                {{ form_buttons(url_for('servers.index'), 'Save Changes', 'fas fa-save') }}
             </div>
         </form>
-    </div>
-</div>
+    {% endcall %}
+{% endcall %}
 {% endblock %}
 
 {% block extra_js %}
@@ -123,6 +107,7 @@
         
         testConnectionBtn.addEventListener('click', function() {
             // Show loading indicator
+            const originalContent = testConnectionBtn.innerHTML;
             testConnectionBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Testing...';
             testConnectionBtn.disabled = true;
             
@@ -138,7 +123,7 @@
             .then(data => {
                 // Reset button
                 testConnectionBtn.disabled = false;
-                testConnectionBtn.innerHTML = '<i class="fas fa-plug me-1"></i> Test Connection';
+                testConnectionBtn.innerHTML = originalContent;
                 
                 // Show result
                 if (data.success) {
@@ -150,7 +135,7 @@
             .catch(error => {
                 // Reset button
                 testConnectionBtn.disabled = false;
-                testConnectionBtn.innerHTML = '<i class="fas fa-plug me-1"></i> Test Connection';
+                testConnectionBtn.innerHTML = originalContent;
                 
                 // Show error
                 alert('Error: ' + error.message);

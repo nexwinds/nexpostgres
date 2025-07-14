@@ -1,20 +1,11 @@
 {% extends "base.html" %}
+{% from 'macros.html' import page_layout, card_container, form_buttons %}
 
 {% block title %}Add Backup Job - NEXPOSTGRES{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h1>Add Backup Job</h1>
-    <a href="{{ url_for('backups.index') }}" class="btn btn-secondary">
-        <i class="fas fa-arrow-left me-1"></i> Back to Backup Jobs
-    </a>
-</div>
-
-<div class="card shadow">
-    <div class="card-header bg-light">
-        <h5 class="mb-0">Job Details</h5>
-    </div>
-    <div class="card-body">
+{% call page_layout('Add Backup Job', url_for('backups.backups'), 'Back to Backup Jobs') %}
+    {% call card_container('Job Details') %}
         <form method="post" id="backupForm">
             <!-- Basic Information -->
             <h4 class="border-bottom pb-2 mb-3">Basic Information</h4>
@@ -81,13 +72,8 @@
                 </div>
             </div>
             
-            <div class="d-flex justify-content-end">
-                <a href="{{ url_for('backups.index') }}" class="btn btn-secondary me-2">Cancel</a>
-                <button type="submit" class="btn btn-success">
-                    <i class="fas fa-save me-1"></i> Create Backup Job
-                </button>
-            </div>
+            {{ form_buttons(url_for('backups.backups'), 'Create Backup Job', 'fas fa-save') }}
         </form>
-    </div>
-</div>
-{% endblock %} 
+    {% endcall %}
+{% endcall %}
+{% endblock %}

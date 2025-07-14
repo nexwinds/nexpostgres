@@ -1,20 +1,11 @@
 {% extends "base.html" %}
+{% from 'macros.html' import page_layout, card_container, form_buttons, test_connection_button %}
 
 {% block title %}Edit S3 Storage - NEXPOSTGRES{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h1>Edit S3 Storage Configuration: {{ storage.name }}</h1>
-    <a href="{{ url_for('s3_storage.index') }}" class="btn btn-secondary">
-        <i class="fas fa-arrow-left me-1"></i> Back to S3 Storage
-    </a>
-</div>
-
-<div class="card shadow">
-    <div class="card-header bg-light">
-        <h5 class="mb-0">S3 Storage Details</h5>
-    </div>
-    <div class="card-body">
+{% call page_layout('Edit S3 Storage Configuration: ' + storage.name, url_for('s3_storage.index'), 'Back to S3 Storage') %}
+    {% call card_container('S3 Storage Details') %}
         <form method="post" id="s3Form">
             <div class="mb-3">
                 <label for="name" class="form-label">Configuration Name</label>
@@ -60,21 +51,13 @@
             </div>
             
             <div class="d-flex justify-content-end">
-                <a href="{{ url_for('s3_storage.index') }}" class="btn btn-secondary me-2">Cancel</a>
-                <button type="submit" class="btn btn-success">
-                    <i class="fas fa-save me-1"></i> Save Changes
-                </button>
+                {{ form_buttons(url_for('s3_storage.index'), 'Save Changes', 'fas fa-save') }}
             </div>
         </form>
-    </div>
-</div>
+    {% endcall %}
 
 {% if storage.backup_jobs %}
-<div class="card shadow mt-4">
-    <div class="card-header bg-light">
-        <h5 class="mb-0">Backup Jobs Using This S3 Storage</h5>
-    </div>
-    <div class="card-body">
+    {% call card_container('Backup Jobs Using This S3 Storage', 'mt-4') %}
         <div class="table-responsive">
             <table class="table table-hover">
                 <thead>
@@ -100,7 +83,7 @@
                         </td>
                         <td><code>{{ job.cron_expression }}</code></td>
                         <td>
-                            <a href="{{ url_for('backups.edit', id=job.id) }}" class="btn btn-sm btn-outline-primary">
+                            <a href="{{ url_for('backups.edit_backup', backup_job_id=job.id) }}" class="btn btn-sm btn-outline-primary">
                                 <i class="fas fa-edit"></i> Edit Job
                             </a>
                         </td>
@@ -109,9 +92,9 @@
                 </tbody>
             </table>
         </div>
-    </div>
-</div>
+    {% endcall %}
 {% endif %}
+{% endcall %}
 {% endblock %}
 
 {% block extra_js %}
@@ -133,6 +116,7 @@
             }
             
             // Show loading indicator
+            const originalContent = testS3ConnectionBtn.innerHTML;
             testS3ConnectionBtn.disabled = true;
             testS3ConnectionBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Testing...';
             
@@ -160,7 +144,7 @@
             .then(data => {
                 // Reset button
                 testS3ConnectionBtn.disabled = false;
-                testS3ConnectionBtn.innerHTML = '<i class="fas fa-cloud me-1"></i> Test S3 Connection';
+                testS3ConnectionBtn.innerHTML = originalContent;
                 
                 // Show result
                 if (data.success) {
@@ -172,7 +156,7 @@
             .catch(error => {
                 // Reset button
                 testS3ConnectionBtn.disabled = false;
-                testS3ConnectionBtn.innerHTML = '<i class="fas fa-cloud me-1"></i> Test S3 Connection';
+                testS3ConnectionBtn.innerHTML = originalContent;
                 
                 // Show error
                 s3ConnectionResult.innerHTML = `<span class="text-danger"><i class="fas fa-times-circle me-1"></i> Error: ${error.message}</span>`;

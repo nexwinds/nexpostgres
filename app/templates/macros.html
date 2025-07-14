@@ -1,0 +1,380 @@
+{% macro page_header(title, back_url=None, back_text="Back") %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>{{ title }}</h1>
+    {% if back_url %}
+    <a href="{{ back_url }}" class="btn btn-secondary">
+        <i class="fas fa-arrow-left me-1"></i> {{ back_text }}
+    </a>
+    {% endif %}
+</div>
+{% endmacro %}
+
+{% macro form_card(title, form_content, alert_message=None, alert_type="primary") %}
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">{{ title }}</h5>
+    </div>
+    <div class="card-body">
+        {% if alert_message %}
+        <div class="alert alert-{{ alert_type }} mb-3">
+            <i class="fas fa-bolt me-2"></i> {{ alert_message }}
+        </div>
+        {% endif %}
+        {{ form_content }}
+    </div>
+</div>
+{% endmacro %}
+
+{% macro form_field(field_type, name, label, value="", required=False, help_text=None, options=None, readonly=False, placeholder="", rows=5) %}
+<div class="mb-3">
+    <label for="{{ name }}" class="form-label">{{ label }}</label>
+    
+    {% if field_type == "text" or field_type == "password" or field_type == "email" %}
+        <input type="{{ field_type }}" 
+               class="form-control" 
+               id="{{ name }}" 
+               name="{{ name }}" 
+               value="{{ value }}"
+               {% if required %}required{% endif %}
+               {% if readonly %}readonly{% endif %}
+               {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}>
+    
+    {% elif field_type == "number" %}
+        <input type="number" 
+               class="form-control" 
+               id="{{ name }}" 
+               name="{{ name }}" 
+               value="{{ value }}"
+               {% if required %}required{% endif %}
+               {% if readonly %}readonly{% endif %}
+               {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}>
+    
+    {% elif field_type == "textarea" %}
+        <textarea class="form-control" 
+                  id="{{ name }}" 
+                  name="{{ name }}" 
+                  rows="{{ rows }}"
+                  {% if required %}required{% endif %}
+                  {% if readonly %}readonly{% endif %}
+                  {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}>{{ value }}</textarea>
+    
+    {% elif field_type == "select" %}
+        <select class="form-select" 
+                id="{{ name }}" 
+                name="{{ name }}"
+                {% if required %}required{% endif %}>
+            {% if not required %}
+            <option value="" selected disabled>Select an option</option>
+            {% endif %}
+            {% for option in options %}
+                {% if option is mapping %}
+                    <option value="{{ option.value }}" {% if option.value == value %}selected{% endif %}>
+                        {{ option.text }}
+                    </option>
+                {% else %}
+                    <option value="{{ option }}" {% if option == value %}selected{% endif %}>
+                        {{ option }}
+                    </option>
+                {% endif %}
+            {% endfor %}
+        </select>
+    {% endif %}
+    
+    {% if help_text %}
+    <div class="form-text">{{ help_text }}</div>
+    {% endif %}
+</div>
+{% endmacro %}
+
+{% macro form_buttons(cancel_url, submit_text="Save", submit_icon="fas fa-save", cancel_text="Cancel") %}
+<div class="d-flex justify-content-end">
+    <a href="{{ cancel_url }}" class="btn btn-secondary me-2">{{ cancel_text }}</a>
+    <button type="submit" class="btn btn-success">
+        <i class="{{ submit_icon }} me-1"></i> {{ submit_text }}
+    </button>
+</div>
+{% endmacro %}
+
+{% macro status_badge(status, text=None) %}
+{% set badge_class = {
+    'success': 'bg-success',
+    'running': 'bg-primary',
+    'failed': 'bg-danger',
+    'pending': 'bg-warning',
+    'completed': 'bg-success',
+    'error': 'bg-danger',
+    'active': 'bg-success',
+    'inactive': 'bg-secondary'
+}.get(status, 'bg-secondary') %}
+
+<span class="badge {{ badge_class }}">
+    {{ text or status|title }}
+</span>
+{% endmacro %}
+
+{% macro data_table(headers, rows, actions=None, empty_message="No data available") %}
+<div class="table-responsive">
+    <table class="table table-striped table-hover">
+        <thead>
+            <tr>
+                {% for header in headers %}
+                <th>{{ header }}</th>
+                {% endfor %}
+                {% if actions %}
+                <th>Actions</th>
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% if rows %}
+                {% for row in rows %}
+                <tr>
+                    {% for cell in row.cells %}
+                    <td>{{ cell }}</td>
+                    {% endfor %}
+                    {% if actions %}
+                    <td>
+                        {% for action in actions %}
+                            {% if action.condition is not defined or action.condition(row) %}
+                            <a href="{{ action.url(row) }}" 
+                               class="btn btn-sm {{ action.class or 'btn-outline-primary' }}"
+                               {% if action.confirm %}onclick="return confirm('{{ action.confirm }}')"{% endif %}>
+                                {% if action.icon %}<i class="{{ action.icon }} me-1"></i>{% endif %}
+                                {{ action.text }}
+                            </a>
+                            {% endif %}
+                        {% endfor %}
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="{{ headers|length + (1 if actions else 0) }}" class="text-center text-muted py-4">
+                        <i class="fas fa-inbox fa-2x mb-2 d-block"></i>
+                        {{ empty_message }}
+                    </td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+{% endmacro %}
+
+{% macro info_alert(title, message, icon="fas fa-info-circle") %}
+<div class="alert alert-info mt-4">
+    <h5><i class="{{ icon }} me-2"></i> {{ title }}</h5>
+    <p class="mb-0">{{ message }}</p>
+</div>
+{% endmacro %}
+
+{% macro loading_spinner(text="Loading...") %}
+<div class="d-flex justify-content-center align-items-center py-4">
+    <div class="spinner-border text-primary me-2" role="status">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+    <span>{{ text }}</span>
+</div>
+{% endmacro %}
+
+{% macro breadcrumb(items) %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        {% for item in items %}
+            {% if loop.last %}
+                <li class="breadcrumb-item active" aria-current="page">{{ item.text }}</li>
+            {% else %}
+                <li class="breadcrumb-item">
+                    {% if item.url %}
+                        <a href="{{ item.url }}">{{ item.text }}</a>
+                    {% else %}
+                        {{ item.text }}
+                    {% endif %}
+                </li>
+            {% endif %}
+        {% endfor %}
+    </ol>
+</nav>
+{% endmacro %}
+
+{% macro confirmation_modal(modal_id, title, message, confirm_text="Confirm", cancel_text="Cancel") %}
+<div class="modal fade" id="{{ modal_id }}" tabindex="-1" aria-labelledby="{{ modal_id }}Label" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="{{ modal_id }}Label">{{ title }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                {{ message }}
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ cancel_text }}</button>
+                <button type="button" class="btn btn-danger" id="{{ modal_id }}Confirm">{{ confirm_text }}</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endmacro %}
+
+{% macro page_layout(title, back_url=None, back_text="Back", button_url=None, button_text="Add", button_icon="fas fa-plus", button_class="btn btn-primary") %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>{{ title }}</h1>
+    <div>
+        {% if button_url %}
+        <a href="{{ button_url }}" class="{{ button_class }} me-2">
+            <i class="{{ button_icon }} me-1"></i> {{ button_text }}
+        </a>
+        {% endif %}
+        {% if back_url %}
+        <a href="{{ back_url }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left me-1"></i> {{ back_text }}
+        </a>
+        {% endif %}
+    </div>
+</div>
+{{ caller() }}
+{% endmacro %}
+
+{% macro card_container(title, extra_classes="") %}
+<div class="card shadow {{ extra_classes }}">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">{{ title }}</h5>
+    </div>
+    <div class="card-body">
+        {{ caller() }}
+    </div>
+</div>
+{% endmacro %}
+
+{% macro form_layout(title, back_url, form_content, back_text="Back", extra_classes="") %}
+{% call page_layout(title, back_url, back_text) %}
+    {% call card_container(title.split(' - ')[0] if ' - ' in title else title, extra_classes) %}
+        {{ form_content }}
+    {% endcall %}
+{% endcall %}
+{% endmacro %}
+
+{% macro test_connection_button(button_id="testConnection", button_text="Test Connection", button_icon="fas fa-plug", button_class="btn btn-info") %}
+<button type="button" id="{{ button_id }}" class="{{ button_class }}">
+    <i class="{{ button_icon }} me-1"></i> {{ button_text }}
+</button>
+{% endmacro %}
+
+{% macro ajax_test_script(button_id, test_url, form_id=None, success_message="Connection successful!", error_prefix="Connection failed: ") %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const testBtn = document.getElementById('{{ button_id }}');
+    
+    testBtn.addEventListener('click', function() {
+        // Show loading indicator
+        const originalContent = testBtn.innerHTML;
+        testBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Testing...';
+        testBtn.disabled = true;
+        
+        // Prepare form data
+        {% if form_id %}
+        const formData = new FormData(document.getElementById('{{ form_id }}'));
+        {% else %}
+        const formData = new FormData();
+        // Add form fields manually if needed
+        {% endif %}
+        
+        // Send AJAX request
+        fetch('{{ test_url }}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Reset button
+            testBtn.disabled = false;
+            testBtn.innerHTML = originalContent;
+            
+            // Show result
+            if (data.success) {
+                alert('{{ success_message }}');
+            } else {
+                alert('{{ error_prefix }}' + data.message);
+            }
+        })
+        .catch(error => {
+            // Reset button
+            testBtn.disabled = false;
+            testBtn.innerHTML = originalContent;
+            
+            // Show error
+            alert('Error: ' + error.message);
+        });
+    });
+});
+</script>
+{% endmacro %}
+
+{% macro progress_bar(percentage, label="", show_percentage=True) %}
+<div class="progress mb-2">
+    <div class="progress-bar" 
+         role="progressbar" 
+         style="width: {{ percentage }}%" 
+         aria-valuenow="{{ percentage }}" 
+         aria-valuemin="0" 
+         aria-valuemax="100">
+        {% if show_percentage %}{{ percentage }}%{% endif %}
+    </div>
+</div>
+{% if label %}
+<small class="text-muted">{{ label }}</small>
+{% endif %}
+{% endmacro %}
+
+{% macro flash_messages() %}
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        {% for category, message in messages %}
+            {% set alert_class = {
+                'error': 'alert-danger',
+                'danger': 'alert-danger',
+                'warning': 'alert-warning',
+                'info': 'alert-info',
+                'success': 'alert-success'
+            }.get(category, 'alert-info') %}
+            
+            <div class="alert {{ alert_class }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        {% endfor %}
+    {% endif %}
+{% endwith %}
+{% endmacro %}
+
+{% macro stats_card(title, count, icon, color_class, link_url, link_text) %}
+<div class="col-md-4 mb-4">
+    <div class="card shadow h-100">
+        <div class="card-body">
+            <div class="row align-items-center">
+                <div class="col-3 text-{{ color_class }}">
+                    <i class="{{ icon }} fa-3x"></i>
+                </div>
+                <div class="col-9">
+                    <h5 class="card-title mb-0">{{ title }}</h5>
+                    <h2 class="mt-2 mb-0">{{ count }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="card-footer">
+            <a href="{{ link_url }}" class="text-{{ color_class }}">{{ link_text }} <i class="fas fa-chevron-right ms-1"></i></a>
+        </div>
+    </div>
+</div>
+{% endmacro %}
+
+{% macro status_badge(status) %}
+{% if status == 'success' %}
+<span class="badge bg-success">Success</span>
+{% elif status == 'failed' %}
+<span class="badge bg-danger">Failed</span>
+{% else %}
+<span class="badge bg-warning">In Progress</span>
+{% endif %}
+{% endmacro %}

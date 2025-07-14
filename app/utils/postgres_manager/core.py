@@ -8,6 +8,7 @@ from .config_manager import PostgresConfigManager
 from .backup_manager import PostgresBackupManager
 from .user_manager import PostgresUserManager
 from .version_resolver import PostgresVersionResolver
+from .error_handler import PostgresErrorHandler
 
 class PostgresManager:
     """Main PostgreSQL management class using modular components."""
@@ -15,6 +16,7 @@ class PostgresManager:
     def __init__(self, ssh_manager, logger=None):
         self.ssh = ssh_manager
         self.logger = logger or logging.getLogger(__name__)
+        self.error_handler = PostgresErrorHandler(self.logger)
         
         # Initialize modular components
         self.system_utils = SystemUtils(ssh_manager, logger)
@@ -166,7 +168,9 @@ class PostgresManager:
             self.logger.info("Updating package list...")
             update_result = self.ssh.execute_command(f"sudo {pkg_commands['update']}")
             if update_result['exit_code'] != 0:
-                self.logger.warning(f"Package update failed: {update_result.get('stderr', 'Unknown error')}")
+                self.error_handler.log_warning_with_context(
+                    "Package update failed", "Installation", update_result
+                )
         
         # Install PostgreSQL with the resolved version
         success, message = self._install_postgres_version(resolved_version)
@@ -174,7 +178,10 @@ class PostgresManager:
             return True, f"PostgreSQL {resolved_version} installed and started successfully"
         
         # If specific version installation failed, try fallback approaches
-        self.logger.warning(f"Failed to install PostgreSQL {resolved_version}, trying fallback methods...")
+        self.error_handler.log_warning_with_context(
+            f"Failed to install PostgreSQL {resolved_version}, trying fallback methods",
+            "Installation Fallback"
+        )
         
         # Try without version suffix (latest available in repository)
         success, message = self._install_postgres_version(None)
@@ -200,14 +207,18 @@ class PostgresManager:
             if os_type == 'debian':
                 update_result = self.ssh.execute_command("sudo apt-get update")
                 if update_result['exit_code'] != 0:
-                    self.logger.warning("Package update failed, continuing with installation...")
+                    self.error_handler.log_warning_with_context(
+                    "Package update failed, continuing with installation", "Installation"
+                )
             elif os_type == 'rhel':
                 # Use the detected package manager (dnf or yum)
                 pkg_commands = self.system_utils.get_package_manager_commands()
                 if 'makecache' in pkg_commands:
                     update_result = self.ssh.execute_command(f"sudo {pkg_commands['makecache']}")
                     if update_result['exit_code'] != 0:
-                        self.logger.warning("Package cache update failed, continuing with installation...")
+                        self.error_handler.log_warning_with_context(
+                    "Package cache update failed, continuing with installation", "Installation"
+                )
             
             # Get package names for the version
             package_names = self.system_utils.get_postgres_package_names(version)
@@ -227,7 +238,10 @@ class PostgresManager:
             
             if result['exit_code'] != 0:
                 # If specific version installation fails, try with recommended version
-                self.logger.warning(f"Installation of PostgreSQL {version} failed, trying recommended version...")
+                self.error_handler.log_warning_with_context(
+                    f"Installation of PostgreSQL {version} failed, trying recommended version",
+                    "Installation Fallback"
+                )
                 recommended_version = PostgresConstants.SUPPORTED_VERSIONS['recommended']
                 
                 if version != recommended_version:

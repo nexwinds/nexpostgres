@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'macros.html' import card_container, confirmation_modal, info_alert %}
 
 {% block title %}Databases - NEXPOSTGRES{% endblock %}
 
@@ -25,11 +26,7 @@
     </div>
 </div>
 
-<div class="card shadow">
-    <div class="card-header bg-light">
-        <h5 class="mb-0">Database List</h5>
-    </div>
-    <div class="card-body">
+{% call card_container('Database List') %}
         {% if databases %}
         <div class="table-responsive">
             <table class="table table-striped">
@@ -69,29 +66,7 @@
                                 </button>
                             </div>
                             
-                            <!-- Delete Modal -->
-                            <div class="modal fade" id="deleteDatabaseModal{{ database.id }}" tabindex="-1" aria-labelledby="deleteDatabaseModalLabel" aria-hidden="true">
-                                <div class="modal-dialog">
-                                    <div class="modal-content">
-                                        <div class="modal-header">
-                                            <h5 class="modal-title" id="deleteDatabaseModalLabel">Confirm Deletion</h5>
-                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                        </div>
-                                        <div class="modal-body">
-                                            Are you sure you want to delete the database <strong>{{ database.name }}</strong> on server <strong>{{ database.server.name }}</strong>?
-                                            <div class="alert alert-warning mt-3">
-                                                <i class="fas fa-exclamation-triangle me-1"></i> This will also delete all backup jobs associated with this database.
-                                            </div>
-                                        </div>
-                                        <div class="modal-footer">
-                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                            <form action="{{ url_for('databases.delete_database', database_id=database.id) }}" method="post">
-                                                <button type="submit" class="btn btn-danger">Delete</button>
-                                            </form>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                            {{ confirmation_modal('deleteDatabaseModal' + database.id|string, 'Confirm Deletion', 'Are you sure you want to delete the database <strong>' + database.name + '</strong> on server <strong>' + database.server.name + '</strong>?<div class="alert alert-warning mt-3"><i class="fas fa-exclamation-triangle me-1"></i> This will also delete all backup jobs associated with this database.</div>', url_for('databases.delete_database', database_id=database.id)) }}
                         </td>
                     </tr>
                     {% endfor %}
@@ -99,12 +74,9 @@
             </table>
         </div>
         {% else %}
-        <div class="alert alert-info">
-            No databases found. Click the "Add Database" button to add your first PostgreSQL database.
-        </div>
+        {{ info_alert('No databases found. Click the "Add Database" button to add your first PostgreSQL database.') }}
         {% endif %}
-    </div>
-</div>
+{% endcall %}
 {% endblock %}
 
 {% block extra_js %}

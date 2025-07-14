@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'macros.html' import card_container, confirmation_modal, info_alert %}
 
 {% block title %}Backup Jobs - NEXPOSTGRES{% endblock %}
 
@@ -6,20 +7,16 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>Backup Jobs</h1>
     <div>
-        <a href="{{ url_for('backups.logs') }}" class="btn btn-info me-2">
+        <a href="{{ url_for('backups.backup_logs') }}" class="btn btn-info me-2">
             <i class="fas fa-history me-1"></i> View Backup Logs
         </a>
-        <a href="{{ url_for('backups.add') }}" class="btn btn-primary">
+        <a href="{{ url_for('backups.add_backup') }}" class="btn btn-primary">
             <i class="fas fa-plus me-1"></i> Add Backup Job
         </a>
     </div>
 </div>
 
-<div class="card shadow">
-    <div class="card-header bg-light">
-        <h5 class="mb-0">Job List</h5>
-    </div>
-    <div class="card-body">
+{% call card_container('Job List') %}
         {% if backup_jobs %}
         <div class="table-responsive">
             <table class="table table-striped">
@@ -85,13 +82,13 @@
                         </td>
                         <td>
                             <div class="btn-group" role="group">
-                                <a href="{{ url_for('backups.logs', job_id=job.id) }}" class="btn btn-sm btn-outline-info">
+                                <a href="{{ url_for('backups.backup_logs', backup_job_id=job.id) }}" class="btn btn-sm btn-outline-info">
                                     <i class="fas fa-play"></i> Run/Logs
                                 </a>
-                                <a href="{{ url_for('backups.edit', id=job.id) }}" class="btn btn-sm btn-outline-primary">
+                                <a href="{{ url_for('backups.edit_backup', backup_job_id=job.id) }}" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-edit"></i> Edit
                                 </a>
-                                <form action="{{ url_for('backups.apply_retention', id=job.id) }}" method="post" class="d-inline">
+                                <form action="{{ url_for('backups.apply_retention', backup_job_id=job.id) }}" method="post" class="d-inline">
                                     <button type="submit" class="btn btn-sm btn-outline-secondary" title="Enforce retention policy (delete old backups)">
                                         <i class="fas fa-broom"></i> Apply Retention
                                     </button>
@@ -101,29 +98,7 @@
                                 </button>
                             </div>
  
-                            <!-- Delete Modal -->
-                            <div class="modal fade" id="deleteModal{{ job.id }}" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
-                                <div class="modal-dialog">
-                                    <div class="modal-content">
-                                        <div class="modal-header">
-                                            <h5 class="modal-title" id="deleteModalLabel">Confirm Deletion</h5>
-                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                        </div>
-                                        <div class="modal-body">
-                                            Are you sure you want to delete the backup job <strong>{{ job.name }}</strong>?
-                                            <div class="alert alert-warning mt-3">
-                                                <i class="fas fa-exclamation-triangle me-1"></i> This will also delete all logs associated with this backup job. Actual backup data will not be removed from storage.
-                                            </div>
-                                        </div>
-                                        <div class="modal-footer">
-                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                            <form action="{{ url_for('backups.delete', id=job.id) }}" method="post">
-                                                <button type="submit" class="btn btn-danger">Delete</button>
-                                            </form>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                            {{ confirmation_modal('deleteModal' + job.id|string, 'Confirm Deletion', 'Are you sure you want to delete the backup job <strong>' + job.name + '</strong>?<div class="alert alert-warning mt-3"><i class="fas fa-exclamation-triangle me-1"></i> This will also delete all logs associated with this backup job. Actual backup data will not be removed from storage.</div>', url_for('backups.delete_backup', backup_job_id=job.id)) }}
                             
                             <!-- Fix S3 Path Modal -->
                             {% if job.s3_storage %}
@@ -167,12 +142,9 @@
             </table>
         </div>
         {% else %}
-        <div class="alert alert-info">
-            No backup jobs found. Click the "Add Backup Job" button to create your first backup job.
-        </div>
+        {{ info_alert('No backup jobs found. Click the "Add Backup Job" button to create your first backup job.') }}
         {% endif %}
-    </div>
-</div>
+{% endcall %}
 {% endblock %}
 
 {% block extra_js %}
@@ -181,4 +153,4 @@
         // JavaScript functionality remains for other features
     });
 </script>
-{% endblock %} 
+{% endblock %}

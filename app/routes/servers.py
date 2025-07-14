@@ -404,6 +404,46 @@ def update_server(id):
             'message': str(e)
         })
 
+@servers_bp.route('/get_postgres_version/<int:id>', methods=['GET'])
+@login_required
+@first_login_required
+def get_postgres_version(id):
+    server = VpsServer.query.filter_by(id=id).first_or_404()
+    
+    try:
+        # Connect to server via SSH
+        ssh = SSHManager(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            ssh_key_content=server.ssh_key_content
+        )
+        
+        if not ssh.connect():
+            return jsonify({
+                'success': False,
+                'message': 'Failed to connect to server via SSH'
+            })
+        
+        # Get PostgreSQL version
+        pg_manager = PostgresManager(ssh)
+        postgres_version = pg_manager.get_postgres_version()
+        
+        # Disconnect
+        ssh.disconnect()
+        
+        return jsonify({
+            'success': True,
+            'version': postgres_version or 'Not installed'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        })
+
+
 @servers_bp.route('/validate-postgres-config/<int:id>', methods=['POST'])
 @login_required
 @first_login_required

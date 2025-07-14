@@ -41,7 +41,7 @@
                 <label for="password" class="form-label">Database Password</label>
                 <div class="input-group">
                     <input type="text" class="form-control" id="password" name="password" required readonly>
-                    <button type="button" class="btn btn-outline-secondary" onclick="generatePassword()">
+                    <button type="button" class="btn btn-outline-secondary" onclick="generateUserPassword()">
                         <i class="fas fa-sync-alt"></i> Regenerate
                     </button>
                 </div>
@@ -60,7 +60,7 @@
 
 <script>
     // Generate random password of 28 characters that meets validation requirements
-    function generatePassword() {
+    function generateUserPassword() {
         const uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         const lowercase = "abcdefghijklmnopqrstuvwxyz";
         const digits = "0123456789";
@@ -80,12 +80,15 @@
         // Shuffle the password to avoid predictable patterns
         password = password.split('').sort(() => Math.random() - 0.5).join('');
         
-        document.getElementById("password").value = password;
+        const passwordField = document.getElementById("password");
+        if (passwordField) {
+            passwordField.value = password;
+        }
     }
     
     // Generate password on page load
     document.addEventListener("DOMContentLoaded", function() {
-        generatePassword();
+        generateUserPassword();
     });
 </script>
 {% endblock %}

@@ -23,28 +23,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
     const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
     
-    // SSH key is now only stored as content, so no need for method toggle
-    
-    // Cron expression builder
-    setupCronExpressionBuilder();
-    
     // Test S3 connection
     const testS3Button = document.getElementById('test-s3-connection');
     if (testS3Button) {
         testS3Button.addEventListener('click', testS3Connection);
-    }
-    
-    // Restore point-in-time toggle
-    const usePitrCheckbox = document.getElementById('use_pitr');
-    const pitrControls = document.getElementById('pitr_controls');
-    
-    if (usePitrCheckbox && pitrControls) {
-        usePitrCheckbox.addEventListener('change', function() {
-            pitrControls.style.display = this.checked ? 'block' : 'none';
-        });
-        
-        // Trigger change event on page load
-        usePitrCheckbox.dispatchEvent(new Event('change'));
     }
     
     // Test SSH connection
@@ -91,58 +73,6 @@ function setTheme(theme) {
         if (!document.body.classList.contains('bg-light')) {
             document.body.classList.add('bg-light');
         }
-    }
-}
-
-// Cron expression builder
-function setupCronExpressionBuilder() {
-    const cronBuilder = document.getElementById('cron-builder');
-    const cronExpressionInput = document.getElementById('cron_expression');
-    
-    if (!cronBuilder || !cronExpressionInput) return;
-    
-    const minuteSelect = document.getElementById('cron_minute');
-    const hourSelect = document.getElementById('cron_hour');
-    const dayOfMonthSelect = document.getElementById('cron_day_of_month');
-    const monthSelect = document.getElementById('cron_month');
-    const dayOfWeekSelect = document.getElementById('cron_day_of_week');
-    
-    const updateCronExpression = function() {
-        const minute = minuteSelect.value;
-        const hour = hourSelect.value;
-        const dayOfMonth = dayOfMonthSelect.value;
-        const month = monthSelect.value;
-        const dayOfWeek = dayOfWeekSelect.value;
-        
-        cronExpressionInput.value = `${minute} ${hour} ${dayOfMonth} ${month} ${dayOfWeek}`;
-    };
-    
-    // Add event listeners to all select elements
-    [minuteSelect, hourSelect, dayOfMonthSelect, monthSelect, dayOfWeekSelect].forEach(function(select) {
-        if (select) {
-            select.addEventListener('change', updateCronExpression);
-        }
-    });
-    
-    // If the cron expression input already has a value, populate the selects accordingly
-    if (cronExpressionInput.value) {
-        const parts = cronExpressionInput.value.trim().split(/\s+/);
-        if (parts.length === 5) {
-            if (minuteSelect) minuteSelect.value = parts[0];
-            if (hourSelect) hourSelect.value = parts[1];
-            if (dayOfMonthSelect) dayOfMonthSelect.value = parts[2];
-            if (monthSelect) monthSelect.value = parts[3];
-            if (dayOfWeekSelect) dayOfWeekSelect.value = parts[4];
-        }
-    } else {
-        // Set a default cron expression (every day at midnight)
-        if (minuteSelect) minuteSelect.value = '0';
-        if (hourSelect) hourSelect.value = '0';
-        if (dayOfMonthSelect) dayOfMonthSelect.value = '*';
-        if (monthSelect) monthSelect.value = '*';
-        if (dayOfWeekSelect) dayOfWeekSelect.value = '*';
-        
-        updateCronExpression();
     }
 }
 
@@ -250,4 +180,4 @@ function testSshConnection() {
         testButton.disabled = false;
         testButton.innerHTML = originalText;
     });
-} 
+}
