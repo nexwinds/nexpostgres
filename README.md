@@ -51,22 +51,22 @@ NEXPOSTGRES is a comprehensive, web-based PostgreSQL database management platfor
 ### 📊 Monitoring & Logging
 - Unified dashboard with real-time status
 - Comprehensive logging for all operations
-- Health checks and alert system
-- Historical data with searchable logs
+- Health checks
+- Historical data with logs
 
 ## 📋 Requirements
 
 ### Host System
-- **OS**: Linux, macOS, or Windows with Docker support
+- **OS**: Docker host (Linux or macOS)
 - **Docker**: Version 20.10+ with Docker Compose v2.0+
 - **Memory**: 512MB RAM minimum (1GB+ recommended)
 - **Storage**: 1GB+ free space
-- **Network**: Internet access for Docker and S3 connectivity
+- **Network**: Internet access for Docker, S3 and Database server connectivity
 
 ### Remote VPS Servers
-- **OS**: Ubuntu 18.04+ (20.04 LTS or 22.04 LTS recommended)
+- **OS**: Ubuntu 22.04+ (24.04 LTS recommended)
 - **Architecture**: x86_64 (AMD64)
-- **Memory**: 1GB RAM minimum (2GB+ recommended)
+- **Memory**: 2GB RAM minimum (4GB+ recommended)
 - **Network**: SSH access and internet connectivity
 - **User**: SSH key-based authentication with sudo privileges
 
@@ -78,8 +78,8 @@ NEXPOSTGRES is a comprehensive, web-based PostgreSQL database management platfor
 - Versioning enabled (recommended)
 
 ### PostgreSQL Compatibility
-- **Versions**: PostgreSQL 15.x, 16.x, 17.x
-- **pgBackRest**: Automatically installed (version 2.40+)
+- **Versions**: PostgreSQL 15.x, 16.x, 17.x (17.x recommended)
+- **pgBackRest**: Automatically installed (version 2.50+)
 - **Extensions**: None required (base installation sufficient)
 
 ## 🚀 Installation
@@ -95,14 +95,7 @@ NEXPOSTGRES is a comprehensive, web-based PostgreSQL database management platfor
    ```
 
 2. **Configure environment (edit docker-compose.yml):**
-   ```yaml
-   environment:
-     - SECRET_KEY=your-secure-random-256-bit-key-here  # CHANGE THIS!
-     - LOG_LEVEL=INFO
-     - SESSION_LIFETIME_HOURS=24
-     - DEFAULT_POSTGRES_PORT=5432
-     - SCHEDULER_TIMEZONE=UTC
-   ```
+   See the Configuration section below for complete environment variables.
 
 3. **Start application:**
    ```bash
@@ -111,7 +104,7 @@ NEXPOSTGRES is a comprehensive, web-based PostgreSQL database management platfor
 
 4. **Access interface:**
    - URL: http://localhost:5000
-   - Default credentials: `admin` / `admin`
+   - Default credentials: `admin` / `nexpostgres`
    - **Change password on first login**
 
 ### Local Development Setup
@@ -290,8 +283,7 @@ chmod 600 app/ssh_keys/*.pem
    - **Point-in-Time Recovery**: Specify exact timestamp
 
 3. **Configure restore target:**
-   - **Original Database**: ⚠️ Overwrites existing data
-   - **New Database**: ✅ Safe option, creates new database
+   - **New Database**: ✅ Only option, creates new database
 
 4. **Execute and verify:**
    - Review summary and start restore
@@ -311,7 +303,7 @@ chmod 600 app/ssh_keys/*.pem
 - **Backup logs**: Detailed operation logs with compression ratios
 - **Restore logs**: PITR and restore operation tracking
 - **System logs**: SSH connections, configuration changes, security events
-- **Log management**: Searchable interface with filtering and export
+- **Log management**: Interface for viewing
 
 ## 🔧 Troubleshooting
 
@@ -414,7 +406,7 @@ docker-compose up -d
 
 ### Authentication & Access
 - Change default credentials immediately
-- Use strong passwords (12+ characters)
+- Use strong passwords (14+ characters)
 - Configure appropriate session timeouts
 - Generate strong SSH keys (4096-bit RSA or Ed25519)
 
