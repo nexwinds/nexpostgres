@@ -351,6 +351,87 @@ class PostgresConfigManager:
         
         return entries
     
+    def _rebuild_pg_hba_with_ips(self, pg_hba_path: str, allowed_ips: List[str], auth_method: str = 'scram-sha-256') -> bool:
+        """Rebuild pg_hba.conf with only localhost and specified external IPs.
+        
+        Args:
+            pg_hba_path: Path to pg_hba.conf file
+            allowed_ips: List of allowed IP addresses/CIDR blocks
+            auth_method: Authentication method for external connections
+            
+        Returns:
+            bool: True if rebuild was successful
+        """
+        try:
+            # Read the current file
+            read_result = self.ssh.execute_command(f"sudo cat {pg_hba_path}")
+            if read_result['exit_code'] != 0:
+                self.logger.error(f"Failed to read pg_hba.conf: {read_result.get('stderr', 'Unknown error')}")
+                return False
+            
+            lines = read_result['stdout'].split('\n')
+            new_lines = []
+            
+            # First pass: keep all non-host lines and localhost host lines
+            for line in lines:
+                stripped = line.strip()
+                
+                # Keep all non-host lines (comments, empty lines, local, peer, etc.)
+                if not stripped.startswith('host'):
+                    new_lines.append(line)
+                    continue
+                
+                # For host lines, only keep localhost entries
+                parts = stripped.split()
+                if len(parts) >= 4:
+                    address = parts[3]  # The address field in pg_hba.conf
+                    # Only keep if it's exactly a localhost address
+                    if address in ['127.0.0.1/32', '127.0.0.1', '::1/128', '::1', 'localhost']:
+                        new_lines.append(line)
+                # Skip all other host lines (external access rules)
+            
+            # Second pass: add new external IP rules
+            if allowed_ips:
+                new_lines.append("# External access rules")
+                for ip in allowed_ips:
+                    if self._validate_ip_cidr(ip):
+                        new_lines.append(f"host    all             all             {ip}                {auth_method}")
+                    else:
+                        self.logger.warning(f"Invalid IP/CIDR format: {ip}")
+            
+            # Write the new content using a here-document to avoid file upload issues
+            new_content = '\n'.join(new_lines)
+            temp_remote_file = '/tmp/pg_hba_new.conf'
+            
+            # Use cat with here-document to write content directly on remote server
+            escaped_content = new_content.replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
+            write_cmd = f'sudo tee {temp_remote_file} > /dev/null << "EOF"\n{escaped_content}\nEOF'
+            
+            write_result = self.ssh.execute_command(write_cmd)
+            if write_result['exit_code'] != 0:
+                self.logger.error(f"Failed to write new pg_hba.conf: {write_result.get('stderr', 'Unknown error')}")
+                return False
+            
+            # Replace the original file
+            replace_result = self.ssh.execute_command(f"sudo cp {temp_remote_file} {pg_hba_path}")
+            if replace_result['exit_code'] != 0:
+                self.logger.error(f"Failed to replace pg_hba.conf: {replace_result.get('stderr', 'Unknown error')}")
+                return False
+            
+            # Set proper permissions
+            self.ssh.execute_command(f"sudo chown postgres:postgres {pg_hba_path}")
+            self.ssh.execute_command(f"sudo chmod 600 {pg_hba_path}")
+            
+            # Clean up temp file
+            self.ssh.execute_command(f"sudo rm -f {temp_remote_file}")
+            
+            self.logger.info(f"Successfully rebuilt pg_hba.conf with {len(allowed_ips) if allowed_ips else 0} external IP rules")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error rebuilding pg_hba.conf: {str(e)}")
+            return False
+    
     def configure_external_connections(self, allowed_ips: List[str] = None, auth_method: str = 'scram-sha-256') -> Tuple[bool, str, Dict]:
         """Configure PostgreSQL to allow external connections with IP whitelisting.
         
@@ -400,32 +481,17 @@ class PostgresConfigManager:
             # Backup existing file
             self.system_utils.backup_file(pg_hba_path)
             
-            # Remove existing external access rules to avoid duplicates
-            self.ssh.execute_command(rf"sudo sed -i '/^host[ \t]*all[ \t]*all[ \t]*0\.0\.0\.0\/0/d' {pg_hba_path}")
-            self.ssh.execute_command(rf"sudo sed -i '/^host[ \t]*all[ \t]*all[ \t]*::\/0/d' {pg_hba_path}")
+            # Rebuild pg_hba.conf with only the specified IPs
+            ips_to_configure = allowed_ips if allowed_ips else ['0.0.0.0/0', '::/0']
             
-            # Add IP-specific rules
-            if allowed_ips:
-                for ip in allowed_ips:
-                    # Validate IP format
-                    if self._validate_ip_cidr(ip):
-                        add_rule = self.ssh.execute_command(f"echo 'host    all    all    {ip}    {auth_method}' | sudo tee -a {pg_hba_path}")
-                        if add_rule['exit_code'] == 0:
-                            changes_made['pg_hba'] = True
-                            self.logger.info(f"Added access rule for {ip} with {auth_method}")
-                    else:
-                        self.logger.warning(f"Invalid IP/CIDR format: {ip}")
+            if self._rebuild_pg_hba_with_ips(pg_hba_path, ips_to_configure, auth_method):
+                changes_made['pg_hba'] = True
+                if allowed_ips:
+                    self.logger.info(f"Configured external access for {len(allowed_ips)} specific IP(s) with {auth_method}")
+                else:
+                    self.logger.info(f"Configured external access for all IPs with {auth_method}")
             else:
-                # Fallback to allow all IPs if no specific IPs provided
-                add_ipv4 = self.ssh.execute_command(f"echo 'host    all    all    0.0.0.0/0    {auth_method}' | sudo tee -a {pg_hba_path}")
-                if add_ipv4['exit_code'] == 0:
-                    changes_made['pg_hba'] = True
-                    self.logger.info(f"Added IPv4 external access rule with {auth_method}")
-                
-                add_ipv6 = self.ssh.execute_command(f"echo 'host    all    all    ::/0    {auth_method}' | sudo tee -a {pg_hba_path}")
-                if add_ipv6['exit_code'] == 0:
-                    changes_made['pg_hba'] = True
-                    self.logger.info(f"Added IPv6 external access rule with {auth_method}")
+                return False, "Failed to configure pg_hba.conf with new IP rules", changes_made
         
         # Restart PostgreSQL if changes were made
         if any(changes_made.values()):
