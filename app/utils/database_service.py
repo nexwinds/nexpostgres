@@ -238,7 +238,7 @@ class DatabaseImportService:
     
     @staticmethod
     def parse_connection_string(connection_string: str) -> Dict[str, str]:
-        """Parse PostgreSQL connection string.
+        """Parse PostgreSQL connection string with SSL support.
         
         Args:
             connection_string: PostgreSQL connection URL
@@ -246,19 +246,60 @@ class DatabaseImportService:
         Returns:
             Dictionary with connection parameters
         """
-        # Simple parsing - in production, use a proper URL parser
-        parts = connection_string.replace('postgresql://', '').split('@')
+        # Parse basic URL structure
+        url_part = connection_string.replace('postgresql://', '')
+        
+        # Split URL and query parameters
+        if '?' in url_part:
+            url_part, query_part = url_part.split('?', 1)
+        else:
+            query_part = ''
+        
+        # Parse main URL components
+        parts = url_part.split('@')
         user_pass = parts[0].split(':')
         host_port_db = parts[1].split('/')
         host_port = host_port_db[0].split(':')
         
-        return {
+        result = {
             'username': user_pass[0],
             'password': user_pass[1],
             'host': host_port[0],
             'port': host_port[1],
             'database': host_port_db[1]
         }
+        
+        # Parse query parameters for SSL settings
+        if query_part:
+            for param in query_part.split('&'):
+                if '=' in param:
+                    key, value = param.split('=', 1)
+                    result[key] = value
+        
+        return result
+    
+    @staticmethod
+    def generate_connection_string(host: str, port: int, username: str, password: str, 
+                                 database: str, ssl_enabled: bool = False) -> str:
+        """Generate PostgreSQL connection string with optional SSL.
+        
+        Args:
+            host: Database host
+            port: Database port
+            username: Database username
+            password: Database password
+            database: Database name
+            ssl_enabled: Whether to require SSL
+            
+        Returns:
+            PostgreSQL connection string
+        """
+        base_url = f"postgresql://{username}:{password}@{host}:{port}/{database}"
+        
+        if ssl_enabled:
+            base_url += "?sslmode=require"
+        
+        return base_url
     
     @staticmethod
     def perform_database_import(pg_manager: PostgresManager, source_conn: str, 

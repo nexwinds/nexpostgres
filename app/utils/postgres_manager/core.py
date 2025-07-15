@@ -1,7 +1,7 @@
 """Core PostgreSQL management functionality."""
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from .constants import PostgresConstants
 from .system_utils import SystemUtils
 from .config_manager import PostgresConfigManager
@@ -524,9 +524,17 @@ class PostgresManager:
         return self.user_manager.list_database_users(db_name)
     
     # Delegate configuration operations to config manager
-    def check_and_fix_external_connections(self) -> Tuple[bool, str, Dict]:
-        """Configure PostgreSQL to allow external connections."""
-        return self.config_manager.configure_external_connections()
+    def check_and_fix_external_connections(self, allowed_ips: List[str] = None, auth_method: str = 'scram-sha-256') -> Tuple[bool, str, Dict]:
+        """Configure PostgreSQL to allow external connections with IP whitelisting.
+        
+        Args:
+            allowed_ips: List of allowed IP addresses/CIDR blocks. If None, allows all IPs (0.0.0.0/0)
+            auth_method: Authentication method (scram-sha-256, md5, etc.)
+        
+        Returns:
+            tuple: (success, message, changes_made)
+        """
+        return self.config_manager.configure_external_connections(allowed_ips, auth_method)
     
     def get_postgresql_setting(self, setting: str) -> Optional[str]:
         """Get a PostgreSQL configuration setting."""
@@ -535,6 +543,28 @@ class PostgresManager:
     def get_pg_hba_entries(self) -> List[Dict[str, str]]:
         """Get current pg_hba.conf entries for external access."""
         return self.config_manager.get_pg_hba_entries()
+    
+    def configure_ssl_tls(self, enable_ssl: bool = True, cert_path: str = None, key_path: str = None, auto_generate: bool = True) -> Tuple[bool, str, Dict]:
+        """Configure SSL/TLS for PostgreSQL.
+        
+        Args:
+            enable_ssl: Whether to enable SSL/TLS
+            cert_path: Path to SSL certificate file
+            key_path: Path to SSL private key file
+            auto_generate: Whether to auto-generate self-signed certificates
+            
+        Returns:
+            tuple: (success, message, changes_made)
+        """
+        return self.config_manager.configure_ssl_tls(enable_ssl, cert_path, key_path, auto_generate)
+    
+    def get_ssl_status(self) -> Dict[str, Any]:
+        """Get current SSL/TLS configuration status.
+        
+        Returns:
+            dict: SSL status information
+        """
+        return self.config_manager.get_ssl_status()
     
     def update_postgresql_setting(self, setting: str, value: str) -> Tuple[bool, str]:
         """Update a PostgreSQL configuration setting."""

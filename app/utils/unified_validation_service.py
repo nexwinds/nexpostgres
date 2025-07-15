@@ -100,7 +100,7 @@ class UnifiedValidationService:
     
     @staticmethod
     def validate_password(password: str, min_length: int = 8) -> Tuple[bool, Optional[str]]:
-        """Validate password strength.
+        """Validate password (simplified - only checks length since passwords are managed by the panel).
         
         Args:
             password: Password to validate
@@ -115,14 +115,7 @@ class UnifiedValidationService:
         if len(password) < min_length:
             return False, f'Password must be at least {min_length} characters long'
         
-        # Check for basic password requirements
-        has_upper = any(c.isupper() for c in password)
-        has_lower = any(c.islower() for c in password)
-        has_digit = any(c.isdigit() for c in password)
-        
-        if not (has_upper and has_lower and has_digit):
-            return False, 'Password must contain at least one uppercase letter, one lowercase letter, and one digit'
-        
+        # Simplified validation - passwords are managed by the panel
         return True, None
     
     @staticmethod
@@ -310,7 +303,7 @@ class UnifiedValidationService:
     
     @staticmethod
     def validate_connection_string(connection_string: str) -> Tuple[bool, Optional[str]]:
-        """Validate PostgreSQL connection string format.
+        """Validate PostgreSQL connection string format with SSL support.
         
         Args:
             connection_string: Connection string to validate
@@ -325,10 +318,21 @@ class UnifiedValidationService:
         if not connection_string.startswith('postgresql://'):
             return False, 'Connection string must start with "postgresql://"'
         
-        # Check for basic structure: postgresql://user:pass@host:port/database
-        pattern = r'^postgresql://[^:]+:[^@]+@[^:/]+:\d+/[^/]+$'
+        # Check for basic structure: postgresql://user:pass@host:port/database[?params]
+        pattern = r'^postgresql://[^:]+:[^@]+@[^:/]+:\d+/[^/?]+(\?.*)?$'
         if not re.match(pattern, connection_string):
-            return False, 'Invalid connection string format. Expected: postgresql://user:pass@host:port/database'
+            return False, 'Invalid connection string format. Expected: postgresql://user:pass@host:port/database[?params]'
+        
+        # Validate SSL parameters if present
+        if '?' in connection_string:
+            query_part = connection_string.split('?', 1)[1]
+            valid_ssl_modes = ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full']
+            
+            for param in query_part.split('&'):
+                if '=' in param:
+                    key, value = param.split('=', 1)
+                    if key == 'sslmode' and value not in valid_ssl_modes:
+                        return False, f'Invalid SSL mode "{value}". Valid modes: {", ".join(valid_ssl_modes)}'
         
         return True, None
     

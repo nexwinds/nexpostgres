@@ -286,9 +286,45 @@ def database_users(database_id):
     # Generate connection strings if primary user exists
     connection_url = ''
     jdbc_url = ''
+    ssl_enabled = False
+    
     if primary_user:
-        connection_url = f"postgresql://{primary_user.username}:{primary_user.password}@{database.server.host}:{database.server.postgres_port}/{database.name}"
+        # Check if SSL is enabled on the server
+        try:
+            from app.utils.ssh_manager import SSHManager
+            from app.utils.postgres_manager.core import PostgresManager
+            
+            ssh = SSHManager(
+                host=database.server.host,
+                port=database.server.port,
+                username=database.server.username,
+                ssh_key_content=database.server.ssh_key_content
+            )
+            
+            if ssh.connect():
+                pg_manager = PostgresManager(ssh)
+                ssl_status = pg_manager.get_ssl_status()
+                ssl_enabled = ssl_status.get('ssl_enabled', False)
+                ssh.disconnect()
+        except Exception:
+            # If we can't check SSL status, default to non-SSL
+            ssl_enabled = False
+        
+        # Generate connection strings with SSL support
+        from app.utils.database_service import DatabaseImportService
+        connection_url = DatabaseImportService.generate_connection_string(
+            host=database.server.host,
+            port=database.server.postgres_port,
+            username=primary_user.username,
+            password=primary_user.password,
+            database=database.name,
+            ssl_enabled=ssl_enabled
+        )
+        
+        # JDBC URL with SSL support
         jdbc_url = f"jdbc:postgresql://{database.server.host}:{database.server.postgres_port}/{database.name}"
+        if ssl_enabled:
+            jdbc_url += "?ssl=true&sslmode=require"
     
     return render_template('databases/credentials.html', 
                          database=database, 
@@ -297,7 +333,8 @@ def database_users(database_id):
                          server=database.server,
                          primary_user=primary_user,
                          connection_url=connection_url,
-                         jdbc_url=jdbc_url)
+                         jdbc_url=jdbc_url,
+                         ssl_enabled=ssl_enabled)
 
 
 @databases_bp.route('/databases/<int:database_id>/users/<int:user_id>/edit', methods=['GET', 'POST'])

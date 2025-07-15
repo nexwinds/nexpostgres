@@ -2,7 +2,7 @@
 
 import os
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from .constants import PostgresConstants
 from .system_utils import SystemUtils
 
@@ -351,8 +351,12 @@ class PostgresConfigManager:
         
         return entries
     
-    def configure_external_connections(self) -> Tuple[bool, str, Dict]:
-        """Configure PostgreSQL to allow external connections.
+    def configure_external_connections(self, allowed_ips: List[str] = None, auth_method: str = 'scram-sha-256') -> Tuple[bool, str, Dict]:
+        """Configure PostgreSQL to allow external connections with IP whitelisting.
+        
+        Args:
+            allowed_ips: List of allowed IP addresses/CIDR blocks. If None, allows all IPs (0.0.0.0/0)
+            auth_method: Authentication method (scram-sha-256, md5, etc.)
         
         Returns:
             tuple: (success, message, changes_made)
@@ -396,21 +400,32 @@ class PostgresConfigManager:
             # Backup existing file
             self.system_utils.backup_file(pg_hba_path)
             
-            # Check for external IPv4 access
-            check_ipv4 = self.ssh.execute_command(f"sudo grep -E '^host[ \\t]+all[ \\t]+all[ \\t]+0\\.0\\.0\\.0/0[ \\t]+' {pg_hba_path}")
-            if check_ipv4['exit_code'] != 0:
-                add_ipv4 = self.ssh.execute_command(f"echo 'host    all    all    0.0.0.0/0    md5' | sudo tee -a {pg_hba_path}")
+            # Remove existing external access rules to avoid duplicates
+            self.ssh.execute_command(rf"sudo sed -i '/^host[ \t]*all[ \t]*all[ \t]*0\.0\.0\.0\/0/d' {pg_hba_path}")
+            self.ssh.execute_command(rf"sudo sed -i '/^host[ \t]*all[ \t]*all[ \t]*::\/0/d' {pg_hba_path}")
+            
+            # Add IP-specific rules
+            if allowed_ips:
+                for ip in allowed_ips:
+                    # Validate IP format
+                    if self._validate_ip_cidr(ip):
+                        add_rule = self.ssh.execute_command(f"echo 'host    all    all    {ip}    {auth_method}' | sudo tee -a {pg_hba_path}")
+                        if add_rule['exit_code'] == 0:
+                            changes_made['pg_hba'] = True
+                            self.logger.info(f"Added access rule for {ip} with {auth_method}")
+                    else:
+                        self.logger.warning(f"Invalid IP/CIDR format: {ip}")
+            else:
+                # Fallback to allow all IPs if no specific IPs provided
+                add_ipv4 = self.ssh.execute_command(f"echo 'host    all    all    0.0.0.0/0    {auth_method}' | sudo tee -a {pg_hba_path}")
                 if add_ipv4['exit_code'] == 0:
                     changes_made['pg_hba'] = True
-                    self.logger.info("Added IPv4 external access rule")
-            
-            # Check for external IPv6 access
-            check_ipv6 = self.ssh.execute_command(f"sudo grep -E '^host[ \\t]+all[ \\t]+all[ \\t]+::/0[ \\t]+' {pg_hba_path}")
-            if check_ipv6['exit_code'] != 0:
-                add_ipv6 = self.ssh.execute_command(f"echo 'host    all    all    ::/0    md5' | sudo tee -a {pg_hba_path}")
+                    self.logger.info(f"Added IPv4 external access rule with {auth_method}")
+                
+                add_ipv6 = self.ssh.execute_command(f"echo 'host    all    all    ::/0    {auth_method}' | sudo tee -a {pg_hba_path}")
                 if add_ipv6['exit_code'] == 0:
                     changes_made['pg_hba'] = True
-                    self.logger.info("Added IPv6 external access rule")
+                    self.logger.info(f"Added IPv6 external access rule with {auth_method}")
         
         # Restart PostgreSQL if changes were made
         if any(changes_made.values()):
@@ -420,6 +435,190 @@ class PostgresConfigManager:
                 return False, f"Configuration updated but PostgreSQL restart failed: {message}", changes_made
         
         return True, "PostgreSQL configured for external connections", changes_made
+    
+    def _validate_ip_cidr(self, ip_cidr: str) -> bool:
+        """Validate IP address or CIDR block format.
+        
+        Args:
+            ip_cidr: IP address or CIDR block to validate
+            
+        Returns:
+            bool: True if valid format
+        """
+        import re
+        
+        # IPv4 CIDR pattern
+        ipv4_pattern = r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\/(?:[0-9]|[1-2][0-9]|3[0-2]))?$'
+        
+        # IPv6 CIDR pattern (simplified)
+        ipv6_pattern = r'^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}(?:\/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?$|^::1(?:\/128)?$|^::(?:\/0)?$'
+        
+        return bool(re.match(ipv4_pattern, ip_cidr) or re.match(ipv6_pattern, ip_cidr))
+    
+    def configure_ssl_tls(self, enable_ssl: bool = True, cert_path: str = None, key_path: str = None, auto_generate: bool = True) -> Tuple[bool, str, Dict]:
+        """Configure SSL/TLS for PostgreSQL.
+        
+        Args:
+            enable_ssl: Whether to enable SSL/TLS
+            cert_path: Path to SSL certificate file
+            key_path: Path to SSL private key file
+            auto_generate: Whether to auto-generate self-signed certificates
+            
+        Returns:
+            tuple: (success, message, changes_made)
+        """
+        changes_made = {
+            'ssl_enabled': False,
+            'certificates_generated': False,
+            'postgresql_conf_updated': False
+        }
+        
+        if not enable_ssl:
+            # Disable SSL
+            success, message = self.update_postgresql_setting('ssl', 'off')
+            if success:
+                changes_made['ssl_enabled'] = False
+                changes_made['postgresql_conf_updated'] = True
+                return True, "SSL/TLS disabled successfully", changes_made
+            else:
+                return False, f"Failed to disable SSL: {message}", changes_made
+        
+        # Enable SSL
+        data_dir = self.get_data_directory()
+        if not data_dir:
+            return False, "Could not locate PostgreSQL data directory", changes_made
+        
+        # Set default certificate paths if not provided
+        if not cert_path:
+            cert_path = f"{data_dir}/server.crt"
+        if not key_path:
+            key_path = f"{data_dir}/server.key"
+        
+        # Generate certificates if auto_generate is True or certificates don't exist
+        if auto_generate or not self._check_ssl_certificates(cert_path, key_path):
+            success, message = self._generate_ssl_certificates(cert_path, key_path)
+            if success:
+                changes_made['certificates_generated'] = True
+            else:
+                return False, f"Failed to generate SSL certificates: {message}", changes_made
+        
+        # Update PostgreSQL configuration
+        ssl_settings = {
+            'ssl': 'on',
+            'ssl_cert_file': f"'{cert_path}'",
+            'ssl_key_file': f"'{key_path}'",
+            'ssl_ca_file': '',
+            'ssl_crl_file': ''
+        }
+        
+        for setting, value in ssl_settings.items():
+            if value:  # Only set non-empty values
+                success, message = self.update_postgresql_setting(setting, value)
+                if success:
+                    changes_made['postgresql_conf_updated'] = True
+                else:
+                    return False, f"Failed to update {setting}: {message}", changes_made
+        
+        changes_made['ssl_enabled'] = True
+        
+        # Restart PostgreSQL to apply SSL changes
+        success, message = self.system_utils.restart_service('postgresql')
+        if not success:
+            return False, f"SSL configured but PostgreSQL restart failed: {message}", changes_made
+        
+        return True, "SSL/TLS configured successfully", changes_made
+    
+    def _check_ssl_certificates(self, cert_path: str, key_path: str) -> bool:
+        """Check if SSL certificates exist and are valid.
+        
+        Args:
+            cert_path: Path to certificate file
+            key_path: Path to private key file
+            
+        Returns:
+            bool: True if certificates exist and are readable
+        """
+        cert_check = self.ssh.execute_command(f"sudo test -f {cert_path} && sudo test -r {cert_path} && echo 'exists'")
+        key_check = self.ssh.execute_command(f"sudo test -f {key_path} && sudo test -r {key_path} && echo 'exists'")
+        
+        return 'exists' in cert_check['stdout'] and 'exists' in key_check['stdout']
+    
+    def _generate_ssl_certificates(self, cert_path: str, key_path: str) -> Tuple[bool, str]:
+        """Generate self-signed SSL certificates for PostgreSQL.
+        
+        Args:
+            cert_path: Path where certificate should be created
+            key_path: Path where private key should be created
+            
+        Returns:
+            tuple: (success, message)
+        """
+        self.logger.info("Generating self-signed SSL certificates for PostgreSQL...")
+        
+        # Get server hostname for certificate
+        hostname_result = self.ssh.execute_command("hostname -f")
+        hostname = hostname_result['stdout'].strip() if hostname_result['exit_code'] == 0 else 'localhost'
+        
+        # Generate private key
+        key_cmd = f"sudo openssl genrsa -out {key_path} 2048"
+        key_result = self.ssh.execute_command(key_cmd)
+        
+        if key_result['exit_code'] != 0:
+            return False, f"Failed to generate private key: {key_result.get('stderr', 'Unknown error')}"
+        
+        # Generate certificate
+        subject = f"/C=US/ST=State/L=City/O=Organization/OU=OrgUnit/CN={hostname}"
+        cert_cmd = f"sudo openssl req -new -x509 -key {key_path} -out {cert_path} -days 365 -subj '{subject}'"
+        cert_result = self.ssh.execute_command(cert_cmd)
+        
+        if cert_result['exit_code'] != 0:
+            return False, f"Failed to generate certificate: {cert_result.get('stderr', 'Unknown error')}"
+        
+        # Set proper ownership and permissions
+        chown_result = self.ssh.execute_command(f"sudo chown postgres:postgres {cert_path} {key_path}")
+        chmod_cert = self.ssh.execute_command(f"sudo chmod 644 {cert_path}")
+        chmod_key = self.ssh.execute_command(f"sudo chmod 600 {key_path}")
+        
+        if chown_result['exit_code'] != 0 or chmod_cert['exit_code'] != 0 or chmod_key['exit_code'] != 0:
+            self.logger.warning("SSL certificates generated but failed to set proper permissions")
+        
+        return True, "SSL certificates generated successfully"
+    
+    def get_ssl_status(self) -> Dict[str, Any]:
+        """Get current SSL/TLS configuration status.
+        
+        Returns:
+            dict: SSL status information
+        """
+        status = {
+            'ssl_enabled': False,
+            'ssl_cert_file': None,
+            'ssl_key_file': None,
+            'certificates_exist': False,
+            'ssl_settings': {}
+        }
+        
+        # Check SSL settings
+        ssl_settings = ['ssl', 'ssl_cert_file', 'ssl_key_file', 'ssl_ca_file', 'ssl_crl_file']
+        for setting in ssl_settings:
+            value = self.get_postgresql_setting(setting)
+            status['ssl_settings'][setting] = value
+            
+            if setting == 'ssl' and value == 'on':
+                status['ssl_enabled'] = True
+            elif setting == 'ssl_cert_file' and value:
+                status['ssl_cert_file'] = value.strip("'\"")
+            elif setting == 'ssl_key_file' and value:
+                status['ssl_key_file'] = value.strip("'\"")
+        
+        # Check if certificate files exist
+        if status['ssl_cert_file'] and status['ssl_key_file']:
+            status['certificates_exist'] = self._check_ssl_certificates(
+                status['ssl_cert_file'], 
+                status['ssl_key_file']
+            )
+        
+        return status
     
     def fix_postgresql_config(self) -> Tuple[bool, str]:
         """Fix malformed PostgreSQL configuration.
@@ -439,7 +638,7 @@ class PostgresConfigManager:
             self.logger.warning(f"Could not backup postgresql.conf: {backup_path}")
         
         # Remove malformed listen_addresses lines
-        remove_cmd = f"sudo sed -i '/^[ \\t]*listen_addresses[ \\t]*=[ \\t]*\*[ \\t]*$/d' {postgresql_conf}"
+        remove_cmd = rf"sudo sed -i '/^[ \t]*listen_addresses[ \t]*=[ \t]*\*[ \t]*$/d' {postgresql_conf}"
         result = self.ssh.execute_command(remove_cmd)
         
         if result['exit_code'] != 0:

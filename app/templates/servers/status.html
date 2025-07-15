@@ -247,6 +247,55 @@
                         </div>
                     </div>
                     
+                    <!-- SSL/TLS Configuration -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h6 class="mb-0"><i class="fas fa-lock me-2"></i>SSL/TLS Configuration</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="enableSsl" checked>
+                                <label class="form-check-label" for="enableSsl">
+                                    <strong>Enable SSL/TLS</strong>
+                                    <small class="text-muted d-block">Encrypt connections to PostgreSQL</small>
+                                </label>
+                            </div>
+                            
+                            <div id="sslOptionsContainer">
+                                <div class="mb-3">
+                                    <label class="form-label">Certificate Management</label>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="certType" id="autoGenerate" value="auto" checked>
+                                        <label class="form-check-label" for="autoGenerate">
+                                            <strong>Auto-generate certificates</strong>
+                                            <small class="text-muted d-block">Automatically create self-signed certificates</small>
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="certType" id="customCerts" value="custom">
+                                        <label class="form-check-label" for="customCerts">
+                                            <strong>Use custom certificates</strong>
+                                            <small class="text-muted d-block">Provide paths to existing certificate files</small>
+                                        </label>
+                                    </div>
+                                </div>
+                                
+                                <div id="customCertContainer" class="d-none">
+                                    <div class="mb-3">
+                                        <label for="certPath" class="form-label">Certificate Path</label>
+                                        <input type="text" class="form-control" id="certPath" placeholder="/path/to/server.crt">
+                                        <div class="form-text">Path to the SSL certificate file</div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="keyPath" class="form-label">Private Key Path</label>
+                                        <input type="text" class="form-control" id="keyPath" placeholder="/path/to/server.key">
+                                        <div class="form-text">Path to the SSL private key file</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <!-- Configuration Preview -->
                     <div class="card mb-4">
                         <div class="card-header">
@@ -271,17 +320,10 @@
                         </div>
                         <div class="card-body">
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="validateConfig" checked>
+                                <input class="form-check-input" type="checkbox" id="validateConfig" checked disabled>
                                 <label class="form-check-label" for="validateConfig">
                                     <strong>Validate configuration before applying</strong>
-                                    <small class="text-muted d-block">Test configuration syntax before restarting PostgreSQL</small>
-                                </label>
-                            </div>
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="backupConfig" checked>
-                                <label class="form-check-label" for="backupConfig">
-                                    <strong>Backup existing configuration files</strong>
-                                    <small class="text-muted d-block">Create backups before making changes</small>
+                                    <small class="text-muted d-block">Test configuration syntax before restarting PostgreSQL (Always enabled)</small>
                                 </label>
                             </div>
                         </div>
@@ -544,6 +586,44 @@
                 document.getElementById('specificIpsContainer').classList.add('d-none');
                 updateConfigPreview();
             });
+            
+            // Load current SSL configuration
+            fetch(`{{ url_for('servers.get_ssl_status', id=server.id) }}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.ssl_status) {
+                    const sslStatus = data.ssl_status;
+                    
+                    // Update SSL enable checkbox
+                    document.getElementById('enableSsl').checked = sslStatus.ssl_enabled || false;
+                    
+                    // Update certificate paths if available
+                    if (sslStatus.cert_file) {
+                        document.getElementById('certPath').value = sslStatus.cert_file;
+                    }
+                    if (sslStatus.key_file) {
+                        document.getElementById('keyPath').value = sslStatus.key_file;
+                    }
+                    
+                    // Determine certificate type based on paths
+                    if (sslStatus.cert_file && sslStatus.cert_file.includes('server.crt')) {
+                        document.getElementById('autoGenerate').checked = true;
+                    } else if (sslStatus.cert_file) {
+                        document.getElementById('customCerts').checked = true;
+                    }
+                    
+                    // Trigger change events to show/hide fields
+                    const enableSslEvent = new Event('change');
+                    document.getElementById('enableSsl').dispatchEvent(enableSslEvent);
+                    if (document.getElementById('customCerts').checked) {
+                        const customCertsEvent = new Event('change');
+                        document.getElementById('customCerts').dispatchEvent(customCertsEvent);
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error loading SSL status:', error);
+            });
         }
         
         // Handle access type radio button changes
@@ -556,6 +636,28 @@
                     specificContainer.classList.add('d-none');
                 }
                 updateConfigPreview();
+            });
+        });
+        
+        // Handle SSL/TLS configuration changes
+        document.getElementById('enableSsl').addEventListener('change', function() {
+            const sslContainer = document.getElementById('sslOptionsContainer');
+            if (this.checked) {
+                sslContainer.classList.remove('d-none');
+            } else {
+                sslContainer.classList.add('d-none');
+            }
+        });
+        
+        // Handle certificate type radio button changes
+        document.querySelectorAll('input[name="certType"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const customContainer = document.getElementById('customCertContainer');
+                if (this.value === 'custom') {
+                    customContainer.classList.remove('d-none');
+                } else {
+                    customContainer.classList.add('d-none');
+                }
             });
         });
         
@@ -572,8 +674,12 @@
                 access_type: document.querySelector('input[name="accessType"]:checked').value,
                 auth_method: 'scram-sha-256', // Fixed to most secure option
                 allowed_ips: document.getElementById('allowedIps').value,
-                validate_config: document.getElementById('validateConfig').checked,
-                backup_config: document.getElementById('backupConfig').checked
+                validate_config: true, // Always validate configuration
+                // SSL/TLS configuration
+                enable_ssl: document.getElementById('enableSsl').checked,
+                cert_type: document.querySelector('input[name="certType"]:checked').value,
+                cert_path: document.getElementById('certPath').value,
+                key_path: document.getElementById('keyPath').value
             };
             
             // Close modal
@@ -586,7 +692,7 @@
                 </div>
             `;
             
-            // Send configuration request
+            // Send PostgreSQL access configuration request
             fetch(`{{ url_for('servers.configure_postgres_access', id=server.id) }}`, {
                 method: 'POST',
                 headers: {
@@ -595,6 +701,34 @@
                 body: JSON.stringify(formData)
             })
             .then(response => response.json())
+            .then(data => {
+                if (data.success && formData.enable_ssl) {
+                    // If PostgreSQL access was configured successfully and SSL is enabled, configure SSL
+                    const sslData = {
+                        enable_ssl: formData.enable_ssl,
+                        auto_generate: formData.cert_type === 'auto',
+                        cert_path: formData.cert_path,
+                        key_path: formData.key_path
+                    };
+                    
+                    return fetch(`{{ url_for('servers.configure_ssl', id=server.id) }}`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(sslData)
+                    });
+                } else {
+                    return Promise.resolve({ json: () => Promise.resolve(data) });
+                }
+            })
+            .then(response => {
+                if (response.json) {
+                    return response.json();
+                } else {
+                    return response.json();
+                }
+            })
             .then(data => {
                 if (data.success) {
                     let changeDetails = "";
