@@ -69,8 +69,8 @@ class SSHManager:
             stdin, stdout, stderr = self.client.exec_command(command)
             
             exit_code = stdout.channel.recv_exit_status()
-            stdout_content = stdout.read().decode('utf-8')
-            stderr_content = stderr.read().decode('utf-8')
+            stdout_content = stdout.read().decode('utf-8', errors='replace')
+            stderr_content = stderr.read().decode('utf-8', errors='replace')
             
             if stderr_content:
                 self.logger.debug(f"Command stderr: {stderr_content}")
@@ -148,7 +148,7 @@ class SSHManager:
             with sftp.file(remote_path, 'r') as f:
                 content = f.read()
             sftp.close()
-            return content.decode('utf-8')
+            return content.decode('utf-8', errors='replace')
         except Exception as e:
             self.logger.error(f"Failed to read content from {remote_path}: {str(e)}")
             return None
@@ -159,4 +159,4 @@ def test_ssh_connection(host, port, username, ssh_key_content):
     connected = ssh.connect()
     if connected:
         ssh.disconnect()
-    return connected 
+    return connected

@@ -27,32 +27,20 @@ class PostgresConstants:
     # pgBackRest configuration - aligned with official recommendations
     PGBACKREST = {
         'config_dir': '/etc/pgbackrest',
-        'conf_d_dir': '/etc/pgbackrest/conf.d',
         'log_dir': '/var/log/pgbackrest',
         'backup_dir': '/var/lib/pgbackrest',
         # Retention settings - recommended values for production
-        'default_retention_full': '7',  # Keep 7 full backups (weekly)
+        'default_retention_full': '7',  # Keep 7 full backups
         'default_retention_diff': '4',  # Keep 4 differential backups
-        'default_retention_archive': '7',  # Match full backup retention
-        'default_retention_archive_type': 'full',  # Archive retention type
-        # Performance settings
-        'default_process_max': '6',  # Recommended not to exceed CPU cores
+        # Performance settings - let pgBackRest auto-detect optimal values
+        'default_process_max': 'auto',  # Auto-detect based on CPU cores
         'default_compress_type': 'lz4',  # Fast compression
         'default_compress_level': '1',  # Low compression for speed
-        # Backup policy
-        'max_backups_before_full': 7,  # Force full backup after 7 incrementals
-        # Delta optimization settings
-        'delta_enabled': True,  # Enable delta backups for efficiency
         # Security settings
         'default_cipher_type': 'aes-256-cbc',
-        # Archive settings
-        'archive_timeout': '60',  # 60 seconds as recommended
-        'archive_header_check': True,
-        # Log rotation management
-         'log_level_console': 'warn',  # Console log level
-         'log_level_file': 'info',     # File log level
-         'log_level_stderr': 'off',    # Stderr log level
-         'log_dir': '/var/log/pgbackrest'  # Log directory path
+        # Log settings
+        'log_level_console': 'warn',
+        'log_level_file': 'info'
     }
     
     # Timeouts and retries
@@ -69,23 +57,14 @@ class PostgresConstants:
         'service_start_retries': 5
     }
     
-    # PostgreSQL settings - optimized for pgBackRest
+    # PostgreSQL settings - essential for pgBackRest
     POSTGRES_SETTINGS = {
-        'listen_addresses': "'*'",
         'archive_mode': 'on',
         'wal_level': 'replica',
         'max_wal_senders': '3',
-        'archive_timeout': '60',  # Recommended by pgBackRest
+        'archive_timeout': '60',
         # Checkpoint settings for better backup performance
-        'checkpoint_completion_target': '0.9',
-        # WAL settings for better performance with pgBackRest
-        'wal_buffers': '16MB',
-        'wal_writer_delay': '200ms',
-        # Logging settings for better monitoring
-        'log_checkpoints': 'on',
-        'log_connections': 'on',
-        'log_disconnections': 'on',
-        'log_lock_waits': 'on'
+        'checkpoint_completion_target': '0.9'
     }
     
     # Default pg_hba.conf content

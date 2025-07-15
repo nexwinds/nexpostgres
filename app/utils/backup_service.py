@@ -338,6 +338,30 @@ class BackupService:
         )
     
     @staticmethod
+    def delete_backup_job(backup_job):
+        """Delete a backup job and its associated logs.
+        
+        Args:
+            backup_job: BackupJob object to delete
+            
+        Returns:
+            tuple: (success, message)
+        """
+        try:
+            # Delete associated backup logs
+            BackupLog.query.filter_by(backup_job_id=backup_job.id).delete()
+            
+            # Delete the backup job
+            db.session.delete(backup_job)
+            db.session.commit()
+            
+            return True, f'Backup job "{backup_job.name}" deleted successfully'
+            
+        except Exception as e:
+            db.session.rollback()
+            return False, f'Error deleting backup job: {str(e)}'
+    
+    @staticmethod
     def get_backup_logs_for_api(backup_job_id):
         """Get backup logs for API endpoint.
         

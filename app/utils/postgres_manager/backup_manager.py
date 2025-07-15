@@ -5,6 +5,7 @@ import logging
 import tempfile
 import base64
 import secrets
+import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from .constants import PostgresConstants
@@ -23,15 +24,27 @@ class PostgresBackupManager:
         self.logger = logger or logging.getLogger(__name__)
         self.logrotate_manager = LogRotateManager(ssh_manager, logger)
     
-    def generate_cipher_passphrase(self) -> str:
-        """Generate a secure base64-encoded cipher passphrase as recommended by pgBackRest.
+    def get_or_create_cipher_passphrase(self) -> str:
+        """Get existing cipher passphrase or create a new one if none exists.
         
         Returns:
             str: Base64-encoded secure passphrase
         """
-        # Generate 32 random bytes (256 bits) for strong encryption
+        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+        
+        # Try to read existing passphrase from config
+        result = self.ssh.execute_command(f"sudo grep -E '^repo1-cipher-pass=' {config_file} 2>/dev/null || true")
+        if result['exit_code'] == 0 and result['stdout'].strip():
+            # Extract existing passphrase
+            line = result['stdout'].strip()
+            if '=' in line:
+                existing_passphrase = line.split('=', 1)[1]
+                self.logger.info("Using existing cipher passphrase")
+                return existing_passphrase
+        
+        # Generate new passphrase if none exists
+        self.logger.info("Generating new cipher passphrase")
         random_bytes = secrets.token_bytes(32)
-        # Encode as base64 as recommended by pgBackRest documentation
         return base64.b64encode(random_bytes).decode('utf-8')
     
     def is_pgbackrest_installed(self) -> bool:
@@ -87,7 +100,6 @@ class PostgresBackupManager:
         """
         directories = [
             (PostgresConstants.PGBACKREST['config_dir'], 'postgres:postgres', '755'),
-            (PostgresConstants.PGBACKREST['conf_d_dir'], 'postgres:postgres', '755'),
             (PostgresConstants.PGBACKREST['log_dir'], 'postgres:postgres', '755'),
             (PostgresConstants.PGBACKREST['backup_dir'], 'postgres:postgres', '755')
         ]
@@ -118,11 +130,9 @@ class PostgresBackupManager:
         config_content = "[global]\n"
         config_content += f"log-path={PostgresConstants.PGBACKREST['log_dir']}\n"
         
-        # Process configuration - using recommended defaults
-        config_content += f"process-max={PostgresConstants.PGBACKREST['default_process_max']}\n"
-        
-        # Archive timeout - using recommended value
-        config_content += f"archive-timeout={PostgresConstants.PGBACKREST['archive_timeout']}\n"
+        # Process configuration - let pgBackRest auto-detect optimal values
+        if PostgresConstants.PGBACKREST['default_process_max'] != 'auto':
+            config_content += f"process-max={PostgresConstants.PGBACKREST['default_process_max']}\n"
         
         # Compression settings - using recommended defaults
         config_content += f"compress-type={PostgresConstants.PGBACKREST['default_compress_type']}\n"
@@ -131,20 +141,11 @@ class PostgresBackupManager:
         # Log level settings
         config_content += f"log-level-console={PostgresConstants.PGBACKREST['log_level_console']}\n"
         config_content += f"log-level-file={PostgresConstants.PGBACKREST['log_level_file']}\n"
-        config_content += f"log-level-stderr={PostgresConstants.PGBACKREST['log_level_stderr']}\n"
-        
-        # Delta optimization for faster restores
-        config_content += f"delta={'y' if PostgresConstants.PGBACKREST['delta_enabled'] else 'n'}\n"
-        
         # Start fast for quicker backups - recommended by pgBackRest
         config_content += "start-fast=y\n"
         
-        # Archive header check for safety - recommended by pgBackRest
-        config_content += "archive-header-check=y\n"
-        
-        # Generate secure cipher passphrase
-        cipher_passphrase = self.generate_cipher_passphrase()
-        self.logger.info("Generated secure cipher passphrase for encryption")
+        # Get or create secure cipher passphrase
+        cipher_passphrase = self.get_or_create_cipher_passphrase()
         
         # Add S3 configuration if provided, otherwise use posix
         if s3_config:
@@ -188,10 +189,6 @@ class PostgresBackupManager:
         config_content += "\n# Retention Policy - Recommended Values\n"
         config_content += f"repo1-retention-full={PostgresConstants.PGBACKREST['default_retention_full']}\n"
         config_content += f"repo1-retention-diff={PostgresConstants.PGBACKREST['default_retention_diff']}\n"
-        
-        # Archive retention - configurable type and value
-        config_content += f"repo1-retention-archive-type={PostgresConstants.PGBACKREST['default_retention_archive_type']}\n"
-        config_content += f"repo1-retention-archive={PostgresConstants.PGBACKREST['default_retention_archive']}\n"
         
         # Write configuration file
         config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
@@ -276,8 +273,140 @@ class PostgresBackupManager:
         
         return True, f"Stanza configuration for {db_name} created successfully"
     
+    def cleanup_corrupted_stanza_files(self, db_name: str) -> Tuple[bool, str]:
+        """Clean up corrupted pgBackRest stanza files following official recommendations.
+        
+        Args:
+            db_name: Database name (stanza name)
+            
+        Returns:
+            tuple: (success, message)
+        """
+        self.logger.info(f"Cleaning up corrupted stanza files for: {db_name}")
+        
+        try:
+            # Stop any running pgBackRest processes for this stanza
+            self.ssh.execute_command(f"sudo pkill -f 'pgbackrest.*{db_name}' || true")
+            
+            # Remove corrupted encrypted archive files that can't be decrypted
+            archive_path = f"{PostgresConstants.PGBACKREST['backup_dir']}/archive/{db_name}"
+            backup_path = f"{PostgresConstants.PGBACKREST['backup_dir']}/backup/{db_name}"
+            
+            self.logger.info(f"Removing corrupted encrypted files for stanza: {db_name}")
+            
+            # Remove archive.info files that may be encrypted with old passphrase
+            self.ssh.execute_command(f"sudo rm -f {archive_path}/archive.info*")
+            
+            # Remove backup.info files that may be encrypted with old passphrase
+            self.ssh.execute_command(f"sudo rm -f {backup_path}/backup.info*")
+            
+            # Remove any existing backup sets to start fresh
+            self.ssh.execute_command(f"sudo rm -rf {backup_path}/*")
+            self.ssh.execute_command(f"sudo rm -rf {archive_path}/*")
+            
+            # Use pgBackRest's built-in stop command to properly halt operations
+            config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+            self.system_utils.execute_as_postgres_user(f"pgbackrest --config={config_file} --stanza={db_name} stop || true")
+            
+            # Remove corrupted stanza files as recommended by pgBackRest documentation
+            stanza_paths = [
+                f"/var/lib/pgbackrest/archive/{db_name}",
+                f"/var/lib/pgbackrest/backup/{db_name}"
+            ]
+            
+            for path in stanza_paths:
+                result = self.ssh.execute_command(f"sudo rm -rf {path}")
+                if result['exit_code'] != 0:
+                    self.logger.warning(f"Failed to remove {path}: {result.get('stderr', 'Unknown error')}")
+            
+            # Recreate directories with proper permissions
+            recreate_commands = [
+                "sudo mkdir -p /var/lib/pgbackrest/archive",
+                "sudo mkdir -p /var/lib/pgbackrest/backup",
+                "sudo chown -R postgres:postgres /var/lib/pgbackrest",
+                "sudo chmod -R 750 /var/lib/pgbackrest"
+            ]
+            
+            for cmd in recreate_commands:
+                result = self.ssh.execute_command(cmd)
+                if result['exit_code'] != 0:
+                    return False, f"Failed to recreate directories: {result.get('stderr', 'Unknown error')}"
+            
+            # Start pgBackRest operations again
+            self.system_utils.execute_as_postgres_user(f"pgbackrest --config={config_file} --stanza={db_name} start || true")
+            
+            return True, f"Successfully cleaned up corrupted files for stanza {db_name}"
+            
+        except Exception as e:
+            return False, f"Error during cleanup: {str(e)}"
+    
+    def _clear_stop_files(self, db_name: str) -> Tuple[bool, str]:
+        """Clear pgBackRest stop files using official commands.
+        
+        Args:
+            db_name: Database name (stanza name)
+            
+        Returns:
+            tuple: (success, message)
+        """
+        try:
+            config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+            
+            # Use pgBackRest's built-in start command to clear stop files
+            start_cmd = f"pgbackrest --config={config_file} --stanza={db_name} start"
+            result = self.system_utils.execute_as_postgres_user(start_cmd)
+            
+            if result['exit_code'] == 0:
+                self.logger.info(f"Successfully cleared stop files for stanza {db_name}")
+                return True, f"Stop files cleared for stanza {db_name}"
+            else:
+                # If stanza-specific start fails, try global start
+                global_start_cmd = f"pgbackrest --config={config_file} start"
+                global_result = self.system_utils.execute_as_postgres_user(global_start_cmd)
+                
+                if global_result['exit_code'] == 0:
+                    self.logger.info("Successfully cleared stop files globally")
+                    return True, "Stop files cleared globally"
+                else:
+                    self.logger.warning(f"Failed to clear stop files: {result.get('stderr', 'Unknown error')}")
+                    return False, f"Failed to clear stop files: {result.get('stderr', 'Unknown error')}"
+                
+        except Exception as e:
+            return False, f"Error clearing stop files: {str(e)}"
+    
+    def setup_pgbackrest_directories(self) -> Tuple[bool, str]:
+        """Ensure pgBackRest directories exist with proper permissions.
+        
+        Returns:
+            tuple: (success, message)
+        """
+        try:
+            self.logger.info("Setting up pgBackRest directories...")
+            
+            # Create required directories
+            setup_commands = [
+                "sudo mkdir -p /var/lib/pgbackrest/archive",
+                "sudo mkdir -p /var/lib/pgbackrest/backup",
+                "sudo mkdir -p /var/lib/pgbackrest/stop",
+                "sudo mkdir -p /var/log/pgbackrest",
+                "sudo chown -R postgres:postgres /var/lib/pgbackrest",
+                "sudo chown -R postgres:postgres /var/log/pgbackrest",
+                "sudo chmod -R 750 /var/lib/pgbackrest",
+                "sudo chmod -R 750 /var/log/pgbackrest"
+            ]
+            
+            for cmd in setup_commands:
+                result = self.ssh.execute_command(cmd)
+                if result['exit_code'] != 0:
+                    return False, f"Failed to execute: {cmd}. Error: {result.get('stderr', 'Unknown error')}"
+            
+            return True, "pgBackRest directories setup completed successfully"
+            
+        except Exception as e:
+            return False, f"Error during directory setup: {str(e)}"
+    
     def create_stanza(self, db_name: str) -> Tuple[bool, str]:
-        """Create a pgBackRest stanza.
+        """Create a pgBackRest stanza following official best practices.
         
         Args:
             db_name: Database name (stanza name)
@@ -287,61 +416,58 @@ class PostgresBackupManager:
         """
         self.logger.info(f"Creating pgBackRest stanza: {db_name}")
         
-        # Specify the config file path explicitly
         config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
         
-        # First, ensure pgBackRest is started (remove any stop files)
-        self.logger.info(f"Starting pgBackRest for stanza: {db_name}")
-        start_result = self.system_utils.execute_as_postgres_user(
-            f"pgbackrest --config={config_file} --stanza={db_name} start"
-        )
+        # Pre-flight checks
+        self.setup_pgbackrest_directories()
+        self._clear_stop_files(db_name)
         
-        if start_result['exit_code'] != 0:
-            self.logger.warning(f"Failed to start pgBackRest for stanza {db_name}: {start_result.get('stderr', 'Unknown error')}")
-            # Try to start for all stanzas
-            global_start_result = self.system_utils.execute_as_postgres_user(
-                f"pgbackrest --config={config_file} start"
-            )
-            if global_start_result['exit_code'] != 0:
-                return False, f"Failed to start pgBackRest: {global_start_result.get('stderr', 'Unknown error')}"
+        # Verify PostgreSQL accessibility
+        pg_check = self.system_utils.execute_as_postgres_user("psql -c 'SELECT 1;' -t")
+        if pg_check['exit_code'] != 0:
+            return False, f"PostgreSQL is not accessible: {pg_check.get('stderr', 'Unknown error')}"
         
-        # Now attempt to create the stanza
+        # Create stanza
         result = self.system_utils.execute_as_postgres_user(
             f"pgbackrest --config={config_file} --stanza={db_name} stanza-create"
         )
         
-        # Log the full result for debugging
-        self.logger.info(f"Stanza creation result - Exit code: {result['exit_code']}, Stdout: {result.get('stdout', '')}, Stderr: {result.get('stderr', '')}")
-        
         if result['exit_code'] == 0:
             return True, f"Stanza {db_name} created successfully"
-        else:
-            # Capture both stdout and stderr for better error reporting
-            error_msg = result.get('stderr', '').strip()
-            stdout_msg = result.get('stdout', '').strip()
-            
-            # If stderr is empty, use stdout
-            if not error_msg and stdout_msg:
-                error_msg = stdout_msg
-            elif not error_msg and not stdout_msg:
-                error_msg = f"Command failed with exit code {result['exit_code']} but no error message was provided"
-            
-            # Check for common errors and provide helpful messages
-            if "stop file exists" in error_msg:
-                return False, f"Failed to create stanza {db_name}: pgBackRest stop file exists. Try running 'pgbackrest start' first. Error: {error_msg}"
-            elif "unable to find primary cluster" in error_msg:
-                return False, f"Failed to create stanza {db_name}: PostgreSQL cluster not found or not running. Ensure PostgreSQL is running and accessible. Error: {error_msg}"
-            elif "permission denied" in error_msg.lower():
-                return False, f"Failed to create stanza {db_name}: Permission denied. Check file permissions and ownership. Error: {error_msg}"
-            elif "already exists" in error_msg.lower():
-                # Stanza already exists, check if it's valid
-                check_success, check_msg = self.check_stanza(db_name)
-                if check_success:
-                    return True, f"Stanza {db_name} already exists and is valid"
-                else:
-                    return False, f"Stanza {db_name} exists but is invalid: {check_msg}"
-            else:
-                return False, f"Failed to create stanza {db_name}: {error_msg}"
+        
+        error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip()
+        
+        # Handle specific error cases
+        if "already exists" in error_msg.lower():
+            # Verify existing stanza
+            check_success, _ = self.check_stanza(db_name)
+            return (True, f"Stanza {db_name} already exists and is valid") if check_success else (False, f"Stanza {db_name} exists but is invalid")
+        
+        if "stop file exists" in error_msg.lower():
+            # Clear stop files and retry once
+            self._clear_stop_files(db_name)
+            time.sleep(1)
+            retry_result = self.system_utils.execute_as_postgres_user(
+                f"pgbackrest --config={config_file} --stanza={db_name} stanza-create"
+            )
+            if retry_result['exit_code'] == 0:
+                return True, f"Stanza {db_name} created successfully after clearing stop files"
+            error_msg = retry_result.get('stderr', '').strip() or retry_result.get('stdout', '').strip()
+        
+        if "FormatError" in error_msg or "corrupted" in error_msg.lower() or "CryptoError" in error_msg or "unable to flush" in error_msg:
+            # Clean up corrupted/encrypted files and retry once
+            self.logger.info(f"Detected corrupted or encrypted files for {db_name}, cleaning up...")
+            cleanup_success, _ = self.cleanup_corrupted_stanza_files(db_name)
+            if cleanup_success:
+                time.sleep(2)  # Give more time for cleanup
+                retry_result = self.system_utils.execute_as_postgres_user(
+                    f"pgbackrest --config={config_file} --stanza={db_name} stanza-create"
+                )
+                if retry_result['exit_code'] == 0:
+                    return True, f"Stanza {db_name} created successfully after cleanup"
+                error_msg = retry_result.get('stderr', '').strip() or retry_result.get('stdout', '').strip()
+        
+        return False, f"Failed to create stanza {db_name}: {error_msg}"
     
     def check_stanza(self, db_name: str) -> Tuple[bool, str]:
         """Check a pgBackRest stanza.
@@ -401,7 +527,7 @@ class PostgresBackupManager:
         return True, "PostgreSQL archiving configured successfully"
     
     def perform_backup(self, db_name: str, backup_type: str = 'incr') -> Tuple[bool, str]:
-        """Perform a backup.
+        """Perform a backup following pgBackRest best practices.
         
         Args:
             db_name: Database name (stanza name)
@@ -412,12 +538,11 @@ class PostgresBackupManager:
         """
         self.logger.info(f"Performing {backup_type} backup for {db_name}...")
         
-        # Check if we need to force a full backup
+        # Auto-promote to full backup if needed
         if backup_type == 'incr' and self._should_force_full_backup(db_name):
             backup_type = 'full'
-            self.logger.info("Forcing full backup due to policy")
+            self.logger.info("Auto-promoting to full backup per retention policy")
         
-        # Specify the config file path explicitly
         config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
         
         result = self.system_utils.execute_as_postgres_user(
@@ -426,26 +551,9 @@ class PostgresBackupManager:
         
         if result['exit_code'] == 0:
             return True, f"{backup_type.capitalize()} backup completed successfully"
-        else:
-            # Get error details from stderr and stdout
-            stderr = result.get('stderr', '').strip()
-            stdout = result.get('stdout', '').strip()
-            exit_code = result.get('exit_code', 'unknown')
-            
-            # Build comprehensive error message
-            error_parts = []
-            if stderr:
-                error_parts.append(f"Error: {stderr}")
-            if stdout:
-                error_parts.append(f"Output: {stdout}")
-            error_parts.append(f"Exit code: {exit_code}")
-            
-            error_message = " | ".join(error_parts) if error_parts else "Unknown error occurred"
-            
-            # Log the full result for debugging
-            self.logger.error(f"Backup command failed. Full result: {result}")
-            
-            return False, f"{backup_type.capitalize()} backup failed: {error_message}"
+        
+        error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
+        return False, f"{backup_type.capitalize()} backup failed: {error_msg}"
     
     def _should_force_full_backup(self, db_name: str) -> bool:
         """Check if a full backup should be forced based on pgBackRest recommended policy.
@@ -461,8 +569,8 @@ class PostgresBackupManager:
             if not backups:
                 return True  # No backups exist, force full
             
-            # Count recent backups using recommended policy
-            recent_backups = backups[-PostgresConstants.PGBACKREST['max_backups_before_full']:]
+            # Count recent backups using recommended policy (check last 7 backups)
+            recent_backups = backups[-7:]
             full_backup_count = sum(1 for backup in recent_backups 
                                   if backup.get('type') == 'full')
             
@@ -557,65 +665,30 @@ class PostgresBackupManager:
         
         return True, f"Database {db_name} restored successfully"
     
-    def cleanup_old_backups(self, db_name: str, retention_count: int) -> Tuple[bool, str]:
-        """Apply retention policy to existing backups.
+    def cleanup_old_backups(self, db_name: str, retention_count: int = None) -> Tuple[bool, str]:
+        """Apply retention policy using pgBackRest's built-in expire command.
         
         Args:
             db_name: Database name (stanza name)
-            retention_count: Number of backups to keep
+            retention_count: Number of backups to keep (uses config if None)
             
         Returns:
             tuple: (success, message)
         """
-        try:
-            backups = self.list_backups(db_name)
-            
-            if not backups or len(backups) <= retention_count:
-                return True, f"No cleanup needed. Current backups ({len(backups)}) within retention limit ({retention_count})"
-            
-            # Sort backups by timestamp (newest first)
-            for backup in backups:
-                if 'timestamp' in backup:
-                    try:
-                        backup['datetime'] = datetime.strptime(backup['timestamp'], '%Y-%m-%d %H:%M:%S')
-                    except ValueError:
-                        backup['datetime'] = datetime.now()
-                else:
-                    backup['datetime'] = datetime.now()
-            
-            backups.sort(key=lambda x: x['datetime'], reverse=True)
-            
-            # Keep the newest backups up to the retention limit
-            backups_to_delete = backups[retention_count:]
-            
-            if not backups_to_delete:
-                return True, "No backups to delete"
-            
-            # Check if the 'expire' command is supported
-            check_expire = self.ssh.execute_command("sudo -u postgres pgbackrest help | grep expire")
-            expire_supported = check_expire['exit_code'] == 0 and 'expire' in check_expire['stdout']
-            
-            if not expire_supported:
-                return True, "Using pgBackRest built-in retention mechanism (expire command not available)"
-            
-            deleted_count = 0
-            for backup in backups_to_delete:
-                backup_name = backup['name']
-                result = self.system_utils.execute_as_postgres_user(
-                    f"pgbackrest --stanza={db_name} expire --set={backup_name}"
-                )
-                
-                if result['exit_code'] == 0:
-                    self.logger.info(f"Successfully deleted old backup: {backup_name}")
-                    deleted_count += 1
-                else:
-                    self.logger.error(f"Failed to delete backup {backup_name}: {result.get('stderr', 'Unknown error')}")
-            
-            return True, f"Successfully deleted {deleted_count} old backups"
-            
-        except Exception as e:
-            self.logger.error(f"Error in cleanup_old_backups: {str(e)}")
-            return False, f"Error cleaning up old backups: {str(e)}"
+        self.logger.info(f"Applying retention policy for stanza {db_name}...")
+        
+        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+        
+        # Use pgBackRest's built-in expire command which respects retention settings in config
+        result = self.system_utils.execute_as_postgres_user(
+            f"pgbackrest --config={config_file} --stanza={db_name} expire"
+        )
+        
+        if result['exit_code'] == 0:
+            return True, "Retention policy applied successfully"
+        else:
+            error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
+            return False, f"Failed to apply retention policy: {error_msg}"
     
     def health_check(self, db_name: str) -> Tuple[bool, str, Dict]:
         """Perform a comprehensive health check of the backup system.

@@ -34,9 +34,15 @@ class LogRotateManager:
             
             # Write logrotate configuration file
             config_path = '/etc/logrotate.d/pgbackrest'
-            write_cmd = f'sudo tee {config_path} > /dev/null'
             
-            result = self.ssh.execute_command(write_cmd, input_data=logrotate_config)
+            # Create a temporary file with the configuration content
+            temp_path = '/tmp/pgbackrest_logrotate.conf'
+            if not self.ssh.write_file_content(temp_path, logrotate_config):
+                return False, "Failed to write temporary logrotate configuration file"
+            
+            # Move the temporary file to the final location with proper permissions
+            move_cmd = f'sudo mv {temp_path} {config_path} && sudo chmod 644 {config_path}'
+            result = self.ssh.execute_command(move_cmd)
             
             if result['exit_code'] != 0:
                 return False, f"Failed to create logrotate configuration: {result.get('stderr', 'Unknown error')}"
