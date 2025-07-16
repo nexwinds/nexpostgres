@@ -668,7 +668,5 @@ class UnifiedValidationService:
         validated_data['restore_to_same'] = form_data.get('restore_to_same') == 'on'
         validated_data['use_recovery_time'] = form_data.get('use_recovery_time') == 'on'
         validated_data['recovery_time'] = form_data.get('recovery_time')
-        validated_data['stop_target_database'] = form_data.get('stop_target_database') == 'on'
-        validated_data['create_restore_point'] = form_data.get('create_restore_point') == 'on'
         
         return len(errors) == 0, errors, validated_data
