@@ -457,9 +457,9 @@ class PostgresManager:
         return True, "PostgreSQL server initialized successfully"
     
     # Delegate backup operations to backup manager
-    def setup_pgbackrest(self, s3_config: Optional[Dict] = None) -> Tuple[bool, str]:
+    def setup_pgbackrest(self, s3_config: Optional[Dict] = None, backup_job=None) -> Tuple[bool, str]:
         """Setup pgBackRest for backups."""
-        return self.backup_manager.create_pgbackrest_config(s3_config)
+        return self.backup_manager.create_pgbackrest_config(s3_config, backup_job)
     
     def create_backup_stanza(self, db_name: str) -> Tuple[bool, str]:
         """Create a backup stanza for a database."""

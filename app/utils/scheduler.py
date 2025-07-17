@@ -119,11 +119,11 @@ def execute_backup(job_id, manual=False):
                 'access_key': job.s3_storage.access_key,
                 'secret_key': job.s3_storage.secret_key
             }
-                success, message = pg_manager.setup_pgbackrest(s3_config)
+                success, message = pg_manager.setup_pgbackrest(s3_config, job)
                 if not success:
                     raise Exception("Failed to configure pgBackRest")
             else:
-                success, message = pg_manager.setup_pgbackrest()
+                success, message = pg_manager.setup_pgbackrest(None, job)
                 if not success:
                     raise Exception(f"Failed to configure pgBackRest: {message}")
             

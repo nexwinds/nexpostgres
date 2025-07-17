@@ -639,7 +639,7 @@ class UnifiedValidationService:
         validated_data = {}
         
         # Required fields validation
-        required_fields = ['backup_job_id', 'database_id']
+        required_fields = ['backup_job_id']
         is_valid, field_errors = cls.validate_required_fields(form_data, required_fields)
         if not is_valid:
             errors.extend(field_errors)
@@ -653,20 +653,37 @@ class UnifiedValidationService:
                 validated_data['backup_job'] = backup_job
                 validated_data['backup_job_id'] = backup_job.id
         
-        # Database existence validation
-        if form_data.get('database_id'):
-            is_valid, error, database = cls.validate_database_exists(form_data['database_id'])
-            if not is_valid:
-                errors.append(error)
+        # Determine target database based on restore_to_same checkbox
+        restore_to_same = form_data.get('restore_to_same') == 'true'
+        validated_data['restore_to_same'] = restore_to_same
+        
+        if restore_to_same:
+            # Use source database as target
+            if form_data.get('database_id'):
+                is_valid, error, database = cls.validate_database_exists(form_data['database_id'])
+                if not is_valid:
+                    errors.append(error)
+                else:
+                    validated_data['database'] = database
+                    validated_data['database_id'] = database.id
             else:
-                validated_data['database'] = database
-                validated_data['database_id'] = database.id
+                errors.append('Source database ID is required')
+        else:
+            # Use selected target database
+            if form_data.get('target_database_id'):
+                is_valid, error, database = cls.validate_database_exists(form_data['target_database_id'])
+                if not is_valid:
+                    errors.append(error)
+                else:
+                    validated_data['database'] = database
+                    validated_data['database_id'] = database.id
+            else:
+                errors.append('Target database selection is required when not restoring to same database')
         
         # Optional fields
         validated_data['backup_log_id'] = form_data.get('backup_log_id')
         validated_data['target_database_id'] = form_data.get('target_database_id')
-        validated_data['restore_to_same'] = form_data.get('restore_to_same') == 'on'
-        validated_data['use_recovery_time'] = form_data.get('use_recovery_time') == 'on'
+        validated_data['use_recovery_time'] = form_data.get('use_recovery_time') == 'true'
         validated_data['recovery_time'] = form_data.get('recovery_time')
         
         return len(errors) == 0, errors, validated_data

@@ -21,18 +21,69 @@ class SSHManager:
             
             # Create temporary file for SSH key content
             temp_key_file = None
+            pkey = None
             if self.ssh_key_content:
-                temp_key_file = tempfile.NamedTemporaryFile(delete=False)
-                temp_key_file.write(self.ssh_key_content.encode())
+                # Normalize line endings and ensure proper format
+                key_content = self.ssh_key_content.strip().replace('\r\n', '\n').replace('\r', '\n')
+                
+                # Ensure key ends with newline
+                if not key_content.endswith('\n'):
+                    key_content += '\n'
+                
+                temp_key_file = tempfile.NamedTemporaryFile(delete=False, mode='w', encoding='utf-8')
+                temp_key_file.write(key_content)
                 temp_key_file.close()
                 self.temp_key_path = temp_key_file.name
+                
+                print(f"DEBUG SSH: Created temp key file: {self.temp_key_path}")
+                print(f"DEBUG SSH: SSH key content length: {len(key_content)}")
+                print(f"DEBUG SSH: SSH key starts with: {key_content[:50]}...")
+                print(f"DEBUG SSH: SSH key ends with: ...{key_content[-50:]}")
+                
+                # Try to load the key directly with paramiko to validate format
+                try:
+                    from io import StringIO
+                    key_file_obj = StringIO(key_content)
+                    
+                    # Try different key types
+                    key_file_obj.seek(0)
+                    if 'BEGIN OPENSSH PRIVATE KEY' in key_content:
+                        pkey = paramiko.Ed25519Key.from_private_key(key_file_obj)
+                        print(f"DEBUG SSH: Successfully loaded as Ed25519 key")
+                    elif 'BEGIN RSA PRIVATE KEY' in key_content:
+                        pkey = paramiko.RSAKey.from_private_key(key_file_obj)
+                        print(f"DEBUG SSH: Successfully loaded as RSA key")
+                    elif 'BEGIN EC PRIVATE KEY' in key_content:
+                        pkey = paramiko.ECDSAKey.from_private_key(key_file_obj)
+                        print(f"DEBUG SSH: Successfully loaded as ECDSA key")
+                    else:
+                        print(f"DEBUG SSH: Unknown key format, trying generic loading")
+                        
+                except Exception as key_error:
+                    print(f"DEBUG SSH: Failed to load key directly: {str(key_error)}")
+                    pkey = None
             
-            self.client.connect(
-                hostname=self.host,
-                port=self.port,
-                username=self.username,
-                key_filename=self.temp_key_path if self.temp_key_path else None
-            )
+            print(f"DEBUG SSH: Attempting connection to {self.username}@{self.host}:{self.port}")
+            print(f"DEBUG SSH: Using key file: {self.temp_key_path if self.temp_key_path else 'None'}")
+            print(f"DEBUG SSH: Loaded pkey object: {pkey is not None}")
+            
+            # Try connection with pkey first, then fallback to key file
+            if pkey:
+                print(f"DEBUG SSH: Attempting connection with pkey object")
+                self.client.connect(
+                    hostname=self.host,
+                    port=self.port,
+                    username=self.username,
+                    pkey=pkey
+                )
+            else:
+                print(f"DEBUG SSH: Attempting connection with key file")
+                self.client.connect(
+                    hostname=self.host,
+                    port=self.port,
+                    username=self.username,
+                    key_filename=self.temp_key_path if self.temp_key_path else None
+                )
             
             # Clean up temp file after connection is established
             if temp_key_file and self.temp_key_path:
@@ -40,14 +91,19 @@ class SSHManager:
                 self.temp_key_path = None
             
             self.logger.info(f"Connected to {self.username}@{self.host}:{self.port}")
+            print(f"DEBUG SSH: Connection successful to {self.username}@{self.host}:{self.port}")
             return True
             
         except Exception as e:
             self.logger.error(f"Failed to connect to {self.username}@{self.host}:{self.port}: {str(e)}")
+            print(f"DEBUG SSH: Connection failed to {self.username}@{self.host}:{self.port}: {str(e)}")
             
             # Clean up temp file in case of error
             if temp_key_file and self.temp_key_path:
-                os.unlink(self.temp_key_path)
+                try:
+                    os.unlink(self.temp_key_path)
+                except:
+                    pass
                 self.temp_key_path = None
                 
             return False

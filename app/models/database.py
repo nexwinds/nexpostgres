@@ -99,6 +99,7 @@ class BackupJob(BaseModel):
     enabled = db.Column(db.Boolean, default=True)
     s3_storage_id = db.Column(db.Integer, db.ForeignKey('s3_storage.id'), nullable=False)
     retention_count = db.Column(db.Integer, default=7)  # Maximum number of backups to keep
+    encryption_key = db.Column(db.String(255), nullable=True)  # Base64-encoded encryption key for pgBackRest
     
     # Relationships
     logs = db.relationship('BackupLog', backref='backup_job', lazy=True, cascade="all, delete-orphan")
@@ -154,3 +155,14 @@ def init_db(app):
             admin.is_first_login = True
             db.session.add(admin)
             db.session.commit()
+            
+        # Add encryption_key column to existing BackupJob records if it doesn't exist
+        try:
+            from sqlalchemy import text
+            result = db.session.execute(text("PRAGMA table_info(backup_job)"))
+            columns = [row[1] for row in result.fetchall()]
+            if 'encryption_key' not in columns:
+                db.session.execute(text("ALTER TABLE backup_job ADD COLUMN encryption_key VARCHAR(255)"))
+                db.session.commit()
+        except Exception:
+            pass  # Column might already exist or other DB-specific issues

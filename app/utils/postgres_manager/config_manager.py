@@ -63,12 +63,26 @@ class PostgresConfigManager:
         
         # Search in common paths
         for path_pattern in search_paths:
-            result = self.ssh.execute_command(f"sudo find {os.path.dirname(path_pattern)} -name {os.path.basename(path_pattern)} 2>/dev/null | head -1")
-            if result['exit_code'] == 0 and result['stdout'].strip():
-                config_file = result['stdout'].strip()
-                self._postgresql_conf_path = config_file
-                self.logger.info(f"Found postgresql.conf: {config_file}")
-                return config_file
+            # Expand wildcards to get actual paths
+            if '*' in path_pattern:
+                expand_result = self.ssh.execute_command(f"sudo ls {path_pattern} 2>/dev/null || true")
+                if expand_result['exit_code'] == 0 and expand_result['stdout'].strip():
+                    expanded_paths = expand_result['stdout'].strip().split('\n')
+                    for expanded_path in expanded_paths:
+                        expanded_path = expanded_path.strip()
+                        if expanded_path and os.path.basename(expanded_path) == 'postgresql.conf':
+                            check_result = self.ssh.execute_command(f"sudo test -f {expanded_path} && echo 'exists'")
+                            if 'exists' in check_result['stdout']:
+                                self._postgresql_conf_path = expanded_path
+                                self.logger.info(f"Found postgresql.conf: {expanded_path}")
+                                return expanded_path
+            else:
+                # Direct path without wildcards
+                check_result = self.ssh.execute_command(f"sudo test -f {path_pattern} && echo 'exists'")
+                if 'exists' in check_result['stdout']:
+                    self._postgresql_conf_path = path_pattern
+                    self.logger.info(f"Found postgresql.conf: {path_pattern}")
+                    return path_pattern
         
         self.logger.error("Could not locate postgresql.conf")
         return None
@@ -128,12 +142,26 @@ class PostgresConfigManager:
             ])
         
         for path_pattern in search_paths:
-            result = self.ssh.execute_command(f"sudo find {os.path.dirname(path_pattern)} -name {os.path.basename(path_pattern)} 2>/dev/null | head -1")
-            if result['exit_code'] == 0 and result['stdout'].strip():
-                hba_file = result['stdout'].strip()
-                self._pg_hba_conf_path = hba_file
-                self.logger.info(f"Found pg_hba.conf: {hba_file}")
-                return hba_file
+            # Expand wildcards to get actual paths
+            if '*' in path_pattern:
+                expand_result = self.ssh.execute_command(f"sudo ls {path_pattern} 2>/dev/null || true")
+                if expand_result['exit_code'] == 0 and expand_result['stdout'].strip():
+                    expanded_paths = expand_result['stdout'].strip().split('\n')
+                    for expanded_path in expanded_paths:
+                        expanded_path = expanded_path.strip()
+                        if expanded_path and os.path.basename(expanded_path) == 'pg_hba.conf':
+                            check_result = self.ssh.execute_command(f"sudo test -f {expanded_path} && echo 'exists'")
+                            if 'exists' in check_result['stdout']:
+                                self._pg_hba_conf_path = expanded_path
+                                self.logger.info(f"Found pg_hba.conf: {expanded_path}")
+                                return expanded_path
+            else:
+                # Direct path without wildcards
+                check_result = self.ssh.execute_command(f"sudo test -f {path_pattern} && echo 'exists'")
+                if 'exists' in check_result['stdout']:
+                    self._pg_hba_conf_path = path_pattern
+                    self.logger.info(f"Found pg_hba.conf: {path_pattern}")
+                    return path_pattern
         
         self.logger.error("Could not locate pg_hba.conf")
         return None
@@ -171,13 +199,28 @@ class PostgresConfigManager:
                 f"{data_dir}/data"
             ])
         
-        for path in search_paths:
-            # Check if this looks like a PostgreSQL data directory
-            check_result = self.ssh.execute_command(f"sudo test -f {path}/PG_VERSION && echo 'exists'")
-            if 'exists' in check_result['stdout']:
-                self._data_directory = path
-                self.logger.info(f"Found data directory: {path}")
-                return path
+        for path_pattern in search_paths:
+            # Expand wildcards to get actual paths
+            if '*' in path_pattern:
+                expand_result = self.ssh.execute_command(f"sudo ls -d {path_pattern} 2>/dev/null || true")
+                if expand_result['exit_code'] == 0 and expand_result['stdout'].strip():
+                    expanded_paths = expand_result['stdout'].strip().split('\n')
+                    for expanded_path in expanded_paths:
+                        expanded_path = expanded_path.strip()
+                        if expanded_path:
+                            # Check if this looks like a PostgreSQL data directory
+                            check_result = self.ssh.execute_command(f"sudo test -f {expanded_path}/PG_VERSION && echo 'exists'")
+                            if 'exists' in check_result['stdout']:
+                                self._data_directory = expanded_path
+                                self.logger.info(f"Found data directory: {expanded_path}")
+                                return expanded_path
+            else:
+                # Direct path without wildcards
+                check_result = self.ssh.execute_command(f"sudo test -f {path_pattern}/PG_VERSION && echo 'exists'")
+                if 'exists' in check_result['stdout']:
+                    self._data_directory = path_pattern
+                    self.logger.info(f"Found data directory: {path_pattern}")
+                    return path_pattern
         
         self.logger.error("Could not locate PostgreSQL data directory")
         return None

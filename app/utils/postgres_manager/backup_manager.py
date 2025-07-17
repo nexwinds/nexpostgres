@@ -24,28 +24,50 @@ class PostgresBackupManager:
         self.logger = logger or logging.getLogger(__name__)
         self.logrotate_manager = LogRotateManager(ssh_manager, logger)
     
-    def get_or_create_cipher_passphrase(self) -> str:
-        """Get existing cipher passphrase or create a new one if none exists.
+    def get_or_create_cipher_passphrase(self, backup_job=None) -> str:
+        """Get existing cipher passphrase from backup job or create a new one if none exists.
         
+        Args:
+            backup_job: BackupJob instance containing encryption key
+            
         Returns:
             str: Base64-encoded secure passphrase
         """
-        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+        # If backup_job is provided and has an encryption key, use it
+        if backup_job and backup_job.encryption_key:
+            self.logger.info("Using encryption key from database")
+            return backup_job.encryption_key
         
-        # Try to read existing passphrase from config
+        # Fallback: try to read existing passphrase from config file
+        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
         result = self.ssh.execute_command(f"sudo grep -E '^repo1-cipher-pass=' {config_file} 2>/dev/null || true")
         if result['exit_code'] == 0 and result['stdout'].strip():
             # Extract existing passphrase
             line = result['stdout'].strip()
             if '=' in line:
                 existing_passphrase = line.split('=', 1)[1]
-                self.logger.info("Using existing cipher passphrase")
+                self.logger.info("Using existing cipher passphrase from config file")
+                # Save to backup_job if provided
+                if backup_job:
+                    backup_job.encryption_key = existing_passphrase
+                    from app.models.database import db
+                    db.session.commit()
+                    self.logger.info("Saved existing encryption key to backup job database")
                 return existing_passphrase
         
         # Generate new passphrase if none exists
         self.logger.info("Generating new cipher passphrase")
         random_bytes = secrets.token_bytes(32)
-        return base64.b64encode(random_bytes).decode('utf-8')
+        passphrase = base64.b64encode(random_bytes).decode('utf-8')
+        
+        # Save to backup_job if provided
+        if backup_job:
+            backup_job.encryption_key = passphrase
+            from app.models.database import db
+            db.session.commit()
+            self.logger.info("Saved new encryption key to backup job database")
+        
+        return passphrase
     
     def is_pgbackrest_installed(self) -> bool:
         """Check if pgBackRest is installed.
@@ -111,7 +133,7 @@ class PostgresBackupManager:
         
         return True, "pgBackRest directories created successfully"
     
-    def create_pgbackrest_config(self, s3_config: Optional[Dict] = None) -> Tuple[bool, str]:
+    def create_pgbackrest_config(self, s3_config: Optional[Dict] = None, backup_job=None) -> Tuple[bool, str]:
         """Create pgBackRest configuration following official recommendations.
         
         Args:
@@ -145,7 +167,7 @@ class PostgresBackupManager:
         config_content += "start-fast=y\n"
         
         # Get or create secure cipher passphrase
-        cipher_passphrase = self.get_or_create_cipher_passphrase()
+        cipher_passphrase = self.get_or_create_cipher_passphrase(backup_job)
         
         # Add S3 configuration if provided, otherwise use posix
         if s3_config:
@@ -282,42 +304,42 @@ class PostgresBackupManager:
         Returns:
             tuple: (success, message)
         """
-        self.logger.info(f"Cleaning up corrupted stanza files for: {db_name}")
+        self.logger.info(f"Performing thorough cleanup of stanza files for: {db_name}")
         
         try:
             # Stop any running pgBackRest processes for this stanza
             self.ssh.execute_command(f"sudo pkill -f 'pgbackrest.*{db_name}' || true")
             
-            # Remove corrupted encrypted archive files that can't be decrypted
-            archive_path = f"{PostgresConstants.PGBACKREST['backup_dir']}/archive/{db_name}"
-            backup_path = f"{PostgresConstants.PGBACKREST['backup_dir']}/backup/{db_name}"
-            
-            self.logger.info(f"Removing corrupted encrypted files for stanza: {db_name}")
-            
-            # Remove archive.info files that may be encrypted with old passphrase
-            self.ssh.execute_command(f"sudo rm -f {archive_path}/archive.info*")
-            
-            # Remove backup.info files that may be encrypted with old passphrase
-            self.ssh.execute_command(f"sudo rm -f {backup_path}/backup.info*")
-            
-            # Remove any existing backup sets to start fresh
-            self.ssh.execute_command(f"sudo rm -rf {backup_path}/*")
-            self.ssh.execute_command(f"sudo rm -rf {archive_path}/*")
-            
             # Use pgBackRest's built-in stop command to properly halt operations
             config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
             self.system_utils.execute_as_postgres_user(f"pgbackrest --config={config_file} --stanza={db_name} stop || true")
             
-            # Remove corrupted stanza files as recommended by pgBackRest documentation
+            # Remove all stanza-related files completely for fresh start
             stanza_paths = [
                 f"/var/lib/pgbackrest/archive/{db_name}",
-                f"/var/lib/pgbackrest/backup/{db_name}"
+                f"/var/lib/pgbackrest/backup/{db_name}",
+                f"{PostgresConstants.PGBACKREST['backup_dir']}/archive/{db_name}",
+                f"{PostgresConstants.PGBACKREST['backup_dir']}/backup/{db_name}"
             ]
+            
+            self.logger.info(f"Removing all stanza files for complete cleanup: {db_name}")
             
             for path in stanza_paths:
                 result = self.ssh.execute_command(f"sudo rm -rf {path}")
                 if result['exit_code'] != 0:
                     self.logger.warning(f"Failed to remove {path}: {result.get('stderr', 'Unknown error')}")
+                else:
+                    self.logger.info(f"Successfully removed: {path}")
+            
+            # Also remove any lock files that might prevent stanza creation
+            lock_paths = [
+                f"/tmp/pgbackrest/{db_name}.lock",
+                f"/var/lib/pgbackrest/{db_name}.lock",
+                f"/run/pgbackrest/{db_name}.lock"
+            ]
+            
+            for lock_path in lock_paths:
+                self.ssh.execute_command(f"sudo rm -f {lock_path}")
             
             # Recreate directories with proper permissions
             recreate_commands = [
@@ -422,10 +444,31 @@ class PostgresBackupManager:
         self.setup_pgbackrest_directories()
         self._clear_stop_files(db_name)
         
-        # Verify PostgreSQL accessibility
+        # Verify PostgreSQL accessibility and start if needed
         pg_check = self.system_utils.execute_as_postgres_user("psql -c 'SELECT 1;' -t")
         if pg_check['exit_code'] != 0:
-            return False, f"PostgreSQL is not accessible: {pg_check.get('stderr', 'Unknown error')}"
+            self.logger.info("PostgreSQL is not accessible, checking service status...")
+            
+            # Check if PostgreSQL service is running
+            is_running, status = self.system_utils.check_service_status('postgresql')
+            if not is_running:
+                self.logger.info("PostgreSQL service is not running, attempting to start...")
+                start_success, start_message = self.system_utils.start_service('postgresql')
+                if not start_success:
+                    return False, f"PostgreSQL is not running and failed to start: {start_message}"
+                
+                # Wait a moment for PostgreSQL to fully start
+                import time
+                time.sleep(5)
+                
+                # Verify accessibility again after starting
+                pg_recheck = self.system_utils.execute_as_postgres_user("psql -c 'SELECT 1;' -t")
+                if pg_recheck['exit_code'] != 0:
+                    return False, f"PostgreSQL started but still not accessible: {pg_recheck.get('stderr', 'Unknown error')}"
+                
+                self.logger.info("PostgreSQL service started successfully")
+            else:
+                return False, f"PostgreSQL service is running but not accessible: {pg_check.get('stderr', 'Unknown error')}"
         
         # Create stanza
         result = self.system_utils.execute_as_postgres_user(
@@ -454,9 +497,24 @@ class PostgresBackupManager:
                 return True, f"Stanza {db_name} created successfully after clearing stop files"
             error_msg = retry_result.get('stderr', '').strip() or retry_result.get('stdout', '').strip()
         
-        if "FormatError" in error_msg or "corrupted" in error_msg.lower() or "CryptoError" in error_msg or "unable to flush" in error_msg:
+        if ("FormatError" in error_msg or "corrupted" in error_msg.lower() or "CryptoError" in error_msg or 
+            "unable to flush" in error_msg or "do not match the database" in error_msg or 
+            "stanza-upgrade" in error_msg.lower()):
+            
+            # Handle database ID mismatch with stanza-upgrade
+            if "do not match the database" in error_msg:
+                self.logger.info(f"Database ID mismatch detected for {db_name}, attempting stanza-upgrade...")
+                upgrade_result = self.system_utils.execute_as_postgres_user(
+                    f"pgbackrest --config={config_file} --stanza={db_name} stanza-upgrade"
+                )
+                if upgrade_result['exit_code'] == 0:
+                    self.logger.info(f"Stanza upgrade successful for {db_name}")
+                    return True, f"Stanza {db_name} upgraded successfully to match database"
+                else:
+                    self.logger.warning(f"Stanza upgrade failed for {db_name}, proceeding with cleanup...")
+            
             # Clean up corrupted/encrypted files and retry once
-            self.logger.info(f"Detected corrupted or encrypted files for {db_name}, cleaning up...")
+            self.logger.info(f"Detected corrupted, encrypted, or mismatched files for {db_name}, cleaning up...")
             cleanup_success, _ = self.cleanup_corrupted_stanza_files(db_name)
             if cleanup_success:
                 time.sleep(2)  # Give more time for cleanup

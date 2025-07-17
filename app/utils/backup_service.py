@@ -180,23 +180,28 @@ class BackupService:
         db.session.commit()
     
     @staticmethod
-    def check_and_configure_backup(database, s3_storage):
+    def check_and_configure_backup(database, s3_storage, backup_job=None):
         """Check and configure backup system if needed.
         
         Args:
             database: Database object
             s3_storage: S3Storage object
+            backup_job: BackupJob object for encryption key storage
             
         Returns:
             tuple: (success, message)
         """
         def configure_operation(pg_manager):
+            print(f"DEBUG: Starting backup configuration check for database '{database.name}'")
             # Check if configuration is valid
             check_cmd = f"sudo -u postgres pgbackrest --stanza={database.name} check"
             ssh = pg_manager.ssh
+            print(f"DEBUG: Running check command: {check_cmd}")
             check_result = ssh.execute_command(check_cmd)
+            print(f"DEBUG: Check command exit code: {check_result['exit_code']}")
             
             if check_result['exit_code'] != 0:
+                print(f"DEBUG: Configuration check failed, setting up pgBackRest")
                 # Configure pgBackRest based on storage type
                 if s3_storage:
                     s3_config = {
@@ -206,12 +211,16 @@ class BackupService:
                         'access_key': s3_storage.access_key,
                         'secret_key': s3_storage.secret_key
                     }
-                    pg_manager.setup_pgbackrest(s3_config)
+                    print(f"DEBUG: Setting up pgBackRest with S3 config")
+                    pg_manager.setup_pgbackrest(s3_config, backup_job)
                 else:
-                    pg_manager.setup_pgbackrest()
+                    print(f"DEBUG: Setting up pgBackRest without S3 config")
+                    pg_manager.setup_pgbackrest(None, backup_job)
                 
+                print(f"DEBUG: pgBackRest setup completed")
                 return 'Backup system configured successfully'
             else:
+                print(f"DEBUG: Backup configuration is already valid")
                 return 'Backup configuration is valid'
         
         return BackupService.execute_with_postgres(
@@ -437,7 +446,7 @@ class BackupRestoreService:
     
     @staticmethod
     def find_backup_name(backup_job, backup_log_id=None):
-        """Find backup name for restore operation.
+        """Find backup name for restore operation on source server.
         
         Args:
             backup_job: BackupJob object
@@ -482,6 +491,75 @@ class BackupRestoreService:
             return backup_name, backup_log_id
             
         except Exception as e:
+            return None, backup_log_id
+        finally:
+            if ssh:
+                ssh.disconnect()
+    
+    @staticmethod
+    def find_backup_name_on_target(backup_job, target_database, backup_log_id=None):
+        """Find backup name for restore operation on target server.
+        
+        Args:
+            backup_job: BackupJob object
+            target_database: Target database object
+            backup_log_id: Optional backup log ID
+            
+        Returns:
+            tuple: (backup_name, updated_backup_log_id)
+        """
+        ssh = None
+        try:
+            print(f"DEBUG: Connecting to target server {target_database.server.host}")
+            ssh, ssh_message = BackupService.create_ssh_connection(target_database.server)
+            if not ssh:
+                print(f"DEBUG: Failed to connect to target server: {ssh_message}")
+                return None, backup_log_id
+            
+            print(f"DEBUG: Connected successfully, creating postgres manager")
+            pg_manager = BackupService.create_postgres_manager(ssh)
+            
+            # Use the original database name from backup_job for listing backups
+            print(f"DEBUG: Listing backups for database '{backup_job.database.name}' on target server")
+            backups = pg_manager.list_backups(backup_job.database.name)
+            
+            print(f"DEBUG: Found {len(backups) if backups else 0} backups: {backups}")
+            
+            if not backups:
+                print(f"DEBUG: No backups found for database '{backup_job.database.name}'")
+                return None, backup_log_id
+            
+            # If backup_log_id is provided, find corresponding backup
+            if backup_log_id:
+                print(f"DEBUG: Looking for specific backup with log_id {backup_log_id}")
+                backup_log = BackupLog.query.get(backup_log_id)
+                if backup_log:
+                    backup_name = BackupRestoreService._find_backup_by_time(
+                        backups, backup_log.start_time, backup_job.id
+                    )
+                    if backup_name:
+                        print(f"DEBUG: Found matching backup by time: {backup_name}")
+                        return backup_name, backup_log_id
+            
+            # Use most recent backup
+            backup_name = backups[0].get('name', 'latest')
+            print(f"DEBUG: Using most recent backup: {backup_name}")
+            
+            # Try to find corresponding backup log
+            if backup_name != 'latest':
+                updated_backup_log_id = BackupRestoreService._find_backup_log_by_name(
+                    backup_name, backup_job.id
+                )
+                if updated_backup_log_id:
+                    backup_log_id = updated_backup_log_id
+                    print(f"DEBUG: Found corresponding backup log: {backup_log_id}")
+            
+            return backup_name, backup_log_id
+            
+        except Exception as e:
+            print(f"DEBUG: Exception in find_backup_name_on_target: {str(e)}")
+            import traceback
+            print(f"DEBUG: Traceback: {traceback.format_exc()}")
             return None, backup_log_id
         finally:
             if ssh:
@@ -568,6 +646,59 @@ class BackupRestoreService:
         return None
     
     @staticmethod
+    def get_recovery_points(database):
+        """Get available recovery points for a database.
+        
+        Args:
+            database: PostgresDatabase object
+            
+        Returns:
+            tuple: (success, recovery_points_list)
+        """
+        ssh = None
+        try:
+            ssh, ssh_message = BackupService.create_ssh_connection(database.server)
+            if not ssh:
+                return False, []
+            
+            pg_manager = BackupService.create_postgres_manager(ssh)
+            backups = pg_manager.list_backups(database.name)
+            
+            if not backups:
+                return True, []
+            
+            recovery_points = []
+            for backup in backups:
+                backup_info = backup.get('info', {})
+                backup_name = backup.get('name', '')
+                timestamp_str = backup_info.get('timestamp', '')
+                
+                if timestamp_str and backup_name:
+                    try:
+                        # Parse the timestamp
+                        backup_time = BackupRestoreService._parse_backup_timestamp(timestamp_str)
+                        if backup_time:
+                            recovery_points.append({
+                                'datetime': backup_time.isoformat(),
+                                'formatted': backup_time.strftime('%Y-%m-%d %H:%M:%S'),
+                                'backup_name': backup_name,
+                                'type': backup_info.get('type', 'unknown')
+                            })
+                    except Exception:
+                        continue
+            
+            # Sort by datetime descending (newest first)
+            recovery_points.sort(key=lambda x: x['datetime'], reverse=True)
+            
+            return True, recovery_points
+            
+        except Exception as e:
+            return False, []
+        finally:
+            if ssh:
+                ssh.disconnect()
+    
+    @staticmethod
     def create_restore_log(database_id, backup_log_id, recovery_time, use_recovery_time):
         """Create restore log entry.
         
@@ -593,7 +724,7 @@ class BackupRestoreService:
         return restore_log
     
     @staticmethod
-    def _execute_restore_operation(database, backup_name, recovery_time, restore_log):
+    def _execute_restore_operation(database, backup_name, recovery_time, restore_log, stanza_name=None):
         """Execute restore operation.
         
         Args:
@@ -601,13 +732,16 @@ class BackupRestoreService:
             backup_name: Name of backup to restore
             recovery_time: Recovery time (optional)
             restore_log: RestoreLog object to update
+            stanza_name: Stanza name to use for restore (defaults to database.name)
             
         Returns:
             tuple: (success, message)
         """
         def restore_operation(pg_manager):
+            # Use stanza_name if provided, otherwise fall back to database.name
+            restore_stanza = stanza_name or database.name
             success, log_output = pg_manager.restore_database(
-                database.name, backup_name
+                restore_stanza, backup_name
             )
             
             # Update restore log
@@ -694,10 +828,65 @@ class BackupRestoreService:
             use_recovery_time = validated_data.get('use_recovery_time', False)
             recovery_time = validated_data.get('recovery_time')
             
-            # Find backup name
-            backup_name, updated_backup_log_id = self.find_backup_name(backup_job, backup_log_id)
+            print(f"DEBUG: Restore operation - Source server ID: {backup_job.database.server.id}, Target server ID: {database.server.id}")
+            print(f"DEBUG: Source server host: {backup_job.database.server.host}, Target server host: {database.server.host}")
+            print(f"DEBUG: Target database: {database.name} on server: {database.server.name}")
+            print(f"DEBUG: Target server SSH details - Host: {database.server.host}, Port: {database.server.port}, Username: {database.server.username}")
+            print(f"DEBUG: Target server SSH key length: {len(database.server.ssh_key_content) if database.server.ssh_key_content else 0}")
+            print(f"DEBUG: Source database: {backup_job.database.name} on server: {backup_job.database.server.name}")
+            
+            # Always configure pgBackRest on target server for S3 restore (disaster recovery scenario)
+            # This ensures we can restore from S3 even if the original server is down
+            print(f"DEBUG: Configuring S3 restore on target server (disaster recovery mode)")
+            s3_storage = backup_job.s3_storage
+            print(f"DEBUG: S3 storage config - Bucket: {s3_storage.bucket if s3_storage else 'None'}, Region: {s3_storage.region if s3_storage else 'None'}")
+            print(f"DEBUG: Backup job encryption key present: {bool(backup_job.encryption_key)}")
+            
+            success, config_message = BackupService.check_and_configure_backup(database, s3_storage, backup_job)
+            if not success:
+                print(f"DEBUG: Backup configuration failed: {config_message}")
+                return False, f'Failed to configure backup system on target server: {config_message}'
+            
+            print(f"DEBUG: Backup configuration successful: {config_message}")
+            
+            # Create backup stanza on target server for the source database
+            def create_stanza_operation(pg_manager):
+                # For S3 restore, we need to create the stanza to access S3 backups
+                data_dir = pg_manager.get_data_directory()
+                if not data_dir:
+                    return False, "Could not determine PostgreSQL data directory"
+                
+                print(f"DEBUG: Creating stanza config for database '{backup_job.database.name}' with data_dir '{data_dir}'")
+                
+                # Create stanza configuration
+                success, message = pg_manager.backup_manager.create_stanza_config(backup_job.database.name, data_dir)
+                if not success:
+                    print(f"DEBUG: Stanza config creation failed: {message}")
+                    return False, f"Stanza config creation failed: {message}"
+                
+                print(f"DEBUG: Stanza config created successfully, now creating stanza")
+                
+                # Create the stanza (this will access S3 to verify)
+                success, stanza_result = pg_manager.backup_manager.create_stanza(backup_job.database.name)
+                if not success:
+                    print(f"DEBUG: Stanza creation failed: {stanza_result}")
+                    return False, f"Stanza creation failed: {stanza_result}"
+                
+                print(f"DEBUG: Stanza created successfully: {stanza_result}")
+                return True, stanza_result
+            
+            success, stanza_message = BackupService.execute_with_postgres(
+                database.server, 'Backup stanza creation', create_stanza_operation
+            )
+            if not success:
+                return False, f'Failed to create backup stanza on target server: {stanza_message}. This is required for S3 restores.'
+            
+
+            
+            # Find backup name - now check on target server since it should be configured
+            backup_name, updated_backup_log_id = BackupRestoreService.find_backup_name_on_target(backup_job, database, backup_log_id)
             if not backup_name:
-                return False, 'No suitable backup found for restore'
+                return False, 'No suitable backup found for restore. Ensure the target server has access to the S3 storage with the correct encryption key.'
             
             # Create restore log
             restore_log = self.create_restore_log(
@@ -707,12 +896,13 @@ class BackupRestoreService:
                 use_recovery_time
             )
             
-            # Execute restore
+            # Execute restore using the source database name as stanza name
             success, message = self._execute_restore_operation(
                 database, 
                 backup_name, 
                 recovery_time, 
-                restore_log
+                restore_log,
+                stanza_name=backup_job.database.name
             )
             
             return success, message

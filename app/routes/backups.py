@@ -33,22 +33,8 @@ def add_backup():
                                  databases=databases, 
                                  s3_storages=s3_storages)
         
-        # Check and configure backup
+        # Create backup job first
         backup_service = BackupService()
-        success, message = backup_service.check_and_configure_backup(
-            validated_data['database'], 
-            validated_data['s3_storage']
-        )
-        
-        if not success:
-            flash(message, 'danger')
-            databases = PostgresDatabase.query.all()
-            s3_storages = S3Storage.query.all()
-            return render_template('backups/add.html', 
-                                 databases=databases, 
-                                 s3_storages=s3_storages)
-        
-        # Create backup job
         backup_job = backup_service.create_backup_job(
             name=validated_data['name'],
             database_id=validated_data['database_id'],
@@ -57,6 +43,31 @@ def add_backup():
             s3_storage_id=validated_data['s3_storage_id'],
             retention_count=validated_data['retention_count']
         )
+        
+        if not backup_job:
+            flash('Failed to create backup job', 'danger')
+            databases = PostgresDatabase.query.all()
+            s3_storages = S3Storage.query.all()
+            return render_template('backups/add.html', 
+                                 databases=databases, 
+                                 s3_storages=s3_storages)
+        
+        # Check and configure backup with the created backup job
+        success, message = backup_service.check_and_configure_backup(
+            validated_data['database'], 
+            validated_data['s3_storage'],
+            backup_job
+        )
+        
+        if not success:
+            # Delete the backup job if configuration fails
+            backup_service.delete_backup_job(backup_job)
+            flash(message, 'danger')
+            databases = PostgresDatabase.query.all()
+            s3_storages = S3Storage.query.all()
+            return render_template('backups/add.html', 
+                                 databases=databases, 
+                                 s3_storages=s3_storages)
         
         if backup_job:
             # Schedule the backup job
