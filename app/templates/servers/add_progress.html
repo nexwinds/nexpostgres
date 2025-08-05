@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+
+{% block title %}Adding Server - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-server me-2"></i>
+                        Adding Server: {{ server.name }}
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <!-- Progress Bar -->
+                    <div class="mb-4">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="fw-bold">Progress</span>
+                            <span id="progress-percentage" class="badge bg-primary">0%</span>
+                        </div>
+                        <div class="progress" style="height: 20px;">
+                            <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                 role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Current Status -->
+                    <div class="mb-4">
+                        <div class="d-flex align-items-center mb-2">
+                            <div id="status-icon" class="me-2">
+                                <i class="fas fa-spinner fa-spin text-primary"></i>
+                            </div>
+                            <span class="fw-bold">Current Status:</span>
+                        </div>
+                        <div id="current-status" class="alert alert-info mb-0">
+                            <span id="status-message">Initializing server setup...</span>
+                        </div>
+                    </div>
+
+                    <!-- Activity Log -->
+                    <div class="mb-4">
+                        <h6 class="fw-bold mb-3">
+                            <i class="fas fa-list-alt me-2"></i>
+                            Activity Log
+                        </h6>
+                        <div id="activity-log" class="border rounded p-3" style="height: 300px; overflow-y: auto; background-color: #f8f9fa;">
+                            <div class="log-entry text-muted">
+                                <small class="timestamp">[<span class="current-time"></span>]</small>
+                                <span class="message">Starting server initialization...</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="d-flex justify-content-between">
+                        <button id="view-logs-btn" class="btn btn-outline-secondary" disabled>
+                            <i class="fas fa-eye me-1"></i>
+                            View Detailed Logs
+                        </button>
+                        <div>
+                            <button id="cancel-btn" class="btn btn-outline-danger me-2">
+                                <i class="fas fa-times me-1"></i>
+                                Cancel
+                            </button>
+                            <button id="continue-btn" class="btn btn-success" style="display: none;">
+                                <i class="fas fa-arrow-right me-1"></i>
+                                Continue to Server List
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Error Modal -->
+<div class="modal fade" id="errorModal" tabindex="-1" aria-labelledby="errorModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="errorModalLabel">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    Initialization Error
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p id="error-message">An error occurred during server initialization.</p>
+                <div class="mt-3">
+                    <h6>What you can do:</h6>
+                    <ul>
+                        <li>Check your server credentials and try again</li>
+                        <li>Ensure the server has internet connectivity</li>
+                        <li>Verify that you have sudo privileges on the server</li>
+                        <li>Contact support if the problem persists</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <a href="{{ url_for('servers.edit', id=server.id) }}" class="btn btn-primary">
+                    <i class="fas fa-edit me-1"></i>
+                    Edit Server Settings
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    // Set current time in the activity log
+    const now = new Date();
+    const timeString = now.toLocaleTimeString('en-US', { hour12: false });
+    $('.current-time').text(timeString);
+    
+    let eventSource;
+    let isCompleted = false;
+    let hasError = false;
+    
+    // Initialize EventSource for progress updates
+    function startProgressTracking() {
+        eventSource = new EventSource('{{ url_for("servers.initialize_progress", id=server.id) }}');
+        
+        eventSource.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                updateProgress(data);
+            } catch (e) {
+                console.error('Error parsing progress data:', e);
+            }
+        };
+        
+        eventSource.onerror = function(event) {
+            console.error('EventSource error:', event);
+            if (!isCompleted && !hasError) {
+                addLogEntry('Connection error. Retrying...', 'warning');
+                // Retry connection after a delay
+                setTimeout(() => {
+                    if (!isCompleted && !hasError) {
+                        startProgressTracking();
+                    }
+                }, 3000);
+            }
+        };
+    }
+    
+    function updateProgress(data) {
+        const { step, message, progress, queue_key } = data;
+        
+        // Update progress bar
+        if (progress !== undefined) {
+            $('#progress-bar').css('width', progress + '%').attr('aria-valuenow', progress);
+            $('#progress-percentage').text(progress + '%');
+        }
+        
+        // Update status message
+        if (message) {
+            $('#status-message').text(message);
+            addLogEntry(message, getLogLevel(step));
+        }
+        
+        // Update status icon and styling based on step
+        updateStatusDisplay(step);
+        
+        // Handle completion or error
+        if (step === 'completed') {
+            handleCompletion();
+        } else if (step === 'error') {
+            handleError(message);
+        }
+    }
+    
+    function getLogLevel(step) {
+        switch (step) {
+            case 'error': return 'danger';
+            case 'warning': return 'warning';
+            case 'completed': return 'success';
+            case 'connecting': return 'info';
+            case 'connected': return 'success';
+            default: return 'info';
+        }
+    }
+    
+    function updateStatusDisplay(step) {
+        const statusIcon = $('#status-icon i');
+        const currentStatus = $('#current-status');
+        
+        // Remove existing classes
+        statusIcon.removeClass('fa-spinner fa-spin fa-check fa-exclamation-triangle text-primary text-success text-danger');
+        currentStatus.removeClass('alert-info alert-success alert-danger alert-warning');
+        
+        switch (step) {
+            case 'completed':
+                statusIcon.addClass('fa-check text-success');
+                currentStatus.addClass('alert-success');
+                break;
+            case 'error':
+                statusIcon.addClass('fa-exclamation-triangle text-danger');
+                currentStatus.addClass('alert-danger');
+                break;
+            case 'warning':
+                statusIcon.addClass('fa-exclamation-triangle text-warning');
+                currentStatus.addClass('alert-warning');
+                break;
+            default:
+                statusIcon.addClass('fa-spinner fa-spin text-primary');
+                currentStatus.addClass('alert-info');
+        }
+    }
+    
+    function addLogEntry(message, level = 'info') {
+        const timestamp = new Date().toLocaleTimeString();
+        const logEntry = $(`
+            <div class="log-entry mb-1">
+                <small class="timestamp text-muted">[${timestamp}]</small>
+                <span class="message text-${level === 'danger' ? 'danger' : level === 'warning' ? 'warning' : level === 'success' ? 'success' : 'dark'}">${message}</span>
+            </div>
+        `);
+        
+        $('#activity-log').append(logEntry);
+        // Auto-scroll to bottom
+        $('#activity-log').scrollTop($('#activity-log')[0].scrollHeight);
+    }
+    
+    function handleCompletion() {
+        isCompleted = true;
+        if (eventSource) {
+            eventSource.close();
+        }
+        
+        // Update UI for completion
+        $('#progress-bar').removeClass('progress-bar-animated');
+        $('#cancel-btn').hide();
+        $('#continue-btn').show();
+        $('#view-logs-btn').prop('disabled', false);
+        
+        // Show success message
+        addLogEntry('Server initialization completed successfully!', 'success');
+    }
+    
+    function handleError(message) {
+        hasError = true;
+        if (eventSource) {
+            eventSource.close();
+        }
+        
+        // Update UI for error
+        $('#progress-bar').removeClass('progress-bar-animated').addClass('bg-danger');
+        $('#cancel-btn').text('Back to Servers').removeClass('btn-outline-danger').addClass('btn-secondary');
+        $('#view-logs-btn').prop('disabled', false);
+        
+        // Show error modal
+        $('#error-message').text(message);
+        $('#errorModal').modal('show');
+    }
+    
+    // Event handlers
+    $('#cancel-btn').click(function() {
+        if (isCompleted || hasError) {
+            window.location.href = '{{ url_for("servers.index") }}';
+        } else {
+            if (confirm('Are you sure you want to cancel the server initialization?')) {
+                if (eventSource) {
+                    eventSource.close();
+                }
+                window.location.href = '{{ url_for("servers.index") }}';
+            }
+        }
+    });
+    
+    $('#continue-btn').click(function() {
+        window.location.href = '{{ url_for("servers.index") }}';
+    });
+    
+    $('#view-logs-btn').click(function() {
+        // For now, just scroll to top of log
+        $('#activity-log').scrollTop(0);
+    });
+    
+    // Start progress tracking
+    startProgressTracking();
+    
+    // Handle page unload
+    $(window).on('beforeunload', function() {
+        if (eventSource) {
+            eventSource.close();
+        }
+    });
+});
+</script>
+{% endblock %}

@@ -6,7 +6,6 @@ to prevent log files from growing indefinitely.
 
 import logging
 from typing import Tuple
-from .constants import PostgresConstants
 
 
 class LogRotateManager:

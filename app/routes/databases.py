@@ -1,10 +1,8 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
-from flask_login import login_required, current_user
+from flask_login import login_required
 from app.models.database import VpsServer, PostgresDatabase, PostgresDatabaseUser, RestoreLog, db
 from app.utils.database_service import DatabaseService, DatabaseImportService
 from app.utils.unified_validation_service import UnifiedValidationService
-import secrets
-import string
 from datetime import datetime
 
 databases_bp = Blueprint('databases', __name__)
@@ -719,7 +717,8 @@ def execute_import(database_id, restore_log_id):
 @login_required
 def import_status(database_id, restore_log_id):
     """Get import status."""
-    database = PostgresDatabase.query.join(VpsServer).filter(
+    # Validate database exists
+    PostgresDatabase.query.join(VpsServer).filter(
         PostgresDatabase.id == database_id
         # Removed user_id filtering for single-user mode
     ).first_or_404()
@@ -730,7 +729,9 @@ def import_status(database_id, restore_log_id):
     ).first_or_404()
     
     return jsonify({
+        'success': True,
         'status': restore_log.status,
-        'log_output': restore_log.log_output,
+        'log_output': restore_log.log_output or '',
+        'is_complete': restore_log.status in ['completed', 'failed'],
         'created_at': restore_log.created_at.isoformat() if restore_log.created_at else None
     })

@@ -8,7 +8,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required
 from werkzeug.utils import secure_filename
 from app.routes.auth import first_login_required
-from app.models.database import db, User, VpsServer, PostgresDatabase, BackupJob, BackupLog, RestoreLog
+from app.models.database import db
 
 # Set up logger
 logger = logging.getLogger(__name__)

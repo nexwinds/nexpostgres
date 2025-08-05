@@ -1,8 +1,13 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, session
+from flask import Blueprint, render_template, request, redirect, url_for, flash
 from flask_login import login_user, logout_user, login_required, current_user
-from werkzeug.security import check_password_hash, generate_password_hash
 from app.models.database import User, db
+from app.utils.rate_limiter import login_rate_limit, sensitive_operation_limit
+from app.utils.session_security import create_secure_session, invalidate_session, require_csrf_token
 from functools import wraps
+import re
+import logging
+
+security_logger = logging.getLogger('security')
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -18,47 +23,73 @@ def first_login_required(f):
     return decorated_function
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
+@login_rate_limit()
 def login():
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        
+        # Input validation
+        if not username or not password:
+            security_logger.warning(f"Login attempt with missing credentials from IP {request.remote_addr}")
+            flash('Username and password are required', 'danger')
+            return render_template('auth/login.html')
+        
+        # Sanitize username
+        if not re.match(r'^[a-zA-Z0-9_.-]+$', username):
+            security_logger.warning(f"Login attempt with invalid username format from IP {request.remote_addr}")
+            flash('Invalid username format', 'danger')
+            return render_template('auth/login.html')
         
         user = User.query.filter_by(username=username).first()
         
         if user and user.check_password(password):
+            # Create secure session
+            create_secure_session(user)
             login_user(user, remember=True)
+            
+            security_logger.info(f"Successful login for user {username} from IP {request.remote_addr}")
             
             if user.is_first_login:
                 flash('First login detected. Please change your password.', 'warning')
                 return redirect(url_for('auth.change_password'))
             
             return redirect(url_for('dashboard.index'))
-        
-        flash('Invalid username or password', 'danger')
+        else:
+            security_logger.warning(f"Failed login attempt for username '{username}' from IP {request.remote_addr}")
+            flash('Invalid username or password', 'danger')
     
     return render_template('auth/login.html')
 
 @auth_bp.route('/change-password', methods=['GET', 'POST'])
 @login_required
+@sensitive_operation_limit()
+@require_csrf_token
 def change_password():
     user = current_user
     
     if request.method == 'POST':
-        current_password = request.form.get('current_password')
-        new_password = request.form.get('new_password')
-        confirm_password = request.form.get('confirm_password')
+        current_password = request.form.get('current_password', '')
+        new_password = request.form.get('new_password', '')
+        confirm_password = request.form.get('confirm_password', '')
+        
+        # Enhanced password validation
+        validation_errors = validate_password_strength(new_password)
         
         if not user.check_password(current_password):
+            security_logger.warning(f"Incorrect current password attempt by user {user.username} from IP {request.remote_addr}")
             flash('Current password is incorrect', 'danger')
         elif new_password != confirm_password:
             flash('New passwords do not match', 'danger')
-        elif len(new_password) < 8:
-            flash('New password must be at least 8 characters long', 'danger')
+        elif validation_errors:
+            for error in validation_errors:
+                flash(error, 'danger')
         else:
             user.set_password(new_password)
             user.is_first_login = False
             db.session.commit()
             
+            security_logger.info(f"Password changed successfully for user {user.username} from IP {request.remote_addr}")
             flash('Password changed successfully', 'success')
             return redirect(url_for('dashboard.index'))
     
@@ -66,6 +97,38 @@ def change_password():
 
 @auth_bp.route('/logout')
 def logout():
+    if current_user.is_authenticated:
+        security_logger.info(f"User {current_user.username} logged out from IP {request.remote_addr}")
+    
+    # Secure session invalidation
+    invalidate_session()
     logout_user()
+    
     flash('You have been logged out', 'info')
     return redirect(url_for('auth.login'))
+
+def validate_password_strength(password):
+    """Validate password strength and return list of errors."""
+    errors = []
+    
+    if len(password) < 12:
+        errors.append('Password must be at least 12 characters long')
+    
+    if not re.search(r'[A-Z]', password):
+        errors.append('Password must contain at least one uppercase letter')
+    
+    if not re.search(r'[a-z]', password):
+        errors.append('Password must contain at least one lowercase letter')
+    
+    if not re.search(r'\d', password):
+        errors.append('Password must contain at least one number')
+    
+    if not re.search(r'[!@#$%^&*()_+\-=\[\]{};:"\\|,.<>\/?]', password):
+        errors.append('Password must contain at least one special character')
+    
+    # Check for common weak passwords
+    weak_passwords = ['password123', 'admin123', 'nexpostgres', '123456789']
+    if password.lower() in weak_passwords:
+        errors.append('Password is too common. Please choose a stronger password')
+    
+    return errors

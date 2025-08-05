@@ -4,7 +4,6 @@ from app.utils.postgres_manager import PostgresManager
 from app.utils.scheduler import schedule_backup_job, execute_manual_backup
 from datetime import datetime, timedelta
 import os
-import time
 import re
 
 
@@ -201,7 +200,7 @@ class BackupService:
             print(f"DEBUG: Check command exit code: {check_result['exit_code']}")
             
             if check_result['exit_code'] != 0:
-                print(f"DEBUG: Configuration check failed, setting up pgBackRest")
+                print("DEBUG: Configuration check failed, setting up pgBackRest")
                 # Configure pgBackRest based on storage type
                 if s3_storage:
                     s3_config = {
@@ -211,16 +210,16 @@ class BackupService:
                         'access_key': s3_storage.access_key,
                         'secret_key': s3_storage.secret_key
                     }
-                    print(f"DEBUG: Setting up pgBackRest with S3 config")
+                    print("DEBUG: Setting up pgBackRest with S3 config")
                     pg_manager.setup_pgbackrest(s3_config, backup_job)
                 else:
-                    print(f"DEBUG: Setting up pgBackRest without S3 config")
+                    print("DEBUG: Setting up pgBackRest without S3 config")
                     pg_manager.setup_pgbackrest(None, backup_job)
                 
-                print(f"DEBUG: pgBackRest setup completed")
+                print("DEBUG: pgBackRest setup completed")
                 return 'Backup system configured successfully'
             else:
-                print(f"DEBUG: Backup configuration is already valid")
+                print("DEBUG: Backup configuration is already valid")
                 return 'Backup configuration is valid'
         
         return BackupService.execute_with_postgres(
@@ -490,7 +489,7 @@ class BackupRestoreService:
             
             return backup_name, backup_log_id
             
-        except Exception as e:
+        except Exception:
             return None, backup_log_id
         finally:
             if ssh:
@@ -516,7 +515,7 @@ class BackupRestoreService:
                 print(f"DEBUG: Failed to connect to target server: {ssh_message}")
                 return None, backup_log_id
             
-            print(f"DEBUG: Connected successfully, creating postgres manager")
+            print("DEBUG: Connected successfully, creating postgres manager")
             pg_manager = BackupService.create_postgres_manager(ssh)
             
             # Use the original database name from backup_job for listing backups
@@ -577,7 +576,7 @@ class BackupRestoreService:
                         time_diff = abs((backup_time - target_time).total_seconds())
                         if time_diff <= 60:  # Within 60 seconds
                             return backup.get('name', '')
-                except:
+                except (ValueError, TypeError, AttributeError):
                     continue
         return None
     
@@ -620,7 +619,7 @@ class BackupRestoreService:
                 second = int(timestamp_parts[5].split('.')[0])
                 
                 return datetime(year, month, day, hour, minute, second)
-        except:
+        except (ValueError, TypeError, IndexError):
             pass
         return None
     
@@ -641,7 +640,7 @@ class BackupRestoreService:
                 second = int(time_part[4:6])
                 
                 return datetime(year, month, day, hour, minute, second)
-        except:
+        except (ValueError, TypeError, IndexError):
             pass
         return None
     
@@ -692,7 +691,7 @@ class BackupRestoreService:
             
             return True, recovery_points
             
-        except Exception as e:
+        except Exception:
             return False, []
         finally:
             if ssh:
@@ -837,7 +836,7 @@ class BackupRestoreService:
             
             # Always configure pgBackRest on target server for S3 restore (disaster recovery scenario)
             # This ensures we can restore from S3 even if the original server is down
-            print(f"DEBUG: Configuring S3 restore on target server (disaster recovery mode)")
+            print("DEBUG: Configuring S3 restore on target server (disaster recovery mode)")
             s3_storage = backup_job.s3_storage
             print(f"DEBUG: S3 storage config - Bucket: {s3_storage.bucket if s3_storage else 'None'}, Region: {s3_storage.region if s3_storage else 'None'}")
             print(f"DEBUG: Backup job encryption key present: {bool(backup_job.encryption_key)}")
@@ -864,7 +863,7 @@ class BackupRestoreService:
                     print(f"DEBUG: Stanza config creation failed: {message}")
                     return False, f"Stanza config creation failed: {message}"
                 
-                print(f"DEBUG: Stanza config created successfully, now creating stanza")
+                print("DEBUG: Stanza config created successfully, now creating stanza")
                 
                 # Create the stanza (this will access S3 to verify)
                 success, stanza_result = pg_manager.backup_manager.create_stanza(backup_job.database.name)

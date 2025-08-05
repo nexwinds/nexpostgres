@@ -8,8 +8,18 @@ services:
     container_name: nexpostgres
     restart: unless-stopped
     environment:
-      - SECRET_KEY=change-this-in-production
+      - SECRET_KEY=change-this-in-production-use-32-byte-random-key
       - LOG_LEVEL=INFO
+      - SESSION_COOKIE_SECURE=0  # Set to 1 for HTTPS in production
+      - SESSION_LIFETIME_HOURS=24
+      - LOGIN_RATE_LIMIT=5 per minute
+      - RATELIMIT_STORAGE_URL=memory://
+      - ADMIN_DEFAULT_PASSWORD=  # Optional: set default admin password
+      # Security headers will be automatically applied
+      # For production, also set:
+      # - SESSION_COOKIE_SECURE=1
+      # - Use a proper SECRET_KEY (32+ random bytes)
+      # - Consider using Redis for RATELIMIT_STORAGE_URL
     volumes:
       - ./data:/app/data
       - ./app/ssh_keys:/app/app/ssh_keys
@@ -19,4 +29,4 @@ services:
 
 volumes:
   data:
-    driver: local 
+    driver: local

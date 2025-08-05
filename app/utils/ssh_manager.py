@@ -49,15 +49,15 @@ class SSHManager:
                     key_file_obj.seek(0)
                     if 'BEGIN OPENSSH PRIVATE KEY' in key_content:
                         pkey = paramiko.Ed25519Key.from_private_key(key_file_obj)
-                        print(f"DEBUG SSH: Successfully loaded as Ed25519 key")
+                        print("DEBUG SSH: Successfully loaded as Ed25519 key")
                     elif 'BEGIN RSA PRIVATE KEY' in key_content:
                         pkey = paramiko.RSAKey.from_private_key(key_file_obj)
-                        print(f"DEBUG SSH: Successfully loaded as RSA key")
+                        print("DEBUG SSH: Successfully loaded as RSA key")
                     elif 'BEGIN EC PRIVATE KEY' in key_content:
                         pkey = paramiko.ECDSAKey.from_private_key(key_file_obj)
-                        print(f"DEBUG SSH: Successfully loaded as ECDSA key")
+                        print("DEBUG SSH: Successfully loaded as ECDSA key")
                     else:
-                        print(f"DEBUG SSH: Unknown key format, trying generic loading")
+                        print("DEBUG SSH: Unknown key format, trying generic loading")
                         
                 except Exception as key_error:
                     print(f"DEBUG SSH: Failed to load key directly: {str(key_error)}")
@@ -69,7 +69,7 @@ class SSHManager:
             
             # Try connection with pkey first, then fallback to key file
             if pkey:
-                print(f"DEBUG SSH: Attempting connection with pkey object")
+                print("DEBUG SSH: Attempting connection with pkey object")
                 self.client.connect(
                     hostname=self.host,
                     port=self.port,
@@ -77,7 +77,7 @@ class SSHManager:
                     pkey=pkey
                 )
             else:
-                print(f"DEBUG SSH: Attempting connection with key file")
+                print("DEBUG SSH: Attempting connection with key file")
                 self.client.connect(
                     hostname=self.host,
                     port=self.port,
@@ -102,7 +102,7 @@ class SSHManager:
             if temp_key_file and self.temp_key_path:
                 try:
                     os.unlink(self.temp_key_path)
-                except:
+                except OSError:
                     pass
                 self.temp_key_path = None
                 
@@ -138,6 +138,80 @@ class SSHManager:
             }
         except Exception as e:
             self.logger.error(f"Error executing command '{command}': {str(e)}")
+            return {
+                'exit_code': -1,
+                'stdout': '',
+                'stderr': str(e)
+            }
+    
+    def execute_command_with_streaming(self, command, output_callback=None):
+        """Execute a command with real-time output streaming
+        
+        Args:
+            command: Command to execute
+            output_callback: Function to call with each line of output (line, is_stderr)
+            
+        Returns:
+            dict: Command result with exit_code, stdout, stderr
+        """
+        if not self.client:
+            raise ConnectionError("Not connected to SSH server. Call connect() first.")
+        
+        try:
+            self.logger.debug(f"Executing streaming command: {command}")
+            stdin, stdout, stderr = self.client.exec_command(command)
+            
+            stdout_lines = []
+            stderr_lines = []
+            
+            # Read output in real-time
+            while not stdout.channel.exit_status_ready():
+                if stdout.channel.recv_ready():
+                    data = stdout.channel.recv(1024).decode('utf-8', errors='replace')
+                    for line in data.splitlines():
+                        if line.strip():
+                            stdout_lines.append(line)
+                            if output_callback:
+                                output_callback(line, False)
+                
+                if stderr.channel.recv_stderr_ready():
+                    data = stderr.channel.recv_stderr(1024).decode('utf-8', errors='replace')
+                    for line in data.splitlines():
+                        if line.strip():
+                            stderr_lines.append(line)
+                            if output_callback:
+                                output_callback(line, True)
+            
+            # Get any remaining output
+            remaining_stdout = stdout.read().decode('utf-8', errors='replace')
+            remaining_stderr = stderr.read().decode('utf-8', errors='replace')
+            
+            if remaining_stdout:
+                for line in remaining_stdout.splitlines():
+                    if line.strip():
+                        stdout_lines.append(line)
+                        if output_callback:
+                            output_callback(line, False)
+            
+            if remaining_stderr:
+                for line in remaining_stderr.splitlines():
+                    if line.strip():
+                        stderr_lines.append(line)
+                        if output_callback:
+                            output_callback(line, True)
+            
+            exit_code = stdout.channel.recv_exit_status()
+            
+            return {
+                'exit_code': exit_code,
+                'stdout': '\n'.join(stdout_lines),
+                'stderr': '\n'.join(stderr_lines)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error executing streaming command '{command}': {str(e)}")
+            if output_callback:
+                output_callback(f"Error: {str(e)}", True)
             return {
                 'exit_code': -1,
                 'stdout': '',

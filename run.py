@@ -5,11 +5,14 @@ Main entry point for the NexPostgres application.
 
 import sys
 import os
+from dotenv import load_dotenv
+from app.app import create_app
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Add the project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from app.app import create_app
 
 if __name__ == '__main__':
     app = create_app()

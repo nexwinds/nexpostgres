@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Security Error{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h4 class="mb-0"><i class="fas fa-shield-alt"></i> Security Error</h4>
+                </div>
+                <div class="card-body text-center">
+                    <h5 class="card-title">CSRF Token Validation Failed</h5>
+                    <p class="card-text">
+                        Your request could not be processed due to a security token mismatch. 
+                        This usually happens when your session has expired or the page has been open for too long.
+                    </p>
+                    {% if reason %}
+                    <p class="text-muted small">
+                        Reason: {{ reason }}
+                    </p>
+                    {% endif %}
+                    <div class="alert alert-info mt-3">
+                        <i class="fas fa-info-circle"></i>
+                        Please refresh the page and try again.
+                    </div>
+                    <button onclick="location.reload()" class="btn btn-primary">
+                        <i class="fas fa-sync-alt"></i> Refresh Page
+                    </button>
+                    <a href="{{ url_for('dashboard.index') }}" class="btn btn-secondary ml-2">
+                        <i class="fas fa-home"></i> Return to Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

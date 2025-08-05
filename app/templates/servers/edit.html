@@ -6,7 +6,8 @@
 {% block content %}
 {% call page_layout('Edit Server: ' + server.name, url_for('servers.index'), 'Back to Servers') %}
     {% call card_container('Server Details') %}
-        <form method="post" id="editServerForm">
+        <form method="post" action="{{ url_for('servers.edit', id=server.id) }}" id="editServerForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="mb-3">
                 <label for="name" class="form-label">Server Name</label>
                 <input type="text" class="form-control" id="name" name="name" value="{{ server.name }}" required>

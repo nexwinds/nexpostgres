@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Internal Server Error{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h4 class="mb-0"><i class="fas fa-exclamation-triangle"></i> Internal Server Error</h4>
+                </div>
+                <div class="card-body text-center">
+                    <h5 class="card-title">Something went wrong</h5>
+                    <p class="card-text">
+                        We're sorry, but something went wrong on our end. 
+                        Our team has been notified and is working to fix the issue.
+                    </p>
+                    {% if error_id %}
+                    <p class="text-muted small">
+                        Error ID: <code>{{ error_id }}</code>
+                    </p>
+                    {% endif %}
+                    <a href="{{ url_for('dashboard.index') }}" class="btn btn-primary">
+                        <i class="fas fa-home"></i> Return to Dashboard
+                    </a>
+                    <a href="{{ url_for('auth.logout') }}" class="btn btn-secondary ml-2">
+                        <i class="fas fa-sign-out-alt"></i> Logout
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

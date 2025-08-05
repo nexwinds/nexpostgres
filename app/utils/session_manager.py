@@ -20,6 +20,11 @@ class SQLAlchemySession(CallbackDict, SessionMixin):
         self.new = new
         self.modified = False
         self.permanent = True  # Sessions are permanent by default
+    
+    def regenerate(self):
+        """Regenerate session ID for security purposes."""
+        self.sid = str(uuid.uuid4())
+        self.modified = True
 
 class SQLAlchemySessionInterface(SessionInterface):
     """Session interface that stores sessions in the database."""

@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from .constants import PostgresConstants
 
 class SystemUtils:

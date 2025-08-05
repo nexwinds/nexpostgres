@@ -96,8 +96,9 @@
                                         <div class="modal-footer">
                                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                                             <form action="{{ url_for('databases.delete_database', database_id=database.id) }}" method="post">
-                                                <button type="submit" class="btn btn-danger">Delete</button>
-                                            </form>
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                <button type="submit" class="btn btn-danger">Delete</button>
+                            </form>
                                         </div>
                                     </div>
                                 </div>

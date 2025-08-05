@@ -5,12 +5,32 @@ from datetime import timedelta
 class Config:
     """Application configuration settings"""
     # Flask configuration
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+    SECRET_KEY = os.environ.get('SECRET_KEY')
     DEBUG = os.environ.get('FLASK_DEBUG', '0') == '1'
+    
+    # Validate required environment variables
+    if not SECRET_KEY:
+        raise ValueError("SECRET_KEY environment variable is required")
     
     # Database configuration
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URI', 'sqlite:///nexpostgres.sqlite')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    
+    # CSRF Protection
+    WTF_CSRF_ENABLED = True
+    WTF_CSRF_TIME_LIMIT = None  # No time limit for CSRF tokens
+    
+    # Rate limiting configuration
+    RATELIMIT_STORAGE_URL = os.environ.get('RATELIMIT_STORAGE_URL', 'memory://')
+    LOGIN_RATE_LIMIT = os.environ.get('LOGIN_RATE_LIMIT', '5 per minute')
+    
+    # Security headers
+    SECURITY_HEADERS = {
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
+        'X-XSS-Protection': '1; mode=block',
+        'Strict-Transport-Security': 'max-age=31536000; includeSubDomains'
+    }
     
     # Session configuration
     SESSION_TYPE = 'sqlalchemy'
@@ -53,4 +73,4 @@ class Config:
         # Additional app configuration can be added here
         if not app.debug and not app.testing:
             # Production settings
-            pass 
+            pass

@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template
-from flask_login import login_required, current_user
+from flask_login import login_required
 from app.models.database import VpsServer, PostgresDatabase, BackupJob, BackupLog, db
 from app.routes.auth import first_login_required
 from sqlalchemy import func, text

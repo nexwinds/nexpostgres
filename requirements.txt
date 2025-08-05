@@ -3,7 +3,10 @@ Flask==2.3.3
 Flask-SQLAlchemy==2.5.1
 Flask-APScheduler==1.13.0
 Flask-Login==0.6.3
+Flask-WTF==1.1.1
+Flask-Limiter==3.5.0
 itsdangerous==2.1.2
+WTForms==3.0.1
 
 # Database
 SQLAlchemy==1.4.41
@@ -23,3 +26,4 @@ boto3==1.39.3
 
 # Utilities
 python-dateutil==2.8.2
+python-dotenv==1.0.0

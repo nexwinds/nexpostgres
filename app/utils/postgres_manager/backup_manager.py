@@ -5,8 +5,6 @@ import logging
 import tempfile
 import base64
 import secrets
-import time
-from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from .constants import PostgresConstants
 from .system_utils import SystemUtils
@@ -114,24 +112,7 @@ class PostgresBackupManager:
         else:
             return False, f"Failed to install pgBackRest: {result.get('stderr', 'Unknown error')}"
     
-    def setup_pgbackrest_directories(self) -> Tuple[bool, str]:
-        """Create necessary pgBackRest directories.
-        
-        Returns:
-            tuple: (success, message)
-        """
-        directories = [
-            (PostgresConstants.PGBACKREST['config_dir'], 'postgres:postgres', '755'),
-            (PostgresConstants.PGBACKREST['log_dir'], 'postgres:postgres', '755'),
-            (PostgresConstants.PGBACKREST['backup_dir'], 'postgres:postgres', '755')
-        ]
-        
-        for dir_path, owner, permissions in directories:
-            success, message = self.system_utils.create_directory(dir_path, owner, permissions)
-            if not success:
-                return False, f"Failed to create directory {dir_path}: {message}"
-        
-        return True, "pgBackRest directories created successfully"
+    # Removed duplicate setup_pgbackrest_directories method - using the more comprehensive implementation below
     
     def create_pgbackrest_config(self, s3_config: Optional[Dict] = None, backup_job=None) -> Tuple[bool, str]:
         """Create pgBackRest configuration following official recommendations.

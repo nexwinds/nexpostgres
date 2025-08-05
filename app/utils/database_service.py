@@ -5,10 +5,9 @@ and reduces code duplication in the routes.
 """
 
 import time
-from datetime import datetime
 from typing import Tuple, Optional, Dict, Any
 from flask import flash
-from app.models.database import VpsServer, PostgresDatabase, RestoreLog, PostgresDatabaseUser, db
+from app.models.database import VpsServer, RestoreLog, db
 from app.utils.ssh_manager import SSHManager
 from app.utils.postgres_manager import PostgresManager
 
@@ -101,7 +100,7 @@ class DatabaseService:
                 # Retry database creation after fixing config
                 success, message = pg_manager.create_database(name)
                 if success:
-                    message = f"Database created successfully (after fixing PostgreSQL configuration)"
+                    message = "Database created successfully (after fixing PostgreSQL configuration)"
                 else:
                     message = f"Configuration fixed but database creation still failed: {message}"
             else:
@@ -246,8 +245,13 @@ class DatabaseImportService:
         Returns:
             Dictionary with connection parameters
         """
-        # Parse basic URL structure
-        url_part = connection_string.replace('postgresql://', '')
+        # Parse basic URL structure - handle both postgresql:// and postgres://
+        if connection_string.startswith('postgresql://'):
+            url_part = connection_string.replace('postgresql://', '')
+        elif connection_string.startswith('postgres://'):
+            url_part = connection_string.replace('postgres://', '')
+        else:
+            raise ValueError('Connection string must start with postgresql:// or postgres://')
         
         # Split URL and query parameters
         if '?' in url_part:

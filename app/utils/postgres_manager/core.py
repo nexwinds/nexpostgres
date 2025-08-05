@@ -190,6 +190,221 @@ class PostgresManager:
         
         return False, f"Failed to install PostgreSQL: {message}"
     
+    def install_postgres_with_streaming(self, version: str = None, output_callback=None) -> Tuple[bool, str]:
+        """Install PostgreSQL with real-time terminal output streaming.
+        
+        Args:
+            version: PostgreSQL version to install (e.g., '17', '16', '15').
+                    If None, installs the recommended version.
+            output_callback: Function to call with each line of terminal output
+                    
+        Returns:
+            tuple: (success, message)
+        """
+        self.logger.info(f"Starting PostgreSQL installation with streaming (version: {version or 'recommended'})...")
+        
+        if self.check_postgres_installed():
+            return True, "PostgreSQL is already installed"
+        
+        # Get package manager commands
+        pkg_commands = self.system_utils.get_package_manager_commands()
+        if not pkg_commands:
+            return False, "Unsupported operating system for automatic installation"
+        
+        # Resolve version using the version resolver
+        success, resolved_version, metadata = self.version_resolver.resolve_version(version)
+        if not success:
+            return False, f"Failed to resolve PostgreSQL version: {resolved_version}"
+        
+        self.logger.info(f"Installing PostgreSQL version: {resolved_version}")
+        
+        # Log any warnings from version resolution
+        for warning in metadata.get('warnings', []):
+            self.logger.warning(warning)
+        
+        # Update package list first with streaming
+        if 'update' in pkg_commands:
+            self.logger.info("Updating package list...")
+            if output_callback:
+                output_callback("Updating package list...", False)
+            update_result = self.ssh.execute_command_with_streaming(
+                f"sudo {pkg_commands['update']}", output_callback
+            )
+            if update_result['exit_code'] != 0:
+                self.error_handler.log_warning_with_context(
+                    "Package update failed", "Installation", update_result
+                )
+        
+        # Install PostgreSQL with the resolved version using streaming
+        success, message = self._install_postgres_version_with_streaming(resolved_version, output_callback)
+        if success:
+            return True, f"PostgreSQL {resolved_version} installed and started successfully"
+        
+        # If specific version installation failed, try fallback approaches
+        self.error_handler.log_warning_with_context(
+            f"Failed to install PostgreSQL {resolved_version}, trying fallback methods",
+            "Installation Fallback"
+        )
+        
+        # Try without version suffix (latest available in repository)
+        success, message = self._install_postgres_version_with_streaming(None, output_callback)
+        if success:
+            return True, "PostgreSQL (latest available) installed and started successfully"
+        
+        return False, f"Failed to install PostgreSQL: {message}"
+    
+    def _install_postgres_version_with_streaming(self, version: str = None, output_callback=None) -> Tuple[bool, str]:
+        """Internal method to install a specific PostgreSQL version with streaming output.
+        
+        Args:
+            version: Specific version to install (None for default)
+            output_callback: Function to call with each line of terminal output
+            
+        Returns:
+            tuple: (success, message)
+        """
+        try:
+            # Update package list first
+            self.logger.info("Updating package list...")
+            os_type = self.system_utils.detect_os()
+            
+            if os_type == 'debian':
+                if output_callback:
+                    output_callback("Updating package list (apt-get update)...", False)
+                update_result = self.ssh.execute_command_with_streaming("sudo apt-get update", output_callback)
+                if update_result['exit_code'] != 0:
+                    self.error_handler.log_warning_with_context(
+                    "Package update failed, continuing with installation", "Installation"
+                )
+            elif os_type == 'rhel':
+                # Use the detected package manager (dnf or yum)
+                pkg_commands = self.system_utils.get_package_manager_commands()
+                if 'makecache' in pkg_commands:
+                    if output_callback:
+                        output_callback(f"Updating package cache ({pkg_commands['makecache']})...", False)
+                    update_result = self.ssh.execute_command_with_streaming(f"sudo {pkg_commands['makecache']}", output_callback)
+                    if update_result['exit_code'] != 0:
+                        self.error_handler.log_warning_with_context(
+                    "Package cache update failed, continuing with installation", "Installation"
+                )
+            
+            # Get package names for the version
+            package_names = self.system_utils.get_postgres_package_names(version)
+            if not package_names:
+                return False, f"No package names found for PostgreSQL {version}"
+            
+            # Get package manager commands
+            pkg_commands = self.system_utils.get_package_manager_commands()
+            if not pkg_commands or 'install' not in pkg_commands:
+                return False, "Package manager not supported"
+            
+            # Try to install the specific version with streaming
+            install_cmd = f"sudo {pkg_commands['install']} {' '.join(package_names)}"
+            self.logger.info(f"Installing PostgreSQL {version} with command: {install_cmd}")
+            
+            if output_callback:
+                output_callback(f"Installing PostgreSQL {version}...", False)
+            
+            result = self.ssh.execute_command_with_streaming(install_cmd, output_callback)
+            
+            if result['exit_code'] != 0:
+                # If specific version installation fails, try with recommended version
+                self.error_handler.log_warning_with_context(
+                    f"Installation of PostgreSQL {version} failed, trying recommended version",
+                    "Installation Fallback"
+                )
+                recommended_version = PostgresConstants.SUPPORTED_VERSIONS['recommended']
+                
+                if version != recommended_version:
+                    fallback_packages = self.system_utils.get_postgres_package_names(recommended_version)
+                    if fallback_packages:
+                        fallback_cmd = f"sudo {pkg_commands['install']} {' '.join(fallback_packages)}"
+                        self.logger.info(f"Fallback installation command: {fallback_cmd}")
+                        
+                        if output_callback:
+                            output_callback(f"Trying fallback installation with PostgreSQL {recommended_version}...", False)
+                        
+                        fallback_result = self.ssh.execute_command_with_streaming(fallback_cmd, output_callback)
+                        
+                        if fallback_result['exit_code'] == 0:
+                            version = recommended_version  # Update version for service management
+                            self.logger.info(f"Successfully installed PostgreSQL {recommended_version} as fallback")
+                        else:
+                            return False, f"PostgreSQL installation failed: {fallback_result.get('stderr', 'Unknown error')}"
+                    else:
+                        return False, f"PostgreSQL installation failed: {result.get('stderr', 'Unknown error')}"
+                else:
+                    return False, f"PostgreSQL installation failed: {result.get('stderr', 'Unknown error')}"
+            
+            # Initialize database for RHEL-based systems
+            if os_type == 'rhel':
+                self.logger.info("Initializing PostgreSQL database...")
+                if output_callback:
+                    output_callback("Initializing PostgreSQL database...", False)
+                    
+                # Try version-specific initialization first, then generic
+                init_commands = [
+                    f"sudo postgresql-{version}-setup initdb",
+                    "sudo postgresql-setup initdb",
+                    f"sudo /usr/pgsql-{version}/bin/postgresql-{version}-setup initdb"
+                ]
+                
+                init_success = False
+                for init_cmd in init_commands:
+                    init_result = self.ssh.execute_command_with_streaming(init_cmd, output_callback)
+                    if init_result['exit_code'] == 0:
+                        init_success = True
+                        break
+                    self.logger.debug(f"Init command failed: {init_cmd}")
+                
+                if not init_success:
+                    self.logger.warning("Database initialization failed, but continuing...")
+            
+            # Start and enable PostgreSQL service
+            service_names = [
+                f"postgresql-{version}",
+                "postgresql",
+                f"postgresql@{version}-main"
+            ]
+            
+            service_started = False
+            for service_name in service_names:
+                self.logger.info(f"Attempting to start PostgreSQL service: {service_name}")
+                if output_callback:
+                    output_callback(f"Starting PostgreSQL service: {service_name}...", False)
+                    
+                success, message = self.system_utils.start_service(service_name)
+                if success:
+                    service_started = True
+                    self.logger.info(f"Successfully started service: {service_name}")
+                    
+                    # Enable the service
+                    enable_cmd = f"sudo systemctl enable {service_name}"
+                    if output_callback:
+                        output_callback("Enabling PostgreSQL service...", False)
+                    enable_result = self.ssh.execute_command_with_streaming(enable_cmd, output_callback)
+                    if enable_result['exit_code'] != 0:
+                        self.logger.warning(f"Failed to enable PostgreSQL service: {enable_result.get('stderr', 'Unknown error')}")
+                    break
+            
+            if not service_started:
+                self.logger.warning("Could not start PostgreSQL service automatically")
+            
+            # Clear cache
+            self._postgres_installed = None
+            self._postgres_version = None
+            
+            if output_callback:
+                output_callback(f"PostgreSQL {version} installation completed successfully!", False)
+            
+            return True, f"PostgreSQL {version} installed successfully"
+            
+        except Exception as e:
+            self.logger.error(f"Error during PostgreSQL installation: {str(e)}")
+            if output_callback:
+                output_callback(f"Installation error: {str(e)}", True)
+            return False, f"Installation error: {str(e)}"
+    
     def _install_postgres_version(self, version: str = None) -> Tuple[bool, str]:
         """Internal method to install a specific PostgreSQL version.
         

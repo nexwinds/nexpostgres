@@ -11,6 +11,7 @@
 ) %}
     {% if backup_job %}
     <form action="{{ url_for('backups.execute_backup', backup_job_id=backup_job.id) }}" method="post" class="d-inline mb-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
         <button type="submit" class="btn btn-success">
             <i class="fas fa-play me-1"></i> Run Manual Backup
         </button>

@@ -9,7 +9,6 @@ import re
 from typing import List, Tuple, Optional, Dict, Any
 from flask import flash
 from app.models.database import BackupJob, PostgresDatabase, S3Storage
-from datetime import datetime
 
 
 class UnifiedValidationService:
@@ -314,12 +313,12 @@ class UnifiedValidationService:
         if not connection_string:
             return False, 'Connection string is required'
         
-        # Basic PostgreSQL URL format validation
-        if not connection_string.startswith('postgresql://'):
-            return False, 'Connection string must start with "postgresql://"'
+        # Basic PostgreSQL URL format validation - accept both postgresql:// and postgres://
+        if not (connection_string.startswith('postgresql://') or connection_string.startswith('postgres://')):
+            return False, 'Connection string must start with "postgresql://" or "postgres://"'
         
-        # Check for basic structure: postgresql://user:pass@host:port/database[?params]
-        pattern = r'^postgresql://[^:]+:[^@]+@[^:/]+:\d+/[^/?]+(\?.*)?$'
+        # Check for basic structure: postgresql://user:pass@host:port/database[?params] or postgres://user:pass@host:port/database[?params]
+        pattern = r'^postgres(ql)?://[^:]+:[^@]+@[^:/]+:\d+/[^/?]+(\?.*)?$'
         if not re.match(pattern, connection_string):
             return False, 'Invalid connection string format. Expected: postgresql://user:pass@host:port/database[?params]'
         

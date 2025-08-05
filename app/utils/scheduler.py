@@ -17,7 +17,6 @@ except ImportError:
 from app.models.database import BackupJob, BackupLog, db
 from app.utils.ssh_manager import SSHManager
 from app.utils.postgres_manager import PostgresManager
-from flask import current_app
 
 logger = logging.getLogger('nexpostgres.scheduler')
 

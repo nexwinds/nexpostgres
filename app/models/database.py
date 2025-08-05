@@ -150,8 +150,18 @@ def init_db(app):
         
         # Create default admin user if it doesn't exist
         if not User.query.filter_by(username='admin').first():
+            import os
+            import secrets
+            
+            # Generate a secure random password or use environment variable
+            default_password = os.environ.get('ADMIN_DEFAULT_PASSWORD')
+            if not default_password:
+                default_password = secrets.token_urlsafe(16)
+                print(f"\n*** IMPORTANT: Default admin password generated: {default_password} ***")
+                print("*** Please save this password and change it on first login ***\n")
+            
             admin = User(username='admin')
-            admin.set_password('nexpostgres')  # Default password that must be changed on first login
+            admin.set_password(default_password)
             admin.is_first_login = True
             db.session.add(admin)
             db.session.commit()

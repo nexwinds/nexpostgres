@@ -442,7 +442,7 @@
                 </div>
             `;
             
-            fetch(`{{ url_for('servers.restart_server', id=server.id) }}`, {
+            csrfFetch(`{{ url_for('servers.restart_server', id=server.id) }}`, {
                 method: 'POST'
             })
             .then(response => response.json())
@@ -494,7 +494,7 @@
                 </div>
             `;
             
-            fetch(`{{ url_for('servers.update_server', id=server.id) }}`, {
+            csrfFetch(`{{ url_for('servers.update_server', id=server.id) }}`, {
                 method: 'POST'
             })
             .then(response => response.json())
@@ -693,11 +693,8 @@
             `;
             
             // Send PostgreSQL access configuration request
-            fetch(`{{ url_for('servers.configure_postgres_access', id=server.id) }}`, {
+            csrfFetch(`{{ url_for('servers.configure_postgres_access', id=server.id) }}`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
                 body: JSON.stringify(formData)
             })
             .then(response => response.json())
@@ -711,11 +708,8 @@
                         key_path: formData.key_path
                     };
                     
-                    return fetch(`{{ url_for('servers.configure_ssl', id=server.id) }}`, {
+                    return csrfFetch(`{{ url_for('servers.configure_ssl', id=server.id) }}`, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
                         body: JSON.stringify(sslData)
                     });
                 } else {

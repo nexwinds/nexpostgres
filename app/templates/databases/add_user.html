@@ -21,6 +21,7 @@
             A secure random password will be automatically generated and displayed after user creation.
         </div>
         <form method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="mb-3">
                 <label for="username" class="form-label">Username</label>
                 <input type="text" class="form-control" id="username" name="username" required>

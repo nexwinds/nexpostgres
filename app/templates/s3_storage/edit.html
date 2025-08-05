@@ -134,6 +134,7 @@
                 formData.append('use_stored_key', 'true');
                 formData.append('storage_id', '{{ storage.id }}');
             }
+            formData.append('csrf_token', getCSRFToken());
             
             // Send AJAX request
             fetch('{{ url_for("s3_storage.test_connection") }}', {

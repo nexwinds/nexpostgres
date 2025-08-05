@@ -9,7 +9,8 @@
         <div class="alert alert-primary mb-3">
             <i class="fas fa-bolt me-2"></i> The database will be immediately created on the selected server when you save this form.
         </div>
-<form method="post">
+<form method="post" action="{{ url_for('databases.add_database') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <div class="mb-3">
         <label for="vps_server_id" class="form-label">Server</label>
         <select class="form-select" id="vps_server_id" name="vps_server_id" required>

@@ -6,7 +6,8 @@
 {% block content %}
 {% call page_layout('Add VPS Server', url_for('servers.index'), 'Back to Servers') %}
     {% call card_container('Server Details') %}
-        <form method="post" id="addServerForm">
+        <form method="post" action="{{ url_for('servers.add') }}" id="addServerForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             {{ form_field('text', 'name', 'Server Name', required=true, help_text='A descriptive name for this server') }}
             {{ form_field('text', 'host', 'Hostname / IP Address', required=true) }}
             {{ form_field('number', 'port', 'SSH Port', value='22', required=true) }}
@@ -32,13 +33,356 @@
             
             <div class="d-flex justify-content-between">
                 {{ test_connection_button('testConnection') }}
-                {{ form_buttons(url_for('servers.index'), 'Save Server', 'fas fa-save') }}
+                <div>
+                    <a href="{{ url_for('servers.index') }}" class="btn btn-secondary me-2">
+                        <i class="fas fa-arrow-left me-1"></i> Cancel
+                    </a>
+                    <button type="submit" class="btn btn-primary" id="saveServerBtn">
+                        <i class="fas fa-save me-1"></i> Save Server
+                    </button>
+                </div>
             </div>
         </form>
     {% endcall %}
 {% endcall %}
+
+<!-- Progress Modal -->
+<div class="modal fade" id="progressModal" tabindex="-1" aria-labelledby="progressModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title" id="progressModalLabel">
+                    <i class="fas fa-server me-2"></i>
+                    Adding Server
+                </h5>
+            </div>
+            <div class="modal-body">
+                <!-- Progress Bar -->
+                <div class="mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="fw-bold">Progress</span>
+                        <span id="modal-progress-percentage" class="badge bg-primary">0%</span>
+                    </div>
+                    <div class="progress" style="height: 20px;">
+                        <div id="modal-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Current Status -->
+                <div class="mb-4">
+                    <div class="d-flex align-items-center mb-2">
+                        <div id="modal-status-icon" class="me-2">
+                            <i class="fas fa-spinner fa-spin text-primary"></i>
+                        </div>
+                        <span class="fw-bold">Current Status:</span>
+                    </div>
+                    <div id="modal-current-status" class="alert alert-info mb-0">
+                        <span id="modal-status-message">Creating server record...</span>
+                    </div>
+                </div>
+
+                <!-- Activity Log -->
+                <div class="mb-3">
+                    <h6 class="fw-bold mb-3">
+                        <i class="fas fa-list-alt me-2"></i>
+                        Activity Log
+                    </h6>
+                    <div id="modal-activity-log" class="border rounded p-3" style="height: 200px; overflow-y: auto; background-color: #1e1e1e; color: #ffffff;">
+                        <div class="log-entry text-muted">
+                            <small class="timestamp">[<span class="current-time"></span>]</small>
+                            <span class="message">Starting server creation...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-danger" id="modal-cancel-btn">
+                    <i class="fas fa-times me-1"></i>
+                    Cancel
+                </button>
+                <button type="button" class="btn btn-success" id="modal-continue-btn" style="display: none;">
+                    <i class="fas fa-arrow-right me-1"></i>
+                    Continue to Server List
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Error Modal -->
+<div class="modal fade" id="errorModal" tabindex="-1" aria-labelledby="errorModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="errorModalLabel">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    Server Creation Error
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p id="error-message">An error occurred during server creation.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 {{ ajax_test_script('testConnection', url_for('servers.test_connection'), 'addServerForm', 'Connection successful! SSH connection to the server was established successfully.') }}
+
+<script>
+$(document).ready(function() {
+    // Set current time in the activity log
+    const now = new Date();
+    const timeString = now.toLocaleTimeString('en-US', { hour12: false });
+    $('.current-time').text(timeString);
+    
+    let eventSource;
+    let isCompleted = false;
+    let hasError = false;
+    let serverId = null;
+    
+    // Handle form submission
+    $('#addServerForm').on('submit', function(e) {
+        e.preventDefault();
+        
+        // Validate form
+        if (!this.checkValidity()) {
+            this.reportValidity();
+            return;
+        }
+        
+        // Show progress modal
+        $('#progressModal').modal('show');
+        
+        // Submit form via AJAX
+        const formData = new FormData(this);
+        
+        $.ajax({
+            url: $(this).attr('action'),
+            method: 'POST',
+            data: formData,
+            processData: false,
+            contentType: false,
+            headers: {
+                'Accept': 'application/json'
+            },
+            success: function(response) {
+                if (response.success) {
+                    serverId = response.server_id;
+                    addModalLogEntry('Server record created successfully', 'success');
+                    addModalLogEntry('Starting server initialization...', 'info');
+                    
+                    // Start progress tracking
+                    startProgressTracking(serverId);
+                } else {
+                    handleModalError(response.message || 'Failed to create server');
+                }
+            },
+            error: function(xhr, status, error) {
+                let errorMessage = 'Failed to create server';
+                if (xhr.responseJSON && xhr.responseJSON.message) {
+                    errorMessage = xhr.responseJSON.message;
+                }
+                handleModalError(errorMessage);
+            }
+        });
+    });
+    
+    // Initialize EventSource for progress updates
+    function startProgressTracking(serverId) {
+        eventSource = new EventSource(`/servers/initialize-progress/${serverId}`);
+        
+        eventSource.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                updateModalProgress(data);
+            } catch (e) {
+                console.error('Error parsing progress data:', e);
+            }
+        };
+        
+        eventSource.onerror = function(event) {
+            console.error('EventSource error:', event);
+            if (!isCompleted && !hasError) {
+                addModalLogEntry('Connection error. Retrying...', 'warning');
+            }
+        };
+    }
+    
+    function updateModalProgress(data) {
+        const { step, message, progress, queue_key, is_stderr } = data;
+        
+        // Handle terminal logs differently
+        if (step === 'terminal_log') {
+            addTerminalLogEntry(message, is_stderr);
+            return;
+        }
+        
+        // Update progress bar
+        if (progress !== undefined) {
+            $('#modal-progress-bar').css('width', progress + '%').attr('aria-valuenow', progress);
+            $('#modal-progress-percentage').text(progress + '%');
+        }
+        
+        // Update status message
+        if (message) {
+            $('#modal-status-message').text(message);
+            addModalLogEntry(message, getLogLevel(step));
+        }
+        
+        // Update status icon and styling based on step
+        updateModalStatusDisplay(step);
+        
+        // Handle completion or error
+        if (step === 'completed') {
+            handleModalCompletion();
+        } else if (step === 'error') {
+            handleModalError(message);
+        }
+    }
+    
+    function getLogLevel(step) {
+        switch (step) {
+            case 'error': return 'danger';
+            case 'warning': return 'warning';
+            case 'completed': return 'success';
+            case 'connecting': return 'info';
+            case 'connected': return 'success';
+            default: return 'info';
+        }
+    }
+    
+    function updateModalStatusDisplay(step) {
+        const statusIcon = $('#modal-status-icon i');
+        const currentStatus = $('#modal-current-status');
+        
+        // Remove existing classes
+        statusIcon.removeClass('fa-spinner fa-spin fa-check fa-exclamation-triangle text-primary text-success text-danger');
+        currentStatus.removeClass('alert-info alert-success alert-danger alert-warning');
+        
+        switch (step) {
+            case 'completed':
+                statusIcon.addClass('fa-check text-success');
+                currentStatus.addClass('alert-success');
+                break;
+            case 'error':
+                statusIcon.addClass('fa-exclamation-triangle text-danger');
+                currentStatus.addClass('alert-danger');
+                break;
+            case 'warning':
+                statusIcon.addClass('fa-exclamation-triangle text-warning');
+                currentStatus.addClass('alert-warning');
+                break;
+            default:
+                statusIcon.addClass('fa-spinner fa-spin text-primary');
+                currentStatus.addClass('alert-info');
+        }
+    }
+    
+    function addModalLogEntry(message, level = 'info') {
+        const timestamp = new Date().toLocaleTimeString();
+        const logEntry = $(`
+            <div class="log-entry mb-1">
+                <small class="timestamp text-muted">[${timestamp}]</small>
+                <span class="message text-${level === 'danger' ? 'danger' : level === 'warning' ? 'warning' : level === 'success' ? 'success' : 'dark'}">${message}</span>
+            </div>
+        `);
+        
+        $('#modal-activity-log').append(logEntry);
+        // Auto-scroll to bottom
+        $('#modal-activity-log').scrollTop($('#modal-activity-log')[0].scrollHeight);
+    }
+    
+    function addTerminalLogEntry(message, isStderr = false) {
+        // Skip empty messages
+        if (!message || message.trim() === '') return;
+        
+        const logClass = isStderr ? 'text-danger' : 'text-light';
+        const logEntry = `
+            <div class="terminal-log-entry">
+                <small class="${logClass}" style="font-family: 'Courier New', monospace; white-space: pre-wrap;">${message}</small>
+            </div>
+        `;
+        $('#modal-activity-log').append(logEntry);
+        
+        // Auto-scroll to bottom
+        const logContainer = $('#modal-activity-log')[0];
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+    
+    function handleModalCompletion() {
+        isCompleted = true;
+        if (eventSource) {
+            eventSource.close();
+        }
+        
+        // Update UI for completion
+        $('#modal-progress-bar').removeClass('progress-bar-animated');
+        $('#modal-cancel-btn').hide();
+        $('#modal-continue-btn').show();
+        
+        // Show success message
+        addModalLogEntry('Server initialization completed successfully!', 'success');
+    }
+    
+    function handleModalError(message) {
+        hasError = true;
+        if (eventSource) {
+            eventSource.close();
+        }
+        
+        // Update UI for error
+        $('#modal-progress-bar').removeClass('progress-bar-animated').addClass('bg-danger');
+        $('#modal-cancel-btn').text('Close').removeClass('btn-outline-danger').addClass('btn-secondary');
+        
+        // Show error in log
+        addModalLogEntry(message, 'danger');
+        
+        // Hide progress modal and show error modal
+        $('#progressModal').modal('hide');
+        $('#error-message').text(message);
+        $('#errorModal').modal('show');
+    }
+    
+    // Event handlers
+    $('#modal-cancel-btn').click(function() {
+        if (isCompleted || hasError) {
+            window.location.href = '{{ url_for("servers.index") }}';
+        } else {
+            if (confirm('Are you sure you want to cancel the server initialization?')) {
+                if (eventSource) {
+                    eventSource.close();
+                }
+                $('#progressModal').modal('hide');
+                window.location.href = '{{ url_for("servers.index") }}';
+            }
+        }
+    });
+    
+    $('#modal-continue-btn').click(function() {
+        window.location.href = '{{ url_for("servers.index") }}';
+    });
+    
+    // Handle modal close
+    $('#progressModal').on('hidden.bs.modal', function() {
+        if (eventSource && !isCompleted && !hasError) {
+            eventSource.close();
+        }
+    });    
+    
+    // Handle page unload
+    $(window).on('beforeunload', function() {
+        if (eventSource) {
+            eventSource.close();
+        }
+    });
+});
+</script>
 {% endblock %}

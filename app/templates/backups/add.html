@@ -6,7 +6,8 @@
 {% block content %}
 {% call page_layout('Add Backup Job', url_for('backups.backups'), 'Back to Backup Jobs') %}
     {% call card_container('Job Details') %}
-        <form method="post" id="backupForm">
+        <form method="post" action="{{ url_for('backups.add_backup') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <!-- Basic Information -->
             <h4 class="border-bottom pb-2 mb-3">Basic Information</h4>
             <div class="mb-3">

@@ -39,8 +39,8 @@
         <div class="mb-4">
             <h6>Target Database:</h6>
             <ul class="list-unstyled">
-                <li><strong>Database:</strong> {{ target_db.name }}</li>
-                <li><strong>Server:</strong> {{ target_db.server.name }} ({{ target_db.server.host }})</li>
+                <li><strong>Database:</strong> {{ database.name }}</li>
+                <li><strong>Server:</strong> {{ database.server.name }} ({{ database.server.host }})</li>
             </ul>
         </div>
         
@@ -74,7 +74,7 @@
     // Store the import parameters
     const importData = {
         restore_log_id: {{ restore_log.id }},
-        target_db_id: {{ target_db.id }},
+        target_db_id: {{ database.id }},
         connection_type: "{{ connection_type }}",
         {% if connection_type == 'standard' %}
         host: "{{ host }}",
@@ -82,8 +82,10 @@
         username: "{{ username }}",
         password: "{{ password }}",
         database_name: "{{ database_name }}",
+        connection_string: "postgresql://{{ username }}:{{ password }}@{{ host }}:{{ port }}/{{ database_name }}"
         {% else %}
         connection_url: "{{ connection_url }}",
+        connection_string: "{{ connection_url }}"
         {% endif %}
     };
     
@@ -197,11 +199,8 @@
     
     // Start the import process
     function startImport() {
-        fetch('{{ url_for("databases.execute_import") }}', {
+        csrfFetch('{{ url_for("databases.execute_import", database_id=database.id, restore_log_id=restore_log.id) }}', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
             body: JSON.stringify(importData)
         })
         .then(response => response.json())
@@ -214,7 +213,7 @@
     function pollStatus() {
         if (isComplete) return;
         
-        fetch(`{{ url_for("databases.import_status", restore_log_id=restore_log.id) }}`)
+        fetch(`{{ url_for("databases.import_status", database_id=database.id, restore_log_id=restore_log.id) }}`)
             .then(response => response.json())
             .then(data => {
                 if (data.success) {

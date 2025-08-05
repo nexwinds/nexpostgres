@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Rate Limit Exceeded{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h4 class="mb-0"><i class="fas fa-clock"></i> Rate Limit Exceeded</h4>
+                </div>
+                <div class="card-body text-center">
+                    <h5 class="card-title">Too Many Requests</h5>
+                    <p class="card-text">
+                        You have made too many requests in a short period of time. 
+                        Please wait before trying again.
+                    </p>
+                    {% if retry_after %}
+                    <div class="alert alert-info mt-3">
+                        <i class="fas fa-info-circle"></i>
+                        Please wait {{ retry_after }} seconds before trying again.
+                    </div>
+                    <div class="progress mb-3">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" style="width: 0%" id="countdown-progress">
+                        </div>
+                    </div>
+                    <p class="text-muted small" id="countdown-text">
+                        Time remaining: <span id="countdown">{{ retry_after }}</span> seconds
+                    </p>
+                    {% endif %}
+                    <a href="{{ url_for('dashboard.index') }}" class="btn btn-primary">
+                        <i class="fas fa-home"></i> Return to Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if retry_after %}
+<script>
+let timeLeft = {{ retry_after|int }};
+const countdownElement = document.getElementById('countdown');
+const progressElement = document.getElementById('countdown-progress');
+const totalTime = {{ retry_after|int }};
+
+const timer = setInterval(function() {
+    timeLeft--;
+    countdownElement.textContent = timeLeft;
+    
+    const progressPercent = ((totalTime - timeLeft) / totalTime) * 100;
+    progressElement.style.width = progressPercent + '%';
+    
+    if (timeLeft <= 0) {
+        clearInterval(timer);
+        document.getElementById('countdown-text').innerHTML = 
+            '<span class="text-success"><i class="fas fa-check"></i> You can now try again</span>';
+        progressElement.style.width = '100%';
+        progressElement.classList.remove('progress-bar-animated');
+        progressElement.classList.add('bg-success');
+    }
+}, 1000);
+</script>
+{% endif %}
+{% endblock %}

@@ -4,6 +4,41 @@
  */
 
 /**
+ * Get CSRF token from meta tag
+ * @returns {string} CSRF token
+ */
+function getCSRFToken() {
+    return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+}
+
+/**
+ * Make a CSRF-protected fetch request
+ * @param {string} url - Request URL
+ * @param {object} options - Fetch options
+ * @returns {Promise} Fetch promise
+ */
+function csrfFetch(url, options = {}) {
+    const defaultOptions = {
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCSRFToken()
+        }
+    };
+    
+    // Merge headers
+    const mergedOptions = {
+        ...defaultOptions,
+        ...options,
+        headers: {
+            ...defaultOptions.headers,
+            ...(options.headers || {})
+        }
+    };
+    
+    return fetch(url, mergedOptions);
+}
+
+/**
  * Generate a random password with specified length and character sets
  * @param {number} length - Password length (default: 12)
  * @param {boolean} includeSpecial - Include special characters (default: true)

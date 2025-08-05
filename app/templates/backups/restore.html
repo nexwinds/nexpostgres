@@ -21,6 +21,7 @@
     </div>
     <div class="card-body">
         <form method="post" id="restoreForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <!-- Source Backup -->
             <h4 class="border-bottom pb-2 mb-3">Source Backup</h4>
             

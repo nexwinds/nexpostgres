@@ -212,6 +212,7 @@
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ cancel_text }}</button>
                 {% if action_url %}
                 <form action="{{ action_url }}" method="post" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                     <button type="submit" class="btn btn-danger">{{ confirm_text }}</button>
                 </form>
                 {% else %}
@@ -283,6 +284,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const formData = new FormData(document.getElementById('{{ form_id }}'));
         {% else %}
         const formData = new FormData();
+        formData.append('csrf_token', getCSRFToken());
         // Add form fields manually if needed
         {% endif %}
         
