@@ -3,6 +3,7 @@ from flask_login import login_required
 from app.models.database import VpsServer, PostgresDatabase, PostgresDatabaseUser, RestoreLog, db
 from app.utils.database_service import DatabaseService, DatabaseImportService
 from app.utils.unified_validation_service import UnifiedValidationService
+from app.utils.permission_manager import PermissionManager
 from datetime import datetime
 
 databases_bp = Blueprint('databases', __name__)
@@ -138,19 +139,38 @@ def edit_database(database_id):
         current_permission = DatabaseService.get_current_user_permission(
             database.server, database.name, primary_user.username
         )
+        individual_permissions = DatabaseService.get_user_individual_permissions(
+            database.server, database.name
+        )
+        user_individual_perms = individual_permissions.get(primary_user.username, {})
+        
+        # Get permission combinations for the UI
+        permission_combinations = PermissionManager.get_permission_combinations()
+        
+        # Detect current combination
+        current_combination, is_exact_match = PermissionManager.detect_combination_from_permissions(user_individual_perms)
+        
         return render_template('databases/edit_user.html', 
                              database=database, 
                              user=primary_user, 
-                             current_permission=current_permission)
+                             current_permission=current_permission,
+                             user_individual_permissions=user_individual_perms,
+                             permission_combinations=permission_combinations,
+                             current_combination=current_combination,
+                             is_exact_match=is_exact_match)
     
     # POST request - update permissions and/or regenerate password
-    new_permission = request.form.get('permission_level', '').strip()
+    connect_permission = request.form.get('connect_permission') == 'on'
+    select_permission = request.form.get('select_permission') == 'on'
+    insert_permission = request.form.get('insert_permission') == 'on'
+    update_permission = request.form.get('update_permission') == 'on'
+    delete_permission = request.form.get('delete_permission') == 'on'
+    create_permission = request.form.get('create_permission') == 'on'
     regenerate_password = request.form.get('regenerate_password') == 'on'
     
-    # Validate permission level
-    permission_valid, permission_error = UnifiedValidationService.validate_permission_level(new_permission)
-    if not permission_valid:
-        flash(permission_error, 'error')
+    # Validate that at least connect permission is selected if any other permission is selected
+    if (select_permission or insert_permission or update_permission or delete_permission or create_permission) and not connect_permission:
+        flash('Connect permission is required when granting other permissions', 'error')
         return redirect(url_for('databases.edit_database', database_id=database_id))
     
     # Generate new password if requested
@@ -158,12 +178,22 @@ def edit_database(database_id):
     if regenerate_password:
         new_password = UnifiedValidationService.generate_password()
     
+    # Prepare permissions dictionary
+    permissions = {
+        'connect': connect_permission,
+        'select': select_permission,
+        'insert': insert_permission,
+        'update': update_permission,
+        'delete': delete_permission,
+        'create': create_permission
+    }
+    
     # Update permissions and password on server
     success, message = DatabaseService.execute_with_postgres(
         database.server,
         'Primary user update',
-        DatabaseService.create_user_operation,  # This handles permission updates too
-        primary_user.username, new_password, database.name, new_permission
+        DatabaseService.grant_individual_permissions_operation,
+        primary_user.username, new_password, database.name, permissions
     )
     
     if not success:
@@ -172,7 +202,6 @@ def edit_database(database_id):
     
     # Update in database
     try:
-        primary_user.permission_level = new_permission
         if regenerate_password:
             primary_user.password = new_password
         db.session.commit()
@@ -274,7 +303,17 @@ def database_users(database_id):
     
     users = PostgresDatabaseUser.query.filter_by(database_id=database_id).all()
     user_permissions = DatabaseService.get_user_permissions(database.server, database.name)
-    user_individual_permissions = DatabaseService.get_user_individual_permissions(database.server, database.name)
+    
+    # Detect permission combinations for each user
+    user_permission_groups = {}
+    for user in users:
+        individual_perms = DatabaseService.get_user_individual_permissions(database.server, database.name).get(user.username, {})
+        combination, is_exact_match = PermissionManager.detect_combination_from_permissions(individual_perms)
+        user_permission_groups[user.username] = {
+            'combination': combination,
+            'label': PermissionManager.get_combination_label(combination) if is_exact_match else 'Custom Permissions',
+            'is_exact_match': is_exact_match
+        }
     
     # Get primary user
     primary_user = PostgresDatabaseUser.query.filter_by(
@@ -329,7 +368,7 @@ def database_users(database_id):
                          database=database, 
                          users=users, 
                          user_permissions=user_permissions,
-                         user_individual_permissions=user_individual_permissions,
+                         user_permission_groups=user_permission_groups,
                          server=database.server,
                          primary_user=primary_user,
                          connection_url=connection_url,
@@ -358,77 +397,144 @@ def edit_database_user(database_id, user_id):
             database.server, database.name
         )
         user_individual_perms = individual_permissions.get(user.username, {})
+        
+        # Get permission combinations and current combination
+        permission_combinations = PermissionManager.get_permission_combinations()
+        current_combination, is_exact_match = PermissionManager.detect_combination_from_permissions(user_individual_perms)
+        
         return render_template('databases/edit_user.html', 
                              database=database, 
                              user=user, 
                              current_permission=current_permission,
-                             user_individual_permissions=user_individual_perms)
+                             user_individual_permissions=user_individual_perms,
+                             permission_combinations=permission_combinations,
+                             current_combination=current_combination,
+                             is_exact_match=is_exact_match)
     
     # POST request - update permissions and/or regenerate password
-    connect_permission = request.form.get('connect_permission') == 'on'
-    select_permission = request.form.get('select_permission') == 'on'
-    insert_permission = request.form.get('insert_permission') == 'on'
-    update_permission = request.form.get('update_permission') == 'on'
-    delete_permission = request.form.get('delete_permission') == 'on'
-    create_permission = request.form.get('create_permission') == 'on'
+    permission_combination = request.form.get('permission_combination')
     regenerate_password = request.form.get('regenerate_password') == 'on'
     
-    # Debug logging
-    print(f"DEBUG: Form data received - connect: {connect_permission}, select: {select_permission}, insert: {insert_permission}, update: {update_permission}, delete: {delete_permission}, create: {create_permission}, regenerate_password: {regenerate_password}")
-    
-    # Validate that at least connect permission is selected if any other permission is selected
-    if (select_permission or insert_permission or update_permission or delete_permission or create_permission) and not connect_permission:
-        flash('Connect permission is required when granting other permissions', 'error')
-        return redirect(url_for('databases.edit_database_user', 
-                              database_id=database_id, user_id=user_id))
+    # Validate permission combination if provided
+    if permission_combination:
+        valid_combinations = [combo['value'] for combo in PermissionManager.get_permission_combinations()]
+        if permission_combination not in valid_combinations:
+            flash('Invalid permission combination selected', 'error')
+            return redirect(url_for('databases.edit_database_user', 
+                                  database_id=database_id, user_id=user_id))
     
     # Generate new password if requested
     new_password = user.password
     if regenerate_password:
         new_password = UnifiedValidationService.generate_password()
     
-    # Prepare permissions dictionary
-    permissions = {
-        'connect': connect_permission,
-        'select': select_permission,
-        'insert': insert_permission,
-        'update': update_permission,
-        'delete': delete_permission,
-        'create': create_permission
-    }
+    # Apply permission combination if provided
+    if permission_combination:
+        result = DatabaseService.apply_permission_combination(
+            database.server, database.name, user.username, permission_combination
+        )
+        
+        if not result['success']:
+            flash(result['message'], 'error')
+            return redirect(url_for('databases.edit_database_user', 
+                                  database_id=database_id, user_id=user_id))
     
-    # Update permissions and password on server
-    success, message = DatabaseService.execute_with_postgres(
-        database.server,
-        'User update',
-        DatabaseService.grant_individual_permissions_operation,
-        user.username, new_password, database.name, permissions
-    )
-    
-    if not success:
-        flash(message, 'error')
-        return redirect(url_for('databases.edit_database_user', 
-                              database_id=database_id, user_id=user_id))
+    # Update password if regenerated
+    if regenerate_password:
+        success, message = DatabaseService.execute_with_postgres(
+            database.server,
+            'Password update',
+            DatabaseService.update_user_password_operation,
+            user.username, new_password
+        )
+        
+        if not success:
+            flash(f'Failed to update password: {message}', 'error')
+            return redirect(url_for('databases.edit_database_user', 
+                                  database_id=database_id, user_id=user_id))
     
     # Update in database
     try:
-        print(f"DEBUG: Updating user password in database if regenerated")
         if regenerate_password:
             user.password = new_password
         db.session.commit()
-        print(f"DEBUG: User updated successfully in database")
         
-        if regenerate_password:
-            flash(f'User updated successfully. New password: {new_password}', 'success')
+        if permission_combination and regenerate_password:
+            combination_label = PermissionManager.get_combination_label(permission_combination)
+            flash(f'User updated successfully. Applied "{combination_label}" permissions. New password: {new_password}', 'success')
+        elif permission_combination:
+            combination_label = PermissionManager.get_combination_label(permission_combination)
+            flash(f'User permissions updated successfully. Applied "{combination_label}" permissions.', 'success')
+        elif regenerate_password:
+            flash(f'User password updated successfully. New password: {new_password}', 'success')
         else:
-            flash('User permissions updated successfully', 'success')
+            flash('No changes were made', 'info')
     except Exception as e:
         db.session.rollback()
-        print(f"DEBUG: Database update failed: {str(e)}")
         flash(f'Failed to update user in database: {str(e)}', 'error')
     
     return redirect(url_for('databases.database_users', database_id=database_id))
 
+
+@databases_bp.route('/databases/<int:database_id>/users/<int:user_id>/apply-combination', methods=['POST'])
+@login_required
+def apply_permission_combination(database_id, user_id):
+    """Apply a predefined permission combination to a database user."""
+    try:
+        database = PostgresDatabase.query.get_or_404(database_id)
+        user = PostgresDatabaseUser.query.get_or_404(user_id)
+        
+        # Validate that the user belongs to this database
+        if user.database_id != database.id:
+            return jsonify({
+                'success': False,
+                'message': 'User does not belong to this database'
+            }), 400
+        
+        # Get the combination from request
+        data = request.get_json()
+        if not data or 'combination' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Permission combination is required'
+            }), 400
+        
+        combination = data['combination']
+        
+        # Validate combination
+        valid_combinations = [combo['value'] for combo in PermissionManager.get_permission_combinations()]
+        if combination not in valid_combinations:
+            return jsonify({
+                'success': False,
+                'message': 'Invalid permission combination'
+            }), 400
+        
+        # Apply the permission combination
+        result = DatabaseService.apply_permission_combination(
+            database.server, 
+            database.name, 
+            user.username, 
+            combination
+        )
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'message': result['message'],
+                'combination': result['combination'],
+                'permissions': result['permissions']
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': result['message']
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error applying permission combination: {str(e)}'
+        }), 500
 
 @databases_bp.route('/databases/<int:database_id>/users/<int:user_id>/delete', methods=['POST'])
 @login_required

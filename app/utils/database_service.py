@@ -10,6 +10,7 @@ from flask import flash
 from app.models.database import VpsServer, RestoreLog, db
 from app.utils.ssh_manager import SSHManager
 from app.utils.postgres_manager import PostgresManager
+from app.utils.permission_manager import PermissionManager
 
 
 class DatabaseService:
@@ -211,6 +212,10 @@ class DatabaseService:
                     for server_user in server_users:
                         username = server_user['username']
                         individual_perms = pg_manager.get_user_individual_permissions(username, database_name)
+                        
+                        # Use the actual individual permissions detected by user_manager
+                        # No need to override with legacy mapping - trust the real database state
+                        
                         user_individual_permissions[username] = individual_perms
         except Exception as e:
             # Return empty dict on error
@@ -220,6 +225,54 @@ class DatabaseService:
                 ssh.disconnect()
         
         return user_individual_permissions
+    
+    @staticmethod
+    def apply_permission_combination(server: VpsServer, database_name: str, username: str, combination: str) -> Dict[str, Any]:
+        """Apply a predefined permission combination to a user.
+        
+        Args:
+            server: VpsServer instance
+            database_name: Database name
+            username: Username to update
+            combination: Permission combination key
+            
+        Returns:
+            Dictionary with success status and message
+        """
+        try:
+            # Get permissions for the combination
+            permissions = PermissionManager.get_permissions_for_combination(combination)
+            
+            # Apply the permissions using the existing grant_individual_permissions_operation
+            success, message = DatabaseService.execute_with_postgres(
+                server,
+                "Apply permission combination",
+                DatabaseService.grant_individual_permissions_operation,
+                username=username,
+                password="",  # Password not needed for permission updates
+                db_name=database_name,
+                permissions=permissions
+            )
+            
+            if success:
+                combination_label = PermissionManager.get_combination_label(combination)
+                return {
+                    'success': True,
+                    'message': f'Successfully applied "{combination_label}" permissions to user {username}',
+                    'combination': combination,
+                    'permissions': permissions
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': f'Failed to apply permissions: {message}'
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Error applying permission combination: {str(e)}'
+            }
     
     @staticmethod
     def check_postgres_status(server: VpsServer) -> Dict[str, Any]:

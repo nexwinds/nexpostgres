@@ -121,6 +121,8 @@ class PostgresUserManager:
             return self._grant_read_only_permissions(username, db_name)
         elif permission_level == 'read_write':
             return self._grant_read_write_permissions(username, db_name)
+        elif permission_level == 'all_permissions':
+            return self._grant_all_permissions(username, db_name)
         else:
             return False, f"Invalid permission level: {permission_level}"
     
@@ -135,16 +137,23 @@ class PostgresUserManager:
         Returns:
             Tuple of (success, message)
         """
+        self.logger.info(f"DEBUG: Starting grant_individual_permissions for user '{username}' on database '{db_name}'")
+        self.logger.info(f"DEBUG: Requested permissions: {permissions}")
+        
         if not self.user_exists(username):
+            self.logger.error(f"DEBUG: User '{username}' does not exist")
             return False, f"User '{username}' does not exist"
         
         # First revoke all permissions to start clean
+        self.logger.info(f"DEBUG: Revoking all permissions for user '{username}' on database '{db_name}'")
         success, message = self._revoke_all_permissions(username, db_name)
         if not success:
+            self.logger.error(f"DEBUG: Failed to revoke permissions: {message}")
             return success, message
         
         # If no permissions are granted, just return (user has no access)
         if not any(permissions.values()):
+            self.logger.info(f"DEBUG: No permissions to grant, user '{username}' has no access")
             return True, f"All permissions revoked for user '{username}' on database '{db_name}'"
         
         commands = []
@@ -152,11 +161,13 @@ class PostgresUserManager:
         
         # Grant CONNECT permission if requested
         if permissions.get('connect', False):
+            self.logger.info(f"DEBUG: Granting CONNECT permission to user '{username}'")
             commands.append(f"GRANT CONNECT ON DATABASE {db_name} TO {username};")
             db_commands.append(f"GRANT USAGE ON SCHEMA public TO {username};")
         
         # Grant CREATE permission if requested
         if permissions.get('create', False):
+            self.logger.info(f"DEBUG: Granting CREATE permission to user '{username}'")
             commands.append(f"GRANT CREATE ON DATABASE {db_name} TO {username};")
             db_commands.append(f"GRANT CREATE ON SCHEMA public TO {username};")
         
@@ -171,6 +182,8 @@ class PostgresUserManager:
         if permissions.get('delete', False):
             table_permissions.append('DELETE')
         
+        self.logger.info(f"DEBUG: Table-level permissions to grant: {table_permissions}")
+        
         if table_permissions:
             perm_str = ', '.join(table_permissions)
             db_commands.extend([
@@ -181,18 +194,31 @@ class PostgresUserManager:
             ])
         
         # Execute general commands
+        self.logger.info(f"DEBUG: Executing {len(commands)} general commands")
         for cmd in commands:
+            self.logger.info(f"DEBUG: Executing general command: {cmd}")
             result = self.system_utils.execute_postgres_sql(cmd)
+            self.logger.info(f"DEBUG: Command result - exit_code: {result['exit_code']}, stdout: {result.get('stdout', '')}, stderr: {result.get('stderr', '')}")
             if result['exit_code'] != 0:
+                self.logger.error(f"DEBUG: Failed to execute general command: {cmd}")
                 return False, f"Failed to execute: {cmd}"
         
         # Execute database-specific commands
+        self.logger.info(f"DEBUG: Executing {len(db_commands)} database-specific commands")
         for cmd in db_commands:
+            self.logger.info(f"DEBUG: Executing database command: {cmd}")
             result = self.system_utils.execute_postgres_sql(cmd, db_name)
+            self.logger.info(f"DEBUG: Database command result - exit_code: {result['exit_code']}, stdout: {result.get('stdout', '')}, stderr: {result.get('stderr', '')}")
             if result['exit_code'] != 0:
-                self.logger.warning(f"Command failed (continuing): {cmd}")
+                # For CREATE permissions, treat failures as errors since they're critical
+                if 'CREATE' in cmd:
+                    self.logger.error(f"DEBUG: Critical CREATE permission command failed: {cmd} - Error: {result.get('stderr', 'Unknown error')}")
+                    return False, f"Failed to grant CREATE permission: {result.get('stderr', 'Unknown error')}"
+                else:
+                    self.logger.warning(f"DEBUG: Database command failed (continuing): {cmd} - Error: {result.get('stderr', 'Unknown error')}")
         
         granted_perms = [k for k, v in permissions.items() if v]
+        self.logger.info(f"DEBUG: Successfully granted permissions ({', '.join(granted_perms)}) to user '{username}' on database '{db_name}'")
         return True, f"Granted permissions ({', '.join(granted_perms)}) to user '{username}' on database '{db_name}'"
     
     def _revoke_all_permissions(self, username: str, db_name: str) -> Tuple[bool, str]:
@@ -257,6 +283,36 @@ class PostgresUserManager:
         """Grant read-write permissions to a user on a database."""
         commands = [
             f"REVOKE ALL ON DATABASE {db_name} FROM {username};",
+            f"GRANT CONNECT ON DATABASE {db_name} TO {username};"
+        ]
+        
+        db_commands = [
+            f"REVOKE ALL ON SCHEMA public FROM {username};",
+            f"GRANT USAGE ON SCHEMA public TO {username};",
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {username};",
+            f"GRANT SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {username};",
+            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {username};",
+            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, UPDATE ON SEQUENCES TO {username};"
+        ]
+        
+        # Execute general commands
+        for cmd in commands:
+            result = self.system_utils.execute_postgres_sql(cmd)
+            if result['exit_code'] != 0:
+                return False, f"Failed to execute: {cmd}"
+        
+        # Execute database-specific commands
+        for cmd in db_commands:
+            result = self.system_utils.execute_postgres_sql(cmd, db_name)
+            if result['exit_code'] != 0:
+                self.logger.warning(f"Command failed (continuing): {cmd}")
+        
+        return True, f"Granted read-write permissions to user '{username}' on database '{db_name}'"
+
+    def _grant_all_permissions(self, username: str, db_name: str) -> Tuple[bool, str]:
+        """Grant all permissions to a user on a database."""
+        commands = [
+            f"REVOKE ALL ON DATABASE {db_name} FROM {username};",
             f"GRANT CONNECT ON DATABASE {db_name} TO {username};",
             f"GRANT CREATE ON DATABASE {db_name} TO {username};"
         ]
@@ -282,7 +338,7 @@ class PostgresUserManager:
             if result['exit_code'] != 0:
                 self.logger.warning(f"Command failed (continuing): {cmd}")
         
-        return True, f"Granted read-write permissions to user '{username}' on database '{db_name}'"
+        return True, f"Granted all permissions to user '{username}' on database '{db_name}'"
     
     def create_database_user(self, username: str, password: str, db_name: str, 
                            permission_level: str = 'read_write') -> Tuple[bool, str]:
@@ -334,12 +390,17 @@ class PostgresUserManager:
         """
         self.logger.info(f"Listing users for database {db_name}")
         
-        # Check actual table-level INSERT privilege to determine read_write access
-        # This is more reliable than checking database-level CREATE privilege
-        # since we explicitly revoke/grant specific privileges
+        # Check privileges to determine permission level
+        # Updated to properly detect CREATE permissions for new permission combinations
         query = f"""
         SELECT r.rolname as username,
-               CASE WHEN r.rolsuper THEN 'read_write'
+               CASE WHEN r.rolsuper THEN 'all_permissions'
+                    WHEN has_database_privilege(r.rolname, '{db_name}', 'CREATE') AND EXISTS (
+                        SELECT 1 FROM pg_tables pt
+                        WHERE pt.schemaname = 'public'
+                        AND has_table_privilege(r.rolname, pt.schemaname||'.'||pt.tablename, 'INSERT')
+                        LIMIT 1
+                    ) THEN 'all_permissions'
                     WHEN EXISTS (
                         SELECT 1 FROM pg_tables pt
                         WHERE pt.schemaname = 'public'
@@ -407,6 +468,8 @@ class PostgresUserManager:
             }
         
         # Check individual privileges
+        # For table-level permissions, check both existing tables and default privileges
+        # This handles empty databases correctly by checking default privileges
         query = f"""
         SELECT 
             has_database_privilege('{username}', '{db_name}', 'CONNECT') as connect_priv,
@@ -416,37 +479,75 @@ class PostgresUserManager:
                 WHERE pt.schemaname = 'public'
                 AND has_table_privilege('{username}', pt.schemaname||'.'||pt.tablename, 'SELECT')
                 LIMIT 1
+            ) OR EXISTS (
+                SELECT 1 FROM pg_default_acl da
+                WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+                AND da.defaclobjtype = 'r'
+                AND array_to_string(da.defaclacl, ',') ~ '{username}=[a-zA-Z]*r[a-zA-Z]*'
             ) THEN 't' ELSE 'f' END as select_priv,
             CASE WHEN EXISTS (
                 SELECT 1 FROM pg_tables pt
                 WHERE pt.schemaname = 'public'
                 AND has_table_privilege('{username}', pt.schemaname||'.'||pt.tablename, 'INSERT')
                 LIMIT 1
+            ) OR EXISTS (
+                SELECT 1 FROM pg_default_acl da
+                WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+                AND da.defaclobjtype = 'r'
+                AND array_to_string(da.defaclacl, ',') ~ '{username}=[a-zA-Z]*a[a-zA-Z]*'
             ) THEN 't' ELSE 'f' END as insert_priv,
             CASE WHEN EXISTS (
                 SELECT 1 FROM pg_tables pt
                 WHERE pt.schemaname = 'public'
                 AND has_table_privilege('{username}', pt.schemaname||'.'||pt.tablename, 'UPDATE')
                 LIMIT 1
+            ) OR EXISTS (
+                SELECT 1 FROM pg_default_acl da
+                WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+                AND da.defaclobjtype = 'r'
+                AND array_to_string(da.defaclacl, ',') ~ '{username}=[a-zA-Z]*w[a-zA-Z]*'
             ) THEN 't' ELSE 'f' END as update_priv,
             CASE WHEN EXISTS (
                 SELECT 1 FROM pg_tables pt
                 WHERE pt.schemaname = 'public'
                 AND has_table_privilege('{username}', pt.schemaname||'.'||pt.tablename, 'DELETE')
                 LIMIT 1
+            ) OR EXISTS (
+                SELECT 1 FROM pg_default_acl da
+                WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+                AND da.defaclobjtype = 'r'
+                AND array_to_string(da.defaclacl, ',') ~ '{username}=[a-zA-Z]*d[a-zA-Z]*'
             ) THEN 't' ELSE 'f' END as delete_priv;
         """
         
+        self.logger.info(f"DEBUG: Executing permissions query for user '{username}' on database '{db_name}'")
+        self.logger.info(f"DEBUG: Query: {query}")
         result = self.system_utils.execute_postgres_sql(query, db_name)
+        
+        self.logger.info(f"DEBUG: Query result - exit_code: {result['exit_code']}, stdout: {result.get('stdout', '')}, stderr: {result.get('stderr', '')}")
         
         if result['exit_code'] == 0 and result['stdout'].strip():
             # Parse the result
             lines = result['stdout'].strip().split('\n')
-            if len(lines) >= 2:  # Header + data row
-                data_line = lines[1].strip()
+            self.logger.info(f"DEBUG: Query output lines: {lines}")
+            # PostgreSQL output format: header, separator, data, footer
+            # Look for the data line (should contain only 't' and 'f' values, not column names)
+            data_line = None
+            for i, line in enumerate(lines):
+                line = line.strip()
+                if ('|' in line and not line.startswith('-') and 
+                    not 'priv' in line and  # Skip header line with column names
+                    ('t' in line or 'f' in line) and
+                    not line.startswith('(')):  # Skip footer line
+                    data_line = line
+                    self.logger.info(f"DEBUG: Found data line at index {i}: {data_line}")
+                    break
+            
+            if data_line:
                 parts = data_line.split('|')
+                self.logger.info(f"DEBUG: Parsed parts: {parts}")
                 if len(parts) >= 6:
-                    return {
+                    permissions_result = {
                         'connect': parts[0].strip() == 't',
                         'create': parts[1].strip() == 't',
                         'select': parts[2].strip() == 't',
@@ -454,8 +555,11 @@ class PostgresUserManager:
                         'update': parts[4].strip() == 't',
                         'delete': parts[5].strip() == 't'
                     }
+                    self.logger.info(f"DEBUG: Detected individual permissions: {permissions_result}")
+                    return permissions_result
         
         # Default to no permissions if query fails
+        self.logger.warning(f"DEBUG: Failed to parse permissions, returning default (no permissions)")
         return {
             'connect': False,
             'select': False,

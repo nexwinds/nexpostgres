@@ -19,8 +19,9 @@
             <i class="fas fa-info-circle me-2"></i> 
             <strong>Note:</strong> User permissions will be immediately updated on the PostgreSQL server.
         </div>
-        <form method="post" onsubmit="console.log('Form submitted with permission:', document.getElementById('permission_level').value);">
+        <form method="post">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            
             <div class="mb-3">
                 <label for="username" class="form-label">Username</label>
                 <input type="text" class="form-control" id="username" name="username" value="{{ user.username }}" readonly>
@@ -31,79 +32,49 @@
                 <label class="form-label">Database Permissions</label>
                 <div class="form-text mb-3">Current permission detected: <strong>{{ current_permission }}</strong></div>
                 
+                <!-- Permission Setup -->
                 <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h6 class="mb-0"><i class="fas fa-shield-alt me-2"></i>Permission Setup</h6>
+                    </div>
                     <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="form-check form-switch mb-3">
-                                    <input class="form-check-input" type="checkbox" id="connect_permission" name="connect_permission" 
-                                           {% if user_individual_permissions.get('connect', False) %}checked{% endif %}>
-                                    <label class="form-check-label" for="connect_permission">
-                                        <strong>Connect</strong>
-                                    </label>
-                                    <div class="form-text">Allow user to connect to the database</div>
-                                </div>
-                            </div>
-                            
-                            <div class="col-md-4">
-                                <div class="form-check form-switch mb-3">
-                                    <input class="form-check-input" type="checkbox" id="select_permission" name="select_permission" 
-                                           {% if user_individual_permissions.get('select', False) %}checked{% endif %}>
-                                    <label class="form-check-label" for="select_permission">
-                                        <strong>Select (Read)</strong>
-                                    </label>
-                                    <div class="form-text">Allow user to read data from tables</div>
-                                </div>
-                            </div>
-                            
-                            <div class="col-md-4">
-                                <div class="form-check form-switch mb-3">
-                                    <input class="form-check-input" type="checkbox" id="insert_permission" name="insert_permission" 
-                                           {% if user_individual_permissions.get('insert', False) %}checked{% endif %}>
-                                    <label class="form-check-label" for="insert_permission">
-                                        <strong>Insert</strong>
-                                    </label>
-                                    <div class="form-text">Allow user to insert new data</div>
-                                </div>
-                            </div>
+                        <div class="form-text mb-4">
+                            Select the appropriate permission level for this user:
                         </div>
                         
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="form-check form-switch mb-3">
-                                    <input class="form-check-input" type="checkbox" id="update_permission" name="update_permission" 
-                                           {% if user_individual_permissions.get('update', False) %}checked{% endif %}>
-                                    <label class="form-check-label" for="update_permission">
-                                        <strong>Update</strong>
-                                    </label>
-                                    <div class="form-text">Allow user to modify existing data</div>
+                        {% for combo in permission_combinations %}
+                        <div class="form-check mb-3 p-3 border rounded permission-option" 
+                             style="{% if current_combination == combo.value and is_exact_match %}background-color: #f8fff9; border-color: #28a745 !important;{% endif %}">
+                            <input class="form-check-input" type="radio" name="permission_combination" 
+                                   id="combo_{{ combo.value }}" value="{{ combo.value }}"
+                                   {% if current_combination == combo.value and is_exact_match %}checked{% endif %}>
+                            <label class="form-check-label w-100" for="combo_{{ combo.value }}">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1">
+                                        <h6 class="mb-1">{{ combo.label }}</h6>
+                                        <p class="text-muted mb-2">{{ combo.description }}</p>
+                                        <div class="permission-details">
+                                            <strong>Allowed actions:</strong>
+                                            {% set allowed_actions = [] %}
+                                            {% for perm, enabled in combo.permissions.items() %}
+                                                {% if enabled %}
+                                                    {% set _ = allowed_actions.append(perm.title().replace('_', ' ')) %}
+                                                {% endif %}
+                                            {% endfor %}
+                                            {% if allowed_actions %}
+                                                <span class="text-success">{{ allowed_actions | join(', ') }}</span>
+                                            {% else %}
+                                                <span class="text-danger">No permissions granted</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
-                            
-                            <div class="col-md-4">
-                                <div class="form-check form-switch mb-3">
-                                    <input class="form-check-input" type="checkbox" id="delete_permission" name="delete_permission" 
-                                           {% if user_individual_permissions.get('delete', False) %}checked{% endif %}>
-                                    <label class="form-check-label" for="delete_permission">
-                                        <strong>Delete</strong>
-                                    </label>
-                                    <div class="form-text">Allow user to delete data</div>
-                                </div>
-                            </div>
-                            
-                            <div class="col-md-4">
-                                <div class="form-check form-switch mb-3">
-                                    <input class="form-check-input" type="checkbox" id="create_permission" name="create_permission" 
-                                           {% if user_individual_permissions.get('create', False) %}checked{% endif %}>
-                                    <label class="form-check-label" for="create_permission">
-                                        <strong>Create</strong>
-                                    </label>
-                                    <div class="form-text">Allow user to create new tables and schemas</div>
-                                </div>
-                            </div>
+                            </label>
                         </div>
+                        {% endfor %}
                     </div>
                 </div>
+
             </div>
             
             <div class="mb-3 form-check">
@@ -127,4 +98,57 @@
         </form>
     </div>
 </div>
+
+<style>
+.permission-option {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.permission-option:hover {
+    background-color: #f8f9fa;
+    border-color: #007bff !important;
+}
+
+.permission-option input[type="radio"]:checked + label {
+    color: #155724;
+}
+
+.permission-details ul {
+    margin-left: 1rem;
+}
+
+.permission-details li {
+    font-size: 0.9em;
+    margin-bottom: 0.25rem;
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Permission combination selection is handled automatically by radio buttons
+    // No additional JavaScript needed for form submission
+    
+
+    
+    function showAlert(type, message) {
+        // Remove existing alerts
+        document.querySelectorAll('.alert-dismissible').forEach(alert => alert.remove());
+        
+        // Create new alert
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+        alertDiv.innerHTML = `
+            <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-triangle'} me-2"></i>
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        
+        // Insert at the top of the card body
+        const cardBody = document.querySelector('.card-body');
+        cardBody.insertBefore(alertDiv, cardBody.firstChild);
+    }
+});
+</script>
+
 {% endblock %}
