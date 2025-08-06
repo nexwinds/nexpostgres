@@ -135,6 +135,16 @@ class DatabaseService:
             return False, str(e)
     
     @staticmethod
+    def grant_individual_permissions_operation(pg_manager: PostgresManager, username: str, 
+                                             password: str, db_name: str, permissions: Dict[str, bool]) -> Tuple[bool, str]:
+        """Grant individual permissions operation."""
+        return pg_manager.grant_individual_permissions(
+            username=username,
+            db_name=db_name,
+            permissions=permissions
+        )
+    
+    @staticmethod
     def get_user_permissions(server: VpsServer, database_name: str) -> Dict[str, str]:
         """Get user permissions from PostgreSQL server.
         
@@ -178,6 +188,38 @@ class DatabaseService:
         """
         user_permissions = DatabaseService.get_user_permissions(server, database_name)
         return user_permissions.get(username, 'read_write')
+    
+    @staticmethod
+    def get_user_individual_permissions(server: VpsServer, database_name: str) -> Dict[str, Dict[str, bool]]:
+        """Get individual permissions for all users from PostgreSQL server.
+        
+        Args:
+            server: VpsServer instance
+            database_name: Database name
+            
+        Returns:
+            Dictionary mapping username to individual permission flags
+        """
+        user_individual_permissions = {}
+        ssh = None
+        try:
+            ssh = DatabaseService.create_ssh_connection(server)
+            if ssh:
+                pg_manager = DatabaseService.create_postgres_manager(ssh)
+                if pg_manager:
+                    server_users = pg_manager.list_database_users(database_name)
+                    for server_user in server_users:
+                        username = server_user['username']
+                        individual_perms = pg_manager.get_user_individual_permissions(username, database_name)
+                        user_individual_permissions[username] = individual_perms
+        except Exception as e:
+            # Return empty dict on error
+            pass
+        finally:
+            if ssh:
+                ssh.disconnect()
+        
+        return user_individual_permissions
     
     @staticmethod
     def check_postgres_status(server: VpsServer) -> Dict[str, Any]:

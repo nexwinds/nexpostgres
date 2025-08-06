@@ -58,6 +58,10 @@ class PostgresManager:
                         return version
         return None
     
+    def get_postgres_version(self) -> Optional[str]:
+        """Get PostgreSQL version (alias for get_version for backward compatibility)."""
+        return self.get_version()
+    
     def get_status(self) -> Dict[str, Any]:
         """Get comprehensive PostgreSQL status."""
         status = {
@@ -345,6 +349,31 @@ class PostgresManager:
         """
         return self.user_manager.list_database_users(db_name)
     
+    def grant_individual_permissions(self, username: str, db_name: str, permissions: dict) -> Tuple[bool, str]:
+        """Grant individual permissions to a user on a database.
+        
+        Args:
+            username: Username to grant permissions to
+            db_name: Database name
+            permissions: Dict with keys: connect, select, insert, update, delete, create
+        
+        Returns:
+            Tuple of (success, message)
+        """
+        return self.user_manager.grant_individual_permissions(username, db_name, permissions)
+    
+    def get_user_individual_permissions(self, username: str, db_name: str) -> Dict[str, bool]:
+        """Get detailed individual permissions for a user on a specific database.
+        
+        Args:
+            username: Username to check
+            db_name: Database name
+            
+        Returns:
+            dict: Dictionary with individual permission flags
+        """
+        return self.user_manager.get_user_individual_permissions(username, db_name)
+    
     def generate_password(self, length: int = 16) -> str:
         """Generate a secure password."""
         alphabet = string.ascii_letters + string.digits + '!@#$%^&*'
@@ -380,30 +409,19 @@ class PostgresManager:
         
         return self.reload_config()
     
-    def configure_ssl_tls(self, cert_path: str, key_path: str, ca_path: str = None) -> Tuple[bool, str]:
-        """Configure SSL/TLS for PostgreSQL."""
-        self.logger.info("Configuring SSL/TLS")
+    def configure_ssl_tls(self, enable_ssl: bool = True, cert_path: str = None, key_path: str = None, auto_generate: bool = True) -> Tuple[bool, str, Dict]:
+        """Configure SSL/TLS for PostgreSQL.
         
-        # Enable SSL
-        result = self.update_setting('ssl', 'on')
-        if not result[0]:
-            return result
-        
-        # Set certificate paths
-        result = self.update_setting('ssl_cert_file', f"'{cert_path}'")
-        if not result[0]:
-            return result
-        
-        result = self.update_setting('ssl_key_file', f"'{key_path}'")
-        if not result[0]:
-            return result
-        
-        if ca_path:
-            result = self.update_setting('ssl_ca_file', f"'{ca_path}'")
-            if not result[0]:
-                return result
-        
-        return self.reload_config()
+        Args:
+            enable_ssl: Whether to enable SSL/TLS
+            cert_path: Path to SSL certificate file
+            key_path: Path to SSL private key file
+            auto_generate: Whether to auto-generate self-signed certificates
+            
+        Returns:
+            tuple: (success, message, changes_made)
+        """
+        return self.config_manager.configure_ssl_tls(enable_ssl, cert_path, key_path, auto_generate)
     
     def update_setting(self, setting_name: str, value: str) -> Tuple[bool, str]:
         """Update a PostgreSQL setting."""
@@ -645,13 +663,37 @@ class PostgresManager:
         """Restore from backup."""
         return self.backup_manager.restore_backup(backup_name)
     
-    def list_backups(self) -> List[Dict[str, Any]]:
+    def list_backups(self, db_name: str) -> List[Dict[str, Any]]:
         """List available backups."""
-        return self.backup_manager.list_backups()
+        return self.backup_manager.list_backups(db_name)
     
     def delete_backup(self, backup_name: str) -> Tuple[bool, str]:
         """Delete a backup."""
         return self.backup_manager.delete_backup(backup_name)
+    
+    def perform_backup(self, db_name: str, backup_type: str = 'incr') -> Tuple[bool, str]:
+        """Perform a backup."""
+        return self.backup_manager.perform_backup(db_name, backup_type)
+    
+    def restore_database(self, db_name: str, backup_label: str = None) -> Tuple[bool, str]:
+        """Restore a database from backup."""
+        return self.backup_manager.restore_database(db_name, backup_label)
+    
+    def cleanup_old_backups(self, db_name: str, retention_count: int = None) -> Tuple[bool, str]:
+        """Clean up old backups (handled automatically by pgBackRest)."""
+        return self.backup_manager.cleanup_old_backups(db_name, retention_count)
+    
+    def check_health(self, db_name: str) -> Tuple[bool, str, Dict]:
+        """Perform a comprehensive health check of the backup system."""
+        return self.backup_manager.health_check(db_name)
+    
+    def setup_log_rotation(self) -> Tuple[bool, str]:
+        """Set up log rotation for pgBackRest logs."""
+        return self.backup_manager.setup_log_rotation()
+    
+    def configure_postgresql_archiving(self, db_name: str) -> Tuple[bool, str]:
+        """Configure PostgreSQL for archiving with pgBackRest."""
+        return self.backup_manager.configure_postgresql_archiving(db_name)
     
     # ===== INSTALLATION =====
     
@@ -753,3 +795,36 @@ class PostgresManager:
     def restart_postgres(self) -> Tuple[bool, str]:
         """Restart PostgreSQL service (alias for restart_service)."""
         return self.restart_service()
+    
+    # ===== EXTERNAL CONNECTIONS =====
+    
+    def check_and_fix_external_connections(self, allowed_ips: List[str] = None, auth_method: str = 'scram-sha-256') -> Tuple[bool, str, Dict]:
+        """Check and fix external connections configuration.
+        
+        Args:
+            allowed_ips: List of allowed IP addresses/CIDR blocks. If None, allows all IPs
+            auth_method: Authentication method (scram-sha-256, md5, etc.)
+        
+        Returns:
+            tuple: (success, message, changes_made)
+        """
+        return self.config_manager.configure_external_connections(allowed_ips, auth_method)
+    
+    def get_postgresql_setting(self, setting_name: str) -> Optional[str]:
+        """Get a PostgreSQL setting value from postgresql.conf.
+        
+        Args:
+            setting_name: Name of the setting to retrieve
+            
+        Returns:
+            Setting value or None if not found
+        """
+        return self.config_manager.get_postgresql_setting(setting_name)
+    
+    def get_pg_hba_entries(self) -> List[Dict[str, str]]:
+        """Get current pg_hba.conf entries.
+        
+        Returns:
+            List of pg_hba entries as dictionaries
+        """
+        return self.config_manager.get_pg_hba_entries()

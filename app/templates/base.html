@@ -38,17 +38,17 @@
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link {% if request.endpoint.startswith('servers.') %}active{% endif %}" href="{{ url_for('servers.index') }}">
+                        <a class="nav-link {% if request.endpoint and request.endpoint.startswith('servers.') %}active{% endif %}" href="{{ url_for('servers.index') }}">
                             <i class="fas fa-server me-1"></i> VPS Servers
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link {% if request.endpoint.startswith('databases.') %}active{% endif %}" href="{{ url_for('databases.databases') }}">
+                        <a class="nav-link {% if request.endpoint and request.endpoint.startswith('databases.') %}active{% endif %}" href="{{ url_for('databases.databases') }}">
                             <i class="fas fa-database me-1"></i> Databases
                         </a>
                     </li>
                     <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle {% if request.endpoint.startswith('backups.') %}active{% endif %}" href="#" role="button" data-bs-toggle="dropdown">
+                        <a class="nav-link dropdown-toggle {% if request.endpoint and request.endpoint.startswith('backups.') %}active{% endif %}" href="#" role="button" data-bs-toggle="dropdown">
                             <i class="fas fa-save me-1"></i> Backups
                         </a>
                         <ul class="dropdown-menu">
@@ -59,7 +59,7 @@
                         </ul>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link {% if request.endpoint.startswith('s3_storage.') %}active{% endif %}" href="{{ url_for('s3_storage.index') }}">
+                        <a class="nav-link {% if request.endpoint and request.endpoint.startswith('s3_storage.') %}active{% endif %}" href="{{ url_for('s3_storage.index') }}">
                             <i class="fas fa-cloud me-1"></i> S3 Storage
                         </a>
                     </li>
@@ -69,7 +69,7 @@
                 <ul class="navbar-nav">
 
                     <li class="nav-item">
-                        <a class="nav-link {% if request.endpoint.startswith('app_backup.') %}active{% endif %}" href="{{ url_for('app_backup.index') }}">
+                        <a class="nav-link {% if request.endpoint and request.endpoint.startswith('app_backup.') %}active{% endif %}" href="{{ url_for('app_backup.index') }}">
                             <i class="fas fa-database me-1"></i> App Backup
                         </a>
                     </li>

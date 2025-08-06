@@ -290,7 +290,7 @@ class UnifiedValidationService:
         Returns:
             Tuple of (is_valid, error_message)
         """
-        valid_permissions = {'read_only', 'read_write', 'admin'}
+        valid_permissions = {'read_only', 'read_write', 'no_access'}
         
         if not permission_level:
             return False, 'Permission level is required'

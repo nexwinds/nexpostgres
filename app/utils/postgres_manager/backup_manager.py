@@ -3,6 +3,7 @@
 import os
 import logging
 import tempfile
+import time
 import base64
 import secrets
 from typing import Dict, List, Optional, Tuple
@@ -147,9 +148,9 @@ class PostgresBackupManager:
             config_content += f"repo1-s3-bucket={s3_config.get('bucket', '')}\n"
             config_content += f"repo1-s3-region={s3_config.get('region', 'us-east-1')}\n"
             
-            # Only set endpoint if explicitly provided (let pgBackRest use defaults for AWS)
-            if s3_config.get('endpoint'):
-                config_content += f"repo1-s3-endpoint={s3_config['endpoint']}\n"
+            # Set endpoint - use provided endpoint or default AWS S3 endpoint
+            endpoint = s3_config.get('endpoint') or 'https://s3.amazonaws.com'
+            config_content += f"repo1-s3-endpoint={endpoint}\n"
             
             config_content += f"repo1-s3-key={s3_config.get('access_key', '')}\n"
             config_content += f"repo1-s3-key-secret={s3_config.get('secret_key', '')}\n"
@@ -392,7 +393,6 @@ class PostgresBackupManager:
                     return False, f"PostgreSQL is not running and failed to start: {start_message}"
                 
                 # Wait a moment for PostgreSQL to fully start
-                import time
                 time.sleep(5)
                 
                 # Verify accessibility again after starting
@@ -509,6 +509,12 @@ class PostgresBackupManager:
             success, message = self.config_manager.update_postgresql_setting(setting, value)
             if not success:
                 return False, f"Failed to update {setting}: {message}"
+        
+        # Restart PostgreSQL to apply archive_mode changes
+        self.logger.info("Restarting PostgreSQL to apply archiving configuration...")
+        success, message = self.system_utils.restart_service('postgresql')
+        if not success:
+            return False, f"Configuration updated but PostgreSQL restart failed: {message}"
         
         return True, "PostgreSQL archiving configured successfully"
     

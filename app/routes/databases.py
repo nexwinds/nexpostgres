@@ -274,6 +274,7 @@ def database_users(database_id):
     
     users = PostgresDatabaseUser.query.filter_by(database_id=database_id).all()
     user_permissions = DatabaseService.get_user_permissions(database.server, database.name)
+    user_individual_permissions = DatabaseService.get_user_individual_permissions(database.server, database.name)
     
     # Get primary user
     primary_user = PostgresDatabaseUser.query.filter_by(
@@ -328,6 +329,7 @@ def database_users(database_id):
                          database=database, 
                          users=users, 
                          user_permissions=user_permissions,
+                         user_individual_permissions=user_individual_permissions,
                          server=database.server,
                          primary_user=primary_user,
                          connection_url=connection_url,
@@ -352,19 +354,31 @@ def edit_database_user(database_id, user_id):
         current_permission = DatabaseService.get_current_user_permission(
             database.server, database.name, user.username
         )
+        individual_permissions = DatabaseService.get_user_individual_permissions(
+            database.server, database.name
+        )
+        user_individual_perms = individual_permissions.get(user.username, {})
         return render_template('databases/edit_user.html', 
                              database=database, 
                              user=user, 
-                             current_permission=current_permission)
+                             current_permission=current_permission,
+                             user_individual_permissions=user_individual_perms)
     
     # POST request - update permissions and/or regenerate password
-    new_permission = request.form.get('permission_level', '').strip()
+    connect_permission = request.form.get('connect_permission') == 'on'
+    select_permission = request.form.get('select_permission') == 'on'
+    insert_permission = request.form.get('insert_permission') == 'on'
+    update_permission = request.form.get('update_permission') == 'on'
+    delete_permission = request.form.get('delete_permission') == 'on'
+    create_permission = request.form.get('create_permission') == 'on'
     regenerate_password = request.form.get('regenerate_password') == 'on'
     
-    # Validate permission level
-    permission_valid, permission_error = UnifiedValidationService.validate_permission_level(new_permission)
-    if not permission_valid:
-        flash(permission_error, 'error')
+    # Debug logging
+    print(f"DEBUG: Form data received - connect: {connect_permission}, select: {select_permission}, insert: {insert_permission}, update: {update_permission}, delete: {delete_permission}, create: {create_permission}, regenerate_password: {regenerate_password}")
+    
+    # Validate that at least connect permission is selected if any other permission is selected
+    if (select_permission or insert_permission or update_permission or delete_permission or create_permission) and not connect_permission:
+        flash('Connect permission is required when granting other permissions', 'error')
         return redirect(url_for('databases.edit_database_user', 
                               database_id=database_id, user_id=user_id))
     
@@ -373,12 +387,22 @@ def edit_database_user(database_id, user_id):
     if regenerate_password:
         new_password = UnifiedValidationService.generate_password()
     
+    # Prepare permissions dictionary
+    permissions = {
+        'connect': connect_permission,
+        'select': select_permission,
+        'insert': insert_permission,
+        'update': update_permission,
+        'delete': delete_permission,
+        'create': create_permission
+    }
+    
     # Update permissions and password on server
     success, message = DatabaseService.execute_with_postgres(
         database.server,
         'User update',
-        DatabaseService.create_user_operation,  # This handles permission updates too
-        user.username, new_password, database.name, new_permission
+        DatabaseService.grant_individual_permissions_operation,
+        user.username, new_password, database.name, permissions
     )
     
     if not success:
@@ -388,10 +412,11 @@ def edit_database_user(database_id, user_id):
     
     # Update in database
     try:
-        user.permission_level = new_permission
+        print(f"DEBUG: Updating user password in database if regenerated")
         if regenerate_password:
             user.password = new_password
         db.session.commit()
+        print(f"DEBUG: User updated successfully in database")
         
         if regenerate_password:
             flash(f'User updated successfully. New password: {new_password}', 'success')
@@ -399,6 +424,7 @@ def edit_database_user(database_id, user_id):
             flash('User permissions updated successfully', 'success')
     except Exception as e:
         db.session.rollback()
+        print(f"DEBUG: Database update failed: {str(e)}")
         flash(f'Failed to update user in database: {str(e)}', 'error')
     
     return redirect(url_for('databases.database_users', database_id=database_id))

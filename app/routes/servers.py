@@ -383,6 +383,10 @@ def status(id):
 def status_data(id):
     server = VpsServer.query.filter_by(id=id).first_or_404()
     
+    import logging
+    logger = logging.getLogger('nexpostgres.status')
+    logger.info(f"Fetching status data for server {id}: {server.name} ({server.host})")
+    
     try:
         # Connect to server via SSH
         ssh = SSHManager(
@@ -398,44 +402,90 @@ def status_data(id):
                 'message': 'Failed to connect to server via SSH'
             })
         
-        # Get system information
+        # Get system information with error handling
         os_info = ssh.execute_command("cat /etc/os-release | grep -E '^(NAME|VERSION)' | tr '\\n' ' '")
-        os_name = os_info['stdout'].strip()
+        os_name = os_info['stdout'].strip() if os_info['stdout'].strip() else "Unknown OS"
         
-        # Get public IPv4 address
-        ip_info = ssh.execute_command("curl -s https://ipinfo.io/ip || hostname -I | awk '{print $1}'")
-        public_ip = ip_info['stdout'].strip()
+        # Get public IPv4 address with fallback
+        ip_info = ssh.execute_command("curl -s --connect-timeout 5 https://ipinfo.io/ip || hostname -I | awk '{print $1}'")
+        public_ip = ip_info['stdout'].strip() if ip_info['stdout'].strip() else "Unknown IP"
         
         # Get CPU info
         cpu_info = ssh.execute_command("nproc --all")
-        vcpu_count = cpu_info['stdout'].strip()
+        vcpu_count = cpu_info['stdout'].strip() if cpu_info['stdout'].strip() else "Unknown"
         
-        # Get memory info
+        # Get memory info with error handling
         mem_info = ssh.execute_command("free -m | grep Mem")
         mem_parts = mem_info['stdout'].strip().split()
-        total_ram = int(mem_parts[1])
-        used_ram = int(mem_parts[2])
-        ram_usage_percent = round((used_ram / total_ram) * 100, 2)
         
-        # Get disk info
+        try:
+            if len(mem_parts) >= 3:
+                total_ram = int(mem_parts[1])
+                used_ram = int(mem_parts[2])
+                ram_usage_percent = round((used_ram / total_ram) * 100, 2)
+            else:
+                total_ram = 0
+                used_ram = 0
+                ram_usage_percent = 0.0
+        except (ValueError, IndexError, ZeroDivisionError):
+            total_ram = 0
+            used_ram = 0
+            ram_usage_percent = 0.0
+        
+        # Get disk info with better error handling
         disk_info = ssh.execute_command("df -h / | tail -1")
         disk_parts = disk_info['stdout'].strip().split()
-        total_disk = disk_parts[1]
-        used_disk = disk_parts[2]
-        free_disk = disk_parts[3]
-        disk_usage_percent = disk_parts[4].replace('%', '')
         
-        # Get current CPU usage
-        cpu_usage = ssh.execute_command("top -bn1 | grep 'Cpu(s)' | awk '{print $2}'")
-        cpu_usage_percent = cpu_usage['stdout'].strip()
+        try:
+            if len(disk_parts) >= 5:
+                total_disk = disk_parts[1]
+                used_disk = disk_parts[2]
+                free_disk = disk_parts[3]
+                disk_usage_percent = float(disk_parts[4].replace('%', ''))
+            else:
+                # Fallback values
+                total_disk = "Unknown"
+                used_disk = "Unknown"
+                free_disk = "Unknown"
+                disk_usage_percent = 0.0
+        except (ValueError, IndexError):
+            total_disk = "Unknown"
+            used_disk = "Unknown"
+            free_disk = "Unknown"
+            disk_usage_percent = 0.0
         
-        # Get PostgreSQL version
-        pg_manager = PostgresManager(ssh)
-        postgres_version = pg_manager.get_postgres_version() or "Not Installed"
+        # Get current CPU usage with better parsing
+        cpu_usage = ssh.execute_command("top -bn1 | grep 'Cpu(s)' | sed 's/%us,.*//g' | awk '{print $2}' | sed 's/%//g'")
+        cpu_usage_raw = cpu_usage['stdout'].strip()
         
-        # Get pgBackRest version
-        pgbackrest_version_result = ssh.execute_command("pgbackrest version 2>/dev/null || echo 'Not Installed'")
-        pgbackrest_version = pgbackrest_version_result['stdout'].strip() if pgbackrest_version_result['exit_code'] == 0 else "Not Installed"
+        # Parse CPU usage and handle potential parsing errors
+        try:
+            if cpu_usage_raw and cpu_usage_raw.replace('.', '').isdigit():
+                cpu_usage_percent = float(cpu_usage_raw)
+            else:
+                # Fallback method using vmstat
+                vmstat_result = ssh.execute_command("vmstat 1 2 | tail -1 | awk '{print 100-$15}'")
+                vmstat_raw = vmstat_result['stdout'].strip()
+                if vmstat_raw and vmstat_raw.replace('.', '').isdigit():
+                    cpu_usage_percent = float(vmstat_raw)
+                else:
+                    cpu_usage_percent = 0.0
+        except (ValueError, TypeError):
+            cpu_usage_percent = 0.0
+        
+        # Get PostgreSQL version with error handling
+        try:
+            pg_manager = PostgresManager(ssh)
+            postgres_version = pg_manager.get_postgres_version() or "Not Installed"
+        except Exception as e:
+            postgres_version = "Error detecting version"
+        
+        # Get pgBackRest version with error handling
+        try:
+            pgbackrest_version_result = ssh.execute_command("pgbackrest version 2>/dev/null || echo 'Not Installed'")
+            pgbackrest_version = pgbackrest_version_result['stdout'].strip() if pgbackrest_version_result['exit_code'] == 0 else "Not Installed"
+        except Exception as e:
+            pgbackrest_version = "Error detecting version"
         
         # Disconnect
         ssh.disconnect()
@@ -462,12 +512,16 @@ def status_data(id):
             'pgbackrest_version': pgbackrest_version
         }
         
+        logger.info(f"Successfully collected status data for server {id}")
+        logger.debug(f"Status data: {system_info}")
+        
         return jsonify(system_info)
         
     except Exception as e:
+        logger.error(f"Error fetching status data for server {id}: {str(e)}")
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': f"Failed to fetch server status: {str(e)}"
         })
 
 

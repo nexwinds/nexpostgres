@@ -19,7 +19,7 @@
             <i class="fas fa-info-circle me-2"></i> 
             <strong>Note:</strong> User permissions will be immediately updated on the PostgreSQL server.
         </div>
-        <form method="post">
+        <form method="post" onsubmit="console.log('Form submitted with permission:', document.getElementById('permission_level').value);">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="mb-3">
                 <label for="username" class="form-label">Username</label>
@@ -27,14 +27,83 @@
                 <div class="form-text">Username cannot be changed after creation.</div>
             </div>
             
-            <div class="mb-3">
-                <label for="permission_level" class="form-label">Permission Level</label>
-                <select class="form-select" id="permission_level" name="permission_level" required>
-                    <option value="read_write" {% if current_permission == 'read_write' %}selected{% endif %}>Read and Write</option>
-                    <option value="read_only" {% if current_permission == 'read_only' %}selected{% endif %}>Read-only</option>
-                    <option value="no_access" {% if current_permission == 'no_access' %}selected{% endif %}>No Access (Disabled)</option>
-                </select>
-                <div class="form-text">The level of access this user will have to the database.</div>
+            <div class="mb-4">
+                <label class="form-label">Database Permissions</label>
+                <div class="form-text mb-3">Current permission detected: <strong>{{ current_permission }}</strong></div>
+                
+                <div class="card">
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="connect_permission" name="connect_permission" 
+                                           {% if user_individual_permissions.get('connect', False) %}checked{% endif %}>
+                                    <label class="form-check-label" for="connect_permission">
+                                        <strong>Connect</strong>
+                                    </label>
+                                    <div class="form-text">Allow user to connect to the database</div>
+                                </div>
+                            </div>
+                            
+                            <div class="col-md-4">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="select_permission" name="select_permission" 
+                                           {% if user_individual_permissions.get('select', False) %}checked{% endif %}>
+                                    <label class="form-check-label" for="select_permission">
+                                        <strong>Select (Read)</strong>
+                                    </label>
+                                    <div class="form-text">Allow user to read data from tables</div>
+                                </div>
+                            </div>
+                            
+                            <div class="col-md-4">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="insert_permission" name="insert_permission" 
+                                           {% if user_individual_permissions.get('insert', False) %}checked{% endif %}>
+                                    <label class="form-check-label" for="insert_permission">
+                                        <strong>Insert</strong>
+                                    </label>
+                                    <div class="form-text">Allow user to insert new data</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="update_permission" name="update_permission" 
+                                           {% if user_individual_permissions.get('update', False) %}checked{% endif %}>
+                                    <label class="form-check-label" for="update_permission">
+                                        <strong>Update</strong>
+                                    </label>
+                                    <div class="form-text">Allow user to modify existing data</div>
+                                </div>
+                            </div>
+                            
+                            <div class="col-md-4">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="delete_permission" name="delete_permission" 
+                                           {% if user_individual_permissions.get('delete', False) %}checked{% endif %}>
+                                    <label class="form-check-label" for="delete_permission">
+                                        <strong>Delete</strong>
+                                    </label>
+                                    <div class="form-text">Allow user to delete data</div>
+                                </div>
+                            </div>
+                            
+                            <div class="col-md-4">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="create_permission" name="create_permission" 
+                                           {% if user_individual_permissions.get('create', False) %}checked{% endif %}>
+                                    <label class="form-check-label" for="create_permission">
+                                        <strong>Create</strong>
+                                    </label>
+                                    <div class="form-text">Allow user to create new tables and schemas</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
             
             <div class="mb-3 form-check">

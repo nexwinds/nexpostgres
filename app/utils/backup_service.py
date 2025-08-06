@@ -220,6 +220,11 @@ class BackupService:
             if not success:
                 return {'success': False, 'message': f'Failed to create stanza: {message}'}
             
+            # Configure PostgreSQL archiving (required for pgBackRest)
+            success, message = pg_manager.configure_postgresql_archiving(backup_job.database.name)
+            if not success:
+                return {'success': False, 'message': f'Failed to configure PostgreSQL archiving: {message}'}
+            
             return {'success': True, 'message': 'Backup system configured successfully'}
         
         try:

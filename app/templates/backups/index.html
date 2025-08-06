@@ -93,11 +93,7 @@
                                 <a href="{{ url_for('backups.edit_backup', backup_job_id=job.id) }}" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-edit"></i> Edit
                                 </a>
-                                <form action="{{ url_for('backups.apply_retention', backup_job_id=job.id) }}" method="post" class="d-inline">
-                                    <button type="submit" class="btn btn-sm btn-outline-secondary" title="Enforce retention policy (delete old backups)">
-                                        <i class="fas fa-broom"></i> Apply Retention
-                                    </button>
-                                </form>
+                                <!-- Retention policy is now handled automatically by pgBackRest -->
                                 <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteModal{{ job.id }}">
                                     <i class="fas fa-trash"></i> Delete
                                 </button>
