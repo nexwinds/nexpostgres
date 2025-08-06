@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 from .constants import PostgresConstants
 
 class SystemUtils:
@@ -338,6 +338,74 @@ class SystemUtils:
                 return False, f"Service {service_name} failed to restart: {status}"
         else:
             return False, f"Failed to restart {service_name}: {result.get('stderr', 'Unknown error')}"
+    
+    def check_postgresql_service(self) -> Dict[str, Any]:
+        """Check PostgreSQL service status.
+        
+        Returns:
+            dict: Service status information
+        """
+        os_type = self.detect_os()
+        service_name = 'postgresql'
+        
+        # For RHEL-based systems, try to detect the version-specific service
+        if os_type == 'rhel':
+            # Try to find the PostgreSQL version and use version-specific service name
+            version_result = self.ssh.execute_command("rpm -qa | grep postgresql-server | head -1")
+            if version_result['exit_code'] == 0 and version_result['stdout']:
+                # Extract version from package name
+                import re
+                version_match = re.search(r'postgresql(\d+)-server', version_result['stdout'])
+                if version_match:
+                    version = version_match.group(1)
+                    service_name = f'postgresql-{version}'
+        
+        is_running, status = self.check_service_status(service_name)
+        
+        return {
+            'service_name': service_name,
+            'is_running': is_running,
+            'status': status
+        }
+    
+    def start_postgresql_service(self) -> Tuple[bool, str]:
+        """Start PostgreSQL service.
+        
+        Returns:
+            tuple: (success, message)
+        """
+        service_info = self.check_postgresql_service()
+        service_name = service_info['service_name']
+        
+        if service_info['is_running']:
+            return True, f"PostgreSQL service ({service_name}) is already running"
+        
+        return self.start_service(service_name)
+    
+    def stop_postgresql_service(self) -> Tuple[bool, str]:
+        """Stop PostgreSQL service.
+        
+        Returns:
+            tuple: (success, message)
+        """
+        service_info = self.check_postgresql_service()
+        service_name = service_info['service_name']
+        
+        if not service_info['is_running']:
+            return True, f"PostgreSQL service ({service_name}) is already stopped"
+        
+        return self.stop_service(service_name)
+    
+    def restart_postgresql_service(self) -> Tuple[bool, str]:
+        """Restart PostgreSQL service.
+        
+        Returns:
+            tuple: (success, message)
+        """
+        service_info = self.check_postgresql_service()
+        service_name = service_info['service_name']
+        
+        return self.restart_service(service_name)
     
     def create_directory(self, path: str, owner: str = None, permissions: str = None) -> Tuple[bool, str]:
         """Create a directory with specified owner and permissions.

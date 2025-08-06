@@ -198,22 +198,32 @@ class BackupService:
                     'access_key': backup_job.s3_storage.access_key,
                     'secret_key': backup_job.s3_storage.secret_key
                 }
-                success, message = pg_manager.backup_manager.setup_pgbackrest(s3_config, backup_job)
+                success, message = pg_manager.backup_manager.create_pgbackrest_config(s3_config, backup_job)
             else:
-                success, message = pg_manager.backup_manager.setup_pgbackrest(None, backup_job)
+                success, message = pg_manager.backup_manager.create_pgbackrest_config(None, backup_job)
             
             if not success:
                 return {'success': False, 'message': f'Failed to configure pgBackRest: {message}'}
             
+            # Get PostgreSQL data directory for stanza configuration
+            data_dir = pg_manager.config_manager.get_data_directory()
+            if not data_dir:
+                return {'success': False, 'message': 'Could not determine PostgreSQL data directory'}
+            
+            # Create stanza configuration first (required for pg1-path)
+            success, message = pg_manager.backup_manager.create_stanza_config(backup_job.database.name, data_dir)
+            if not success:
+                return {'success': False, 'message': f'Failed to create stanza configuration: {message}'}
+            
             # Create stanza if needed
-            success, message = pg_manager.backup_manager.create_stanza(backup_job.postgres_database.name)
+            success, message = pg_manager.backup_manager.create_stanza(backup_job.database.name)
             if not success:
                 return {'success': False, 'message': f'Failed to create stanza: {message}'}
             
             return {'success': True, 'message': 'Backup system configured successfully'}
         
         try:
-            ssh, ssh_message = BackupService.create_ssh_connection(backup_job.postgres_database.server)
+            ssh, ssh_message = BackupService.create_ssh_connection(backup_job.database.server)
             if not ssh:
                 return {'success': False, 'message': ssh_message}
             
@@ -437,7 +447,7 @@ class BackupRestoreService:
         """
         ssh = None
         try:
-            ssh, ssh_message = BackupService.create_ssh_connection(backup_job.server)
+            ssh, ssh_message = BackupService.create_ssh_connection(backup_job.database.server)
             if not ssh:
                 return None, backup_log_id
             

@@ -70,21 +70,23 @@ def add():
             
                 def log_terminal_output(line, is_stderr=False):
                     """Callback to stream terminal output to progress queue"""
-                    progress_queues[queue_key].put({
-                        'step': 'terminal_log',
-                        'message': line,
-                        'is_stderr': is_stderr,
-                        'queue_key': queue_key
-                    })
+                    if queue_key in progress_queues:
+                        progress_queues[queue_key].put({
+                            'step': 'terminal_log',
+                            'message': line,
+                            'is_stderr': is_stderr,
+                            'queue_key': queue_key
+                        })
                 
                 try:
                     # Initial status
-                    progress_queues[queue_key].put({
-                        'step': 'connecting',
-                        'message': 'Establishing SSH connection...',
-                        'progress': 10,
-                        'queue_key': queue_key
-                    })
+                    if queue_key in progress_queues:
+                        progress_queues[queue_key].put({
+                            'step': 'connecting',
+                            'message': 'Establishing SSH connection...',
+                            'progress': 10,
+                            'queue_key': queue_key
+                        })
                     
                     # Create SSH connection
                     ssh = SSHManager(
@@ -95,61 +97,68 @@ def add():
                     )
                     
                     if ssh.connect():
-                        progress_queues[queue_key].put({
-                            'step': 'connected',
-                            'message': 'SSH connection established successfully',
-                            'progress': 20
-                        })
+                        if queue_key in progress_queues:
+                            progress_queues[queue_key].put({
+                                'step': 'connected',
+                                'message': 'SSH connection established successfully',
+                                'progress': 20
+                            })
                         
                         # Initialize PostgreSQL manager
                         pg_manager = PostgresManager(ssh)
                         
-                        progress_queues[queue_key].put({
-                            'step': 'installing',
-                            'message': f'Installing PostgreSQL {postgres_version}...',
-                            'progress': 30
-                        })
+                        if queue_key in progress_queues:
+                            progress_queues[queue_key].put({
+                                'step': 'installing',
+                                'message': f'Installing PostgreSQL {postgres_version}...',
+                                'progress': 30
+                            })
                         
                         # Check if PostgreSQL is already installed
                         if not pg_manager.is_installed():
-                            progress_queues[queue_key].put({
-                                'step': 'installing',
-                                'message': 'Installing PostgreSQL packages...',
-                                'progress': 50
-                            })
+                            if queue_key in progress_queues:
+                                progress_queues[queue_key].put({
+                                    'step': 'installing',
+                                    'message': 'Installing PostgreSQL packages...',
+                                    'progress': 50
+                                })
                             
                             # Use streaming installation with terminal logs
                             install_success, install_message = pg_manager.install_postgres_with_streaming(
                                  postgres_version, log_terminal_output
                              )
                             if not install_success:
-                                progress_queues[queue_key].put({
-                                    'step': 'error',
-                                    'message': f'PostgreSQL installation failed: {install_message}',
-                                    'progress': 50
-                                })
+                                if queue_key in progress_queues:
+                                    progress_queues[queue_key].put({
+                                        'step': 'error',
+                                        'message': f'PostgreSQL installation failed: {install_message}',
+                                        'progress': 50
+                                    })
                                 return
                         
-                        progress_queues[queue_key].put({
-                            'step': 'configuring',
-                            'message': 'Installing pgBackRest...',
-                            'progress': 70
-                        })
+                        if queue_key in progress_queues:
+                            progress_queues[queue_key].put({
+                                'step': 'configuring',
+                                'message': 'Installing pgBackRest...',
+                                'progress': 70
+                            })
                         
                         # Install pgBackRest
                         backup_success, backup_message = pg_manager.backup_manager.install_pgbackrest()
                         if not backup_success:
-                            progress_queues[queue_key].put({
-                                'step': 'warning',
-                                'message': f'pgBackRest installation failed: {backup_message}',
-                                'progress': 80
-                            })
+                            if queue_key in progress_queues:
+                                progress_queues[queue_key].put({
+                                    'step': 'warning',
+                                    'message': f'pgBackRest installation failed: {backup_message}',
+                                    'progress': 80
+                                })
                         
-                        progress_queues[queue_key].put({
-                            'step': 'finalizing',
-                            'message': 'Starting PostgreSQL service...',
-                            'progress': 90
-                        })
+                        if queue_key in progress_queues:
+                            progress_queues[queue_key].put({
+                                'step': 'finalizing',
+                                'message': 'Starting PostgreSQL service...',
+                                'progress': 90
+                            })
                         
                         # Restart PostgreSQL to ensure it's running
                         restart_success, restart_message = pg_manager.restart_postgres()
@@ -160,34 +169,38 @@ def add():
                                 server_record.initialized = True
                                 db.session.commit()
                             
-                            progress_queues[queue_key].put({
-                                'step': 'completed',
-                                'message': 'Server initialization completed successfully!',
-                                'progress': 100
-                            })
+                            if queue_key in progress_queues:
+                                progress_queues[queue_key].put({
+                                    'step': 'completed',
+                                    'message': 'Server initialization completed successfully!',
+                                    'progress': 100
+                                })
                         else:
-                            progress_queues[queue_key].put({
-                                'step': 'error',
-                                'message': f'Failed to start PostgreSQL: {restart_message}',
-                                'progress': 90
-                            })
+                            if queue_key in progress_queues:
+                                progress_queues[queue_key].put({
+                                    'step': 'error',
+                                    'message': f'Failed to start PostgreSQL: {restart_message}',
+                                    'progress': 90
+                                })
                         
                         # Disconnect SSH connection
                         ssh.disconnect()
                         
                     else:
-                        progress_queues[queue_key].put({
-                            'step': 'error',
-                            'message': 'Failed to establish SSH connection',
-                            'progress': 10
-                        })
+                        if queue_key in progress_queues:
+                            progress_queues[queue_key].put({
+                                'step': 'error',
+                                'message': 'Failed to establish SSH connection',
+                                'progress': 10
+                            })
                         
                 except Exception as e:
-                    progress_queues[queue_key].put({
-                        'step': 'error',
-                        'message': f'Initialization failed: {str(e)}',
-                        'progress': 0
-                    })
+                    if queue_key in progress_queues:
+                        progress_queues[queue_key].put({
+                            'step': 'error',
+                            'message': f'Initialization failed: {str(e)}',
+                            'progress': 0
+                        })
                     # Ensure SSH connection is closed on exception
                     try:
                         if 'ssh' in locals() and ssh:
@@ -196,7 +209,8 @@ def add():
                         pass
                 finally:
                     # Send sentinel value to end the stream
-                    progress_queues[queue_key].put(None)
+                    if queue_key in progress_queues:
+                        progress_queues[queue_key].put(None)
         
         # Start the background thread
         from flask import current_app

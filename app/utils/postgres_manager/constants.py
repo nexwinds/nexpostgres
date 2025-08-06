@@ -28,6 +28,8 @@ class PostgresConstants:
     PGBACKREST = {
         'config_dir': '/etc/pgbackrest',
         'log_dir': '/var/log/pgbackrest',
+        'backup_dir': '/var/lib/pgbackrest',
+        'default_cipher_type': 'aes-256-cbc',
         'default_retention_full': 2,
         'default_retention_diff': 7,
         'default_retention_incr': 14

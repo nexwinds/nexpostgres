@@ -5,8 +5,10 @@ import secrets
 import string
 from typing import Any, Dict, List, Optional, Tuple
 from .backup_manager import PostgresBackupManager
+from .config_manager import PostgresConfigManager
 from .system_utils import SystemUtils
 from .error_handler import PostgresErrorHandler
+from .user_manager import PostgresUserManager
 
 
 class PostgresManager:
@@ -19,7 +21,9 @@ class PostgresManager:
         
         # Initialize components
         self.system_utils = SystemUtils(ssh_manager, logger)
-        self.backup_manager = PostgresBackupManager(ssh_manager, self.system_utils, None, logger)
+        self.config_manager = PostgresConfigManager(ssh_manager, self.system_utils, logger)
+        self.user_manager = PostgresUserManager(ssh_manager, self.system_utils, logger)
+        self.backup_manager = PostgresBackupManager(ssh_manager, self.system_utils, self.config_manager, logger)
         
         # Cache for expensive operations
         self._postgres_version = None
@@ -156,13 +160,15 @@ class PostgresManager:
         """Check if a database exists."""
         sql = f"SELECT 1 FROM pg_database WHERE datname = '{database_name}'"
         result = self.system_utils.execute_postgres_sql(sql)
-        return result['exit_code'] == 0 and result['stdout'].strip()
+        # Check if query succeeded and returned the value '1' (indicating database exists)
+        return result['exit_code'] == 0 and result['stdout'] and '1' in result['stdout'] and '(1 row)' in result['stdout']
     
     def _check_user_exists(self, username: str) -> bool:
         """Check if a user exists."""
         sql = f"SELECT 1 FROM pg_roles WHERE rolname = '{username}'"
         result = self.system_utils.execute_postgres_sql(sql)
-        return result['exit_code'] == 0 and result['stdout'].strip()
+        # Check if query succeeded and returned the value '1' (indicating user exists)
+        return result['exit_code'] == 0 and result['stdout'] and '1' in result['stdout'] and '(1 row)' in result['stdout']
     
     # ===== USER MANAGEMENT =====
     
@@ -328,10 +334,31 @@ class PostgresManager:
                         })
         return users
     
+    def list_database_users(self, db_name: str) -> List[Dict[str, str]]:
+        """List all PostgreSQL users with access to a specific database.
+        
+        Args:
+            db_name: Database name to check users for
+            
+        Returns:
+            list: List of users with their roles/permissions
+        """
+        return self.user_manager.list_database_users(db_name)
+    
     def generate_password(self, length: int = 16) -> str:
         """Generate a secure password."""
         alphabet = string.ascii_letters + string.digits + '!@#$%^&*'
         return ''.join(secrets.choice(alphabet) for _ in range(length))
+    
+    def create_database_user(self, username: str, password: str, db_name: str, permission_level: str = 'all') -> Tuple[bool, str]:
+        """Create a user and grant permissions to a specific database."""
+        # Delegate to the user_manager which handles existing users properly
+        return self.user_manager.create_database_user(username, password, db_name, permission_level)
+    
+    def delete_database_user(self, username: str) -> Tuple[bool, str]:
+        """Delete a database user."""
+        # Delegate to the user_manager
+        return self.user_manager.delete_user(username)
     
     # ===== CONFIGURATION =====
     
@@ -722,3 +749,7 @@ class PostgresManager:
     def restart_service(self) -> Tuple[bool, str]:
         """Restart PostgreSQL service."""
         return self.system_utils.restart_postgresql_service()
+    
+    def restart_postgres(self) -> Tuple[bool, str]:
+        """Restart PostgreSQL service (alias for restart_service)."""
+        return self.restart_service()

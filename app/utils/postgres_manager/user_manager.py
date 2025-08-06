@@ -24,8 +24,8 @@ class PostgresUserManager:
         result = self.system_utils.execute_postgres_sql(
             f"SELECT 1 FROM pg_roles WHERE rolname = '{username}';"
         )
-        # Check if query succeeded and returned actual data (not just empty result)
-        return result['exit_code'] == 0 and bool(result['stdout'].strip()) and '1' in result['stdout']
+        # Check if query succeeded and returned the value '1' (indicating user exists)
+        return result['exit_code'] == 0 and result['stdout'] and '1' in result['stdout'] and '(1 row)' in result['stdout']
     
     def create_user(self, username: str, password: str) -> Tuple[bool, str]:
         """Create a PostgreSQL user.

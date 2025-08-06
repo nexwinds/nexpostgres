@@ -15,6 +15,7 @@
     </div>
     
     <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
         <div class="mb-4">
             <label for="backup_file" class="form-label">Select Backup File</label>
             <input type="file" class="form-control" id="backup_file" name="backup_file" accept=".sqlite" required>
