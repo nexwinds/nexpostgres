@@ -28,19 +28,9 @@ class PostgresConstants:
     PGBACKREST = {
         'config_dir': '/etc/pgbackrest',
         'log_dir': '/var/log/pgbackrest',
-        'backup_dir': '/var/lib/pgbackrest',
-        # Retention settings - recommended values for production
-        'default_retention_full': '7',  # Keep 7 full backups
-        'default_retention_diff': '4',  # Keep 4 differential backups
-        # Performance settings - let pgBackRest auto-detect optimal values
-        'default_process_max': 'auto',  # Auto-detect based on CPU cores
-        'default_compress_type': 'lz4',  # Fast compression
-        'default_compress_level': '1',  # Low compression for speed
-        # Security settings
-        'default_cipher_type': 'aes-256-cbc',
-        # Log settings
-        'log_level_console': 'warn',
-        'log_level_file': 'info'
+        'default_retention_full': 2,
+        'default_retention_diff': 7,
+        'default_retention_incr': 14
     }
     
     # Timeouts and retries
@@ -62,9 +52,7 @@ class PostgresConstants:
         'archive_mode': 'on',
         'wal_level': 'replica',
         'max_wal_senders': '3',
-        'archive_timeout': '60',
-        # Checkpoint settings for better backup performance
-        'checkpoint_completion_target': '0.9'
+        'archive_timeout': '60'
     }
     
     # Default pg_hba.conf content

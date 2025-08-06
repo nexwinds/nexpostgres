@@ -471,3 +471,78 @@ class SystemUtils:
                 return True, "Using distribution's PostgreSQL packages"
         
         return False, "Unable to determine repository configuration"
+    
+    def install_postgresql(self, version: str = None) -> Tuple[bool, str]:
+        """Install PostgreSQL.
+        
+        Args:
+            version: PostgreSQL major version (e.g., '15', '16')
+                    If None, installs the default version
+        
+        Returns:
+            tuple: (success, message)
+        """
+        try:
+            os_type = self.detect_os()
+            if os_type == 'unknown':
+                return False, "Unsupported operating system for PostgreSQL installation"
+            
+            # Get package manager commands
+            pkg_commands = self.get_package_manager_commands()
+            if not pkg_commands:
+                return False, "Package manager not supported"
+            
+            # Setup PostgreSQL repository for better version control
+            repo_success, repo_message = self.setup_postgres_repository()
+            if not repo_success:
+                self.logger.warning(f"Repository setup failed: {repo_message}")
+            
+            # Get package names
+            packages = self.get_postgres_package_names(version)
+            if not packages:
+                return False, f"No PostgreSQL packages found for version {version or 'default'}"
+            
+            # Update package list
+            if 'update' in pkg_commands:
+                self.logger.info("Updating package list...")
+                update_result = self.ssh.execute_command(f"sudo {pkg_commands['update']}")
+                if update_result['exit_code'] != 0:
+                    self.logger.warning(f"Package update failed: {update_result.get('stderr', 'Unknown error')}")
+            
+            # Install PostgreSQL packages
+            packages_str = ' '.join(packages)
+            install_cmd = f"sudo {pkg_commands['install']} {packages_str}"
+            
+            self.logger.info(f"Installing PostgreSQL packages: {packages_str}")
+            result = self.ssh.execute_command(install_cmd)
+            
+            if result['exit_code'] == 0:
+                # Initialize database if needed (for RHEL-based systems)
+                if os_type == 'rhel' and version:
+                    init_cmd = f"sudo /usr/pgsql-{version}/bin/postgresql-{version}-setup initdb"
+                    init_result = self.ssh.execute_command(init_cmd)
+                    if init_result['exit_code'] != 0:
+                        self.logger.warning(f"Database initialization may have failed: {init_result.get('stderr', '')}")
+                
+                # Start and enable PostgreSQL service
+                service_name = 'postgresql'
+                if os_type == 'rhel' and version:
+                    service_name = f'postgresql-{version}'
+                
+                start_success, start_message = self.start_service(service_name)
+                if not start_success:
+                    self.logger.warning(f"Failed to start PostgreSQL service: {start_message}")
+                
+                # Enable service to start on boot
+                enable_result = self.ssh.execute_command(f"sudo systemctl enable {service_name}")
+                if enable_result['exit_code'] != 0:
+                    self.logger.warning(f"Failed to enable PostgreSQL service: {enable_result.get('stderr', '')}")
+                
+                return True, f"PostgreSQL {version or 'default'} installed successfully"
+            else:
+                error_msg = result.get('stderr', 'Unknown error')
+                return False, f"Failed to install PostgreSQL: {error_msg}"
+                
+        except Exception as e:
+            self.logger.error(f"PostgreSQL installation failed: {str(e)}")
+            return False, f"Installation failed: {str(e)}"

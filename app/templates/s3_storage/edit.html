@@ -7,6 +7,7 @@
 {% call page_layout('Edit S3 Storage Configuration: ' + storage.name, url_for('s3_storage.index'), 'Back to S3 Storage') %}
     {% call card_container('S3 Storage Details') %}
         <form method="post" id="s3Form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <div class="mb-3">
                 <label for="name" class="form-label">Configuration Name</label>
                 <input type="text" class="form-control" id="name" name="name" value="{{ storage.name }}" required>

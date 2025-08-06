@@ -105,31 +105,14 @@ def execute_backup(job_id, manual=False):
         # Setup PostgreSQL manager and execute backup
         pg_manager = PostgresManager(ssh)
         
-        # Check configuration validity before proceeding
-        check_result = ssh.execute_command(f"sudo -u postgres pgbackrest --stanza={job.database.name} check")
-        
-        if check_result['exit_code'] != 0:
-            logger.warning(f"Fixing configuration for {job.database.name}")
-            # Configure with or without S3 as needed
-            if job.s3_storage:
-                s3_config = {
-                'bucket': job.s3_storage.bucket,
-                'region': job.s3_storage.region,
-                'access_key': job.s3_storage.access_key,
-                'secret_key': job.s3_storage.secret_key
-            }
-                success, message = pg_manager.setup_pgbackrest(s3_config, job)
-                if not success:
-                    raise Exception("Failed to configure pgBackRest")
-            else:
-                success, message = pg_manager.setup_pgbackrest(None, job)
-                if not success:
-                    raise Exception(f"Failed to configure pgBackRest: {message}")
-            
-            # Create backup stanza for the database
-            success, message = pg_manager.create_backup_stanza(job.database.name)
-            if not success:
-                raise Exception(f"Failed to create backup stanza: {message}")
+        # Configure pgBackRest and create stanza if needed
+        logger.info(f"Configuring pgBackRest for job {job.id}...")
+        from app.utils.backup_service import BackupService
+        config_result = BackupService.check_and_configure_backup(job)
+        if not config_result['success']:
+            error_msg = f"Failed to configure backup: {config_result['message']}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
                 
         # Execute the backup
         success, log_output = pg_manager.perform_backup(job.database.name, job.backup_type)
@@ -151,40 +134,20 @@ def execute_backup(job_id, manual=False):
                     backup_log.backup_path = backup_path
                     logger.info(f"Set backup path: {backup_path}")
                 
-                # Create an estimate based on database size - this method worked reliably
-                db_size_cmd = f"sudo -u postgres psql -c \"SELECT pg_size_pretty(pg_database_size('{job.database.name}'));\""
-                db_size_result = ssh.execute_command(db_size_cmd)
-                
-                if db_size_result['exit_code'] == 0 and db_size_result['stdout']:
-                    try:
-                        size_line = db_size_result['stdout'].strip().split("\n")[2].strip()  # Skip header rows
-                        if 'MB' in size_line:
-                            size_val = float(size_line.replace('MB', '').strip())
-                            backup_log.size_bytes = int(size_val * 1024 * 1024)
-                        elif 'GB' in size_line:
-                            size_val = float(size_line.replace('GB', '').strip())
-                            backup_log.size_bytes = int(size_val * 1024 * 1024 * 1024)
-                        elif 'kB' in size_line:
-                            size_val = float(size_line.replace('kB', '').strip())
-                            backup_log.size_bytes = int(size_val * 1024)
-                        else:
-                            # Default to 10MB if we can't determine size
-                            backup_log.size_bytes = 10 * 1024 * 1024
-                        
-                        logger.info(f"Set backup size based on DB size: {backup_log.size_bytes} bytes")
-                    except (ValueError, IndexError):
-                        # Default to 10MB if parsing fails
-                        backup_log.size_bytes = 10 * 1024 * 1024
-                        logger.info(f"Set default backup size: {backup_log.size_bytes} bytes")
-                else:
-                    # Default to 10MB if query fails
-                    backup_log.size_bytes = 10 * 1024 * 1024
-                    logger.info(f"Set default backup size: {backup_log.size_bytes} bytes")
+                # Get backup size from pgBackRest's native reporting
+                try:
+                    backups = pg_manager.backup_manager.list_backups(job.database.name)
+                    if backups:
+                        latest_backup = backups[-1]
+                        backup_log.size_bytes = latest_backup.get('size', 0)
+                        logger.info(f"Backup size: {backup_log.size_bytes} bytes")
+                except Exception as e:
+                    logger.warning(f"Could not retrieve backup size: {str(e)}")
+                    backup_log.size_bytes = 0  # Let pgBackRest handle size reporting
                     
             except Exception as e:
-                logger.warning(f"Failed to get backup size: {str(e)}")
-                # Set a minimal default size so something shows
-                backup_log.size_bytes = 5 * 1024 * 1024  # 5 MB
+                logger.warning(f"Backup execution error: {str(e)}")
+                backup_log.size_bytes = 0
     
     except Exception as e:
         success, message = False, str(e)

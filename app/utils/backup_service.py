@@ -179,52 +179,51 @@ class BackupService:
         db.session.commit()
     
     @staticmethod
-    def check_and_configure_backup(database, s3_storage, backup_job=None):
-        """Check and configure backup system if needed.
+    def check_and_configure_backup(backup_job):
+        """Configure backup system for the given backup job.
         
         Args:
-            database: Database object
-            s3_storage: S3Storage object
-            backup_job: BackupJob object for encryption key storage
+            backup_job: BackupJob object containing all necessary configuration
             
         Returns:
-            tuple: (success, message)
+            dict: {'success': bool, 'message': str}
         """
         def configure_operation(pg_manager):
-            print(f"DEBUG: Starting backup configuration check for database '{database.name}'")
-            # Check if configuration is valid
-            check_cmd = f"sudo -u postgres pgbackrest --stanza={database.name} check"
-            ssh = pg_manager.ssh
-            print(f"DEBUG: Running check command: {check_cmd}")
-            check_result = ssh.execute_command(check_cmd)
-            print(f"DEBUG: Check command exit code: {check_result['exit_code']}")
-            
-            if check_result['exit_code'] != 0:
-                print("DEBUG: Configuration check failed, setting up pgBackRest")
-                # Configure pgBackRest based on storage type
-                if s3_storage:
-                    s3_config = {
-                        'bucket': s3_storage.bucket,
-                        'region': s3_storage.region,
-                        'endpoint': s3_storage.endpoint or '',
-                        'access_key': s3_storage.access_key,
-                        'secret_key': s3_storage.secret_key
-                    }
-                    print("DEBUG: Setting up pgBackRest with S3 config")
-                    pg_manager.setup_pgbackrest(s3_config, backup_job)
-                else:
-                    print("DEBUG: Setting up pgBackRest without S3 config")
-                    pg_manager.setup_pgbackrest(None, backup_job)
-                
-                print("DEBUG: pgBackRest setup completed")
-                return 'Backup system configured successfully'
+            # Configure pgBackRest based on storage type
+            if backup_job.s3_storage:
+                s3_config = {
+                    'bucket': backup_job.s3_storage.bucket,
+                    'region': backup_job.s3_storage.region,
+                    'endpoint': backup_job.s3_storage.endpoint or '',
+                    'access_key': backup_job.s3_storage.access_key,
+                    'secret_key': backup_job.s3_storage.secret_key
+                }
+                success, message = pg_manager.backup_manager.setup_pgbackrest(s3_config, backup_job)
             else:
-                print("DEBUG: Backup configuration is already valid")
-                return 'Backup configuration is valid'
+                success, message = pg_manager.backup_manager.setup_pgbackrest(None, backup_job)
+            
+            if not success:
+                return {'success': False, 'message': f'Failed to configure pgBackRest: {message}'}
+            
+            # Create stanza if needed
+            success, message = pg_manager.backup_manager.create_stanza(backup_job.postgres_database.name)
+            if not success:
+                return {'success': False, 'message': f'Failed to create stanza: {message}'}
+            
+            return {'success': True, 'message': 'Backup system configured successfully'}
         
-        return BackupService.execute_with_postgres(
-            database.server, 'Backup configuration check', configure_operation
-        )
+        try:
+            ssh, ssh_message = BackupService.create_ssh_connection(backup_job.postgres_database.server)
+            if not ssh:
+                return {'success': False, 'message': ssh_message}
+            
+            pg_manager = BackupService.create_postgres_manager(ssh)
+            result = configure_operation(pg_manager)
+            
+            ssh.disconnect()
+            return result
+        except Exception as e:
+            return {'success': False, 'message': f'Configuration error: {str(e)}'}
     
     @staticmethod
     def schedule_backup_job_safe(backup_job):
@@ -325,25 +324,7 @@ class BackupService:
         
         return query.order_by(RestoreLog.start_time.desc())
     
-    @staticmethod
-    def apply_retention_policy(backup_job):
-        """Apply retention policy to backup job.
-        
-        Args:
-            backup_job: BackupJob object
-            
-        Returns:
-            tuple: (success, message)
-        """
-        def retention_operation(pg_manager):
-            return pg_manager.cleanup_old_backups(
-                backup_job.database.name, 
-                backup_job.retention_count
-            )
-        
-        return BackupService.execute_with_postgres(
-            backup_job.database.server, 'Retention policy application', retention_operation
-        )
+    # Removed apply_retention_policy - pgBackRest handles retention automatically during backup operations
     
     @staticmethod
     def delete_backup_job(backup_job):
@@ -841,12 +822,12 @@ class BackupRestoreService:
             print(f"DEBUG: S3 storage config - Bucket: {s3_storage.bucket if s3_storage else 'None'}, Region: {s3_storage.region if s3_storage else 'None'}")
             print(f"DEBUG: Backup job encryption key present: {bool(backup_job.encryption_key)}")
             
-            success, config_message = BackupService.check_and_configure_backup(database, s3_storage, backup_job)
-            if not success:
-                print(f"DEBUG: Backup configuration failed: {config_message}")
-                return False, f'Failed to configure backup system on target server: {config_message}'
+            config_result = BackupService.check_and_configure_backup(backup_job)
+            if not config_result['success']:
+                print(f"DEBUG: Backup configuration failed: {config_result['message']}")
+                return False, f'Failed to configure backup system on target server: {config_result["message"]}'
             
-            print(f"DEBUG: Backup configuration successful: {config_message}")
+            print(f"DEBUG: Backup configuration successful: {config_result['message']}")
             
             # Create backup stanza on target server for the source database
             def create_stanza_operation(pg_manager):

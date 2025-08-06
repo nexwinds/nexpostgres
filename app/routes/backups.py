@@ -52,16 +52,12 @@ def add_backup():
                                  s3_storages=s3_storages)
         
         # Check and configure backup with the created backup job
-        success, message = backup_service.check_and_configure_backup(
-            validated_data['database'], 
-            validated_data['s3_storage'],
-            backup_job
-        )
+        config_result = backup_service.check_and_configure_backup(backup_job)
         
-        if not success:
+        if not config_result['success']:
             # Delete the backup job if configuration fails
             backup_service.delete_backup_job(backup_job)
-            flash(message, 'danger')
+            flash(config_result['message'], 'danger')
             databases = PostgresDatabase.query.all()
             s3_storages = S3Storage.query.all()
             return render_template('backups/add.html', 
@@ -308,20 +304,7 @@ def fix_archive_command(database_id):
     return redirect(url_for('backups.backups'))
 
 
-@backups_bp.route('/apply_retention/<int:backup_job_id>', methods=['POST'])
-def apply_retention(backup_job_id):
-    """Apply retention policy to backup job."""
-    # Validate backup job exists
-    is_valid, error, backup_job = UnifiedValidationService.validate_backup_job_exists(backup_job_id)
-    if not is_valid:
-        flash(error, 'danger')
-        return redirect(url_for('backups.backups'))
-    
-    backup_service = BackupService()
-    success, message = backup_service.apply_retention_policy(backup_job)
-    
-    flash(message, 'success' if success else 'danger')
-    return redirect(url_for('backups.backups'))
+# Removed apply_retention route - pgBackRest handles retention automatically during backup operations
 
 
 @backups_bp.route('/api/logs/<int:backup_job_id>')

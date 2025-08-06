@@ -23,47 +23,47 @@ class PostgresBackupManager:
         self.logrotate_manager = LogRotateManager(ssh_manager, logger)
     
     def get_or_create_cipher_passphrase(self, backup_job=None) -> str:
-        """Get existing cipher passphrase from backup job or create a new one if none exists.
+        """Get cipher passphrase from environment variables or database, with database backup.
+        
+        Priority order:
+        1. Environment variable PGBACKREST_CIPHER_PASS
+        2. Database backup_job encryption_key
+        3. Generate new key and save to database
         
         Args:
-            backup_job: BackupJob instance containing encryption key
+            backup_job: BackupJob instance for encryption key storage
             
         Returns:
             str: Base64-encoded secure passphrase
         """
-        # If backup_job is provided and has an encryption key, use it
+        # Check environment variable first (preferred for external key management)
+        env_passphrase = os.environ.get('PGBACKREST_CIPHER_PASS')
+        if env_passphrase:
+            self.logger.info("Using encryption key from environment variable")
+            # Always keep a copy in database for disaster recovery
+            if backup_job and backup_job.encryption_key != env_passphrase:
+                backup_job.encryption_key = env_passphrase
+                from app.models.database import db
+                db.session.commit()
+                self.logger.info("Updated database backup of encryption key")
+            return env_passphrase
+        
+        # Fallback to database encryption key
         if backup_job and backup_job.encryption_key:
             self.logger.info("Using encryption key from database")
             return backup_job.encryption_key
-        
-        # Fallback: try to read existing passphrase from config file
-        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
-        result = self.ssh.execute_command(f"sudo grep -E '^repo1-cipher-pass=' {config_file} 2>/dev/null || true")
-        if result['exit_code'] == 0 and result['stdout'].strip():
-            # Extract existing passphrase
-            line = result['stdout'].strip()
-            if '=' in line:
-                existing_passphrase = line.split('=', 1)[1]
-                self.logger.info("Using existing cipher passphrase from config file")
-                # Save to backup_job if provided
-                if backup_job:
-                    backup_job.encryption_key = existing_passphrase
-                    from app.models.database import db
-                    db.session.commit()
-                    self.logger.info("Saved existing encryption key to backup job database")
-                return existing_passphrase
         
         # Generate new passphrase if none exists
         self.logger.info("Generating new cipher passphrase")
         random_bytes = secrets.token_bytes(32)
         passphrase = base64.b64encode(random_bytes).decode('utf-8')
         
-        # Save to backup_job if provided
+        # Always save to database for disaster recovery
         if backup_job:
             backup_job.encryption_key = passphrase
             from app.models.database import db
             db.session.commit()
-            self.logger.info("Saved new encryption key to backup job database")
+            self.logger.info("Saved new encryption key to database")
         
         return passphrase
     
@@ -133,19 +133,9 @@ class PostgresBackupManager:
         config_content = "[global]\n"
         config_content += f"log-path={PostgresConstants.PGBACKREST['log_dir']}\n"
         
-        # Process configuration - let pgBackRest auto-detect optimal values
-        if PostgresConstants.PGBACKREST['default_process_max'] != 'auto':
-            config_content += f"process-max={PostgresConstants.PGBACKREST['default_process_max']}\n"
+        # Let pgBackRest use optimal defaults for process-max, compression, etc.
         
-        # Compression settings - using recommended defaults
-        config_content += f"compress-type={PostgresConstants.PGBACKREST['default_compress_type']}\n"
-        config_content += f"compress-level={PostgresConstants.PGBACKREST['default_compress_level']}\n"
-        
-        # Log level settings
-        config_content += f"log-level-console={PostgresConstants.PGBACKREST['log_level_console']}\n"
-        config_content += f"log-level-file={PostgresConstants.PGBACKREST['log_level_file']}\n"
-        # Start fast for quicker backups - recommended by pgBackRest
-        config_content += "start-fast=y\n"
+        # Use pgBackRest default log levels
         
         # Get or create secure cipher passphrase
         cipher_passphrase = self.get_or_create_cipher_passphrase(backup_job)
@@ -155,25 +145,14 @@ class PostgresBackupManager:
             config_content += "\n# S3 Configuration\n"
             config_content += "repo1-type=s3\n"
             config_content += f"repo1-s3-bucket={s3_config.get('bucket', '')}\n"
+            config_content += f"repo1-s3-region={s3_config.get('region', 'us-east-1')}\n"
             
-            # Handle S3 region and endpoint
-            region = s3_config.get('region', 'us-east-1')
-            config_content += f"repo1-s3-region={region}\n"
-            
-            # Set endpoint - if not provided, use AWS S3 endpoint for the region
-            endpoint = s3_config.get('endpoint', '')
-            if not endpoint:
-                endpoint = f"s3.{region}.amazonaws.com"
-            config_content += f"repo1-s3-endpoint={endpoint}\n"
+            # Only set endpoint if explicitly provided (let pgBackRest use defaults for AWS)
+            if s3_config.get('endpoint'):
+                config_content += f"repo1-s3-endpoint={s3_config['endpoint']}\n"
             
             config_content += f"repo1-s3-key={s3_config.get('access_key', '')}\n"
             config_content += f"repo1-s3-key-secret={s3_config.get('secret_key', '')}\n"
-            
-            # TLS verification - recommended to enable for security
-            config_content += "repo1-s3-verify-tls=y\n"
-            
-            # S3 specific performance settings
-            config_content += "repo1-s3-uri-style=path\n"
             
             # Encryption for S3 - recommended for security
             config_content += f"repo1-cipher-type={PostgresConstants.PGBACKREST['default_cipher_type']}\n"
@@ -277,7 +256,7 @@ class PostgresBackupManager:
         return True, f"Stanza configuration for {db_name} created successfully"
     
     def cleanup_corrupted_stanza_files(self, db_name: str) -> Tuple[bool, str]:
-        """Clean up corrupted pgBackRest stanza files following official recommendations.
+        """Clean up corrupted pgBackRest stanza using built-in commands.
         
         Args:
             db_name: Database name (stanza name)
@@ -285,60 +264,34 @@ class PostgresBackupManager:
         Returns:
             tuple: (success, message)
         """
-        self.logger.info(f"Performing thorough cleanup of stanza files for: {db_name}")
+        self.logger.info(f"Cleaning up stanza using pgBackRest built-in commands: {db_name}")
         
         try:
-            # Stop any running pgBackRest processes for this stanza
-            self.ssh.execute_command(f"sudo pkill -f 'pgbackrest.*{db_name}' || true")
-            
-            # Use pgBackRest's built-in stop command to properly halt operations
             config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+            
+            # Stop any running pgBackRest processes for this stanza
             self.system_utils.execute_as_postgres_user(f"pgbackrest --config={config_file} --stanza={db_name} stop || true")
             
-            # Remove all stanza-related files completely for fresh start
-            stanza_paths = [
-                f"/var/lib/pgbackrest/archive/{db_name}",
-                f"/var/lib/pgbackrest/backup/{db_name}",
-                f"{PostgresConstants.PGBACKREST['backup_dir']}/archive/{db_name}",
-                f"{PostgresConstants.PGBACKREST['backup_dir']}/backup/{db_name}"
-            ]
+            # Use pgBackRest's built-in stanza-delete command for proper cleanup
+            self.logger.info(f"Using pgBackRest stanza-delete for clean removal: {db_name}")
+            delete_result = self.system_utils.execute_as_postgres_user(
+                f"pgbackrest --config={config_file} --stanza={db_name} stanza-delete --force || true"
+            )
             
-            self.logger.info(f"Removing all stanza files for complete cleanup: {db_name}")
+            if delete_result['exit_code'] == 0:
+                self.logger.info(f"Successfully deleted stanza using pgBackRest: {db_name}")
+            else:
+                self.logger.warning(f"Stanza delete command had issues, but continuing: {delete_result.get('stderr', '')}")
             
-            for path in stanza_paths:
-                result = self.ssh.execute_command(f"sudo rm -rf {path}")
-                if result['exit_code'] != 0:
-                    self.logger.warning(f"Failed to remove {path}: {result.get('stderr', 'Unknown error')}")
-                else:
-                    self.logger.info(f"Successfully removed: {path}")
+            # Ensure pgBackRest directories exist with proper permissions
+            success, message = self.setup_pgbackrest_directories()
+            if not success:
+                return False, f"Failed to setup directories after cleanup: {message}"
             
-            # Also remove any lock files that might prevent stanza creation
-            lock_paths = [
-                f"/tmp/pgbackrest/{db_name}.lock",
-                f"/var/lib/pgbackrest/{db_name}.lock",
-                f"/run/pgbackrest/{db_name}.lock"
-            ]
-            
-            for lock_path in lock_paths:
-                self.ssh.execute_command(f"sudo rm -f {lock_path}")
-            
-            # Recreate directories with proper permissions
-            recreate_commands = [
-                "sudo mkdir -p /var/lib/pgbackrest/archive",
-                "sudo mkdir -p /var/lib/pgbackrest/backup",
-                "sudo chown -R postgres:postgres /var/lib/pgbackrest",
-                "sudo chmod -R 750 /var/lib/pgbackrest"
-            ]
-            
-            for cmd in recreate_commands:
-                result = self.ssh.execute_command(cmd)
-                if result['exit_code'] != 0:
-                    return False, f"Failed to recreate directories: {result.get('stderr', 'Unknown error')}"
-            
-            # Start pgBackRest operations again
+            # Clear any remaining stop files
             self.system_utils.execute_as_postgres_user(f"pgbackrest --config={config_file} --stanza={db_name} start || true")
             
-            return True, f"Successfully cleaned up corrupted files for stanza {db_name}"
+            return True, f"Successfully cleaned up stanza using pgBackRest built-in commands: {db_name}"
             
         except Exception as e:
             return False, f"Error during cleanup: {str(e)}"
@@ -543,19 +496,13 @@ class PostgresBackupManager:
         # Get the config file path
         config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
         
-        # Update PostgreSQL settings following pgBackRest recommendations
+        # Update PostgreSQL settings - only essential settings for pgBackRest
         settings = {
             'wal_level': 'replica',
             'archive_mode': 'on',
             'archive_command': f"'pgbackrest --config={config_file} --stanza={db_name} archive-push %p'",
             'max_wal_senders': '3',
-            # Archive timeout - recommended 60s for regular archiving
-            'archive_timeout': '60',
-            # Checkpoint settings for better backup performance
-            'checkpoint_completion_target': '0.9',
-            # WAL settings for better performance
-            'wal_buffers': '16MB',
-            'wal_writer_delay': '200ms'
+            'archive_timeout': '60'  # Essential for timely archiving
         }
         
         for setting, value in settings.items():
@@ -577,11 +524,6 @@ class PostgresBackupManager:
         """
         self.logger.info(f"Performing {backup_type} backup for {db_name}...")
         
-        # Auto-promote to full backup if needed
-        if backup_type == 'incr' and self._should_force_full_backup(db_name):
-            backup_type = 'full'
-            self.logger.info("Auto-promoting to full backup per retention policy")
-        
         config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
         
         result = self.system_utils.execute_as_postgres_user(
@@ -594,31 +536,7 @@ class PostgresBackupManager:
         error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
         return False, f"{backup_type.capitalize()} backup failed: {error_msg}"
     
-    def _should_force_full_backup(self, db_name: str) -> bool:
-        """Check if a full backup should be forced based on pgBackRest recommended policy.
-        
-        Args:
-            db_name: Database name (stanza name)
-            
-        Returns:
-            bool: True if full backup should be forced
-        """
-        try:
-            backups = self.list_backups(db_name)
-            if not backups:
-                return True  # No backups exist, force full
-            
-            # Count recent backups using recommended policy (check last 7 backups)
-            recent_backups = backups[-7:]
-            full_backup_count = sum(1 for backup in recent_backups 
-                                  if backup.get('type') == 'full')
-            
-            # Force full backup if no full backups in recent history
-            return full_backup_count == 0
-            
-        except Exception as e:
-            self.logger.warning(f"Could not determine backup policy, forcing full backup: {str(e)}")
-            return True
+
     
     def list_backups(self, db_name: str) -> List[Dict]:
         """List available backups for a database.
@@ -705,29 +623,17 @@ class PostgresBackupManager:
         return True, f"Database {db_name} restored successfully"
     
     def cleanup_old_backups(self, db_name: str, retention_count: int = None) -> Tuple[bool, str]:
-        """Apply retention policy using pgBackRest's built-in expire command.
+        """pgBackRest handles retention automatically during backup operations.
         
         Args:
             db_name: Database name (stanza name)
-            retention_count: Number of backups to keep (uses config if None)
+            retention_count: Number of backups to keep (deprecated - uses config)
             
         Returns:
             tuple: (success, message)
         """
-        self.logger.info(f"Applying retention policy for stanza {db_name}...")
-        
-        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
-        
-        # Use pgBackRest's built-in expire command which respects retention settings in config
-        result = self.system_utils.execute_as_postgres_user(
-            f"pgbackrest --config={config_file} --stanza={db_name} expire"
-        )
-        
-        if result['exit_code'] == 0:
-            return True, "Retention policy applied successfully"
-        else:
-            error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
-            return False, f"Failed to apply retention policy: {error_msg}"
+        self.logger.info(f"Retention policy for stanza {db_name} is handled automatically by pgBackRest")
+        return True, "Retention policy is applied automatically by pgBackRest during backup operations"
     
     def health_check(self, db_name: str) -> Tuple[bool, str, Dict]:
         """Perform a comprehensive health check of the backup system.

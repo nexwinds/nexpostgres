@@ -48,7 +48,7 @@ class DatabaseService:
         """
         pg_manager = PostgresManager(ssh)
         
-        if pg_manager.check_postgres_installed():
+        if pg_manager.is_installed():
             return pg_manager
         return None
     

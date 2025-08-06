@@ -111,7 +111,7 @@ def add():
                         })
                         
                         # Check if PostgreSQL is already installed
-                        if not pg_manager.check_postgres_installed():
+                        if not pg_manager.is_installed():
                             progress_queues[queue_key].put({
                                 'step': 'installing',
                                 'message': 'Installing PostgreSQL packages...',
@@ -120,8 +120,8 @@ def add():
                             
                             # Use streaming installation with terminal logs
                             install_success, install_message = pg_manager.install_postgres_with_streaming(
-                                postgres_version, log_terminal_output
-                            )
+                                 postgres_version, log_terminal_output
+                             )
                             if not install_success:
                                 progress_queues[queue_key].put({
                                     'step': 'error',
