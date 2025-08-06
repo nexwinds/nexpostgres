@@ -212,7 +212,7 @@ class PostgresBackupManager:
         return True, "pgBackRest configuration created successfully"
     
     def create_stanza_config(self, db_name: str, data_directory: str) -> Tuple[bool, str]:
-        """Create stanza configuration for a database.
+        """Create stanza configuration for a database, replacing existing if present.
         
         Args:
             db_name: Database name (stanza name)
@@ -223,27 +223,57 @@ class PostgresBackupManager:
         """
         self.logger.info(f"Creating stanza configuration for {db_name}...")
         
+        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+        
+        # Read existing config file
+        read_result = self.ssh.execute_command(f"sudo cat {config_file} 2>/dev/null || echo ''")
+        existing_config = read_result.get('stdout', '')
+        
+        # Remove existing stanza section if present
+        lines = existing_config.split('\n')
+        new_lines = []
+        in_target_stanza = False
+        
+        for line in lines:
+            line_stripped = line.strip()
+            # Check if this is the start of our target stanza
+            if line_stripped == f'[{db_name}]':
+                in_target_stanza = True
+                continue
+            # Check if this is the start of a different stanza
+            elif line_stripped.startswith('[') and line_stripped.endswith(']') and line_stripped != f'[{db_name}]':
+                in_target_stanza = False
+            
+            # Only keep lines that are not in our target stanza
+            if not in_target_stanza:
+                new_lines.append(line)
+        
+        # Add the new stanza configuration
         stanza_config = f"\n[{db_name}]\n"
         stanza_config += f"pg1-path={data_directory}\n"
         stanza_config += "pg1-port=5432\n"
         
-        # Append to main config file
-        config_file = os.path.join(PostgresConstants.PGBACKREST['config_dir'], 'pgbackrest.conf')
+        # Combine existing config (without old stanza) with new stanza
+        final_config = '\n'.join(new_lines).rstrip() + stanza_config
         
-        # Create temporary file with stanza config
-        temp_file = os.path.join(tempfile.gettempdir(), 'stanza_config.conf')
+        # Create temporary file with complete config
+        temp_file = os.path.join(tempfile.gettempdir(), 'pgbackrest_complete.conf')
         with open(temp_file, 'w') as f:
-            f.write(stanza_config)
+            f.write(final_config)
         
-        # Upload and append
-        remote_temp_file = '/tmp/stanza_config.conf'
+        # Upload and replace config file
+        remote_temp_file = '/tmp/pgbackrest_complete.conf'
         upload_result = self.ssh.upload_file(temp_file, remote_temp_file)
         if not upload_result:
-            return False, "Failed to upload stanza configuration"
+            return False, "Failed to upload pgBackRest configuration"
         
-        append_result = self.ssh.execute_command(f"sudo tee -a {config_file} < {remote_temp_file}")
-        if append_result['exit_code'] != 0:
-            return False, f"Failed to append stanza config: {append_result.get('stderr', 'Unknown error')}"
+        replace_result = self.ssh.execute_command(f"sudo cp {remote_temp_file} {config_file}")
+        if replace_result['exit_code'] != 0:
+            return False, f"Failed to update pgBackRest config: {replace_result.get('stderr', 'Unknown error')}"
+        
+        # Set proper permissions
+        self.ssh.execute_command(f"sudo chown postgres:postgres {config_file}")
+        self.ssh.execute_command(f"sudo chmod 640 {config_file}")
         
         # Clean up local temp file
         try:
@@ -254,6 +284,7 @@ class PostgresBackupManager:
         # Clean up remote temp file
         self.ssh.execute_command(f"rm -f {remote_temp_file}")
         
+        self.logger.info(f"Stanza configuration for {db_name} created/updated successfully")
         return True, f"Stanza configuration for {db_name} created successfully"
     
     def cleanup_corrupted_stanza_files(self, db_name: str) -> Tuple[bool, str]:
@@ -616,10 +647,13 @@ class PostgresBackupManager:
             restore_cmd += f" --set={backup_label}"
         
         # Perform restore
+        self.logger.info(f"Executing restore command: {restore_cmd}")
         result = self.system_utils.execute_as_postgres_user(restore_cmd)
         
         if result['exit_code'] != 0:
-            return False, f"Restore failed: {result.get('stderr', 'Unknown error')}"
+            error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
+            self.logger.error(f"Restore command failed with exit code {result['exit_code']}: {error_msg}")
+            return False, f"Restore failed: {error_msg}"
         
         # Start PostgreSQL
         success, message = self.system_utils.start_service('postgresql')

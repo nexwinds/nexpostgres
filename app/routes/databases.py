@@ -226,19 +226,22 @@ def add_database_user(database_id):
     ).first_or_404()
     
     if request.method == 'GET':
-        return render_template('databases/add_user.html', database=database)
+        # Get permission combinations for the UI
+        permission_combinations = PermissionManager.get_permission_combinations()
+        return render_template('databases/add_user.html', 
+                             database=database,
+                             permission_combinations=permission_combinations)
     
     # POST request - process form
     data = request.form.to_dict()
     
     # Validate required fields
-    required_fields = ['username', 'permission_level', 'password']
+    required_fields = ['username', 'permission_combination', 'password']
     fields_valid, field_errors = UnifiedValidationService.validate_required_fields(data, required_fields)
     
     # Validate individual fields
     validations = [
-        UnifiedValidationService.validate_username(data.get('username', '')),
-            UnifiedValidationService.validate_permission_level(data.get('permission_level', ''))
+        UnifiedValidationService.validate_username(data.get('username', ''))
     ]
     
     if not fields_valid:
@@ -261,12 +264,25 @@ def add_database_user(database_id):
         flash(password_error, 'error')
         return redirect(url_for('databases.add_database_user', database_id=database_id))
     
-    # Create user on server
+    # First create the user
     success, message = DatabaseService.execute_with_postgres(
         database.server,
         'User creation',
         DatabaseService.create_user_operation,
-        data['username'], password, database.name, data['permission_level']
+        data['username'], password, database.name, 'no_access'  # Create with no permissions initially
+    )
+    
+    if not success:
+        flash(message, 'error')
+        return redirect(url_for('databases.add_database_user', database_id=database_id))
+    
+    # Then grant the selected permissions
+    permissions = PermissionManager.get_permissions_for_combination(data['permission_combination'])
+    success, message = DatabaseService.execute_with_postgres(
+        database.server,
+        'Permission assignment',
+        DatabaseService.grant_individual_permissions_operation,
+        data['username'], password, database.name, permissions
     )
     
     if not success:

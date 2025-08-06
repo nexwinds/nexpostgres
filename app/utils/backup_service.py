@@ -847,7 +847,7 @@ class BackupRestoreService:
             # Create backup stanza on target server for the source database
             def create_stanza_operation(pg_manager):
                 # For S3 restore, we need to create the stanza to access S3 backups
-                data_dir = pg_manager.get_data_directory()
+                data_dir = pg_manager.config_manager.get_data_directory()
                 if not data_dir:
                     return False, "Could not determine PostgreSQL data directory"
                 

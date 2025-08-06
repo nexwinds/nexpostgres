@@ -28,14 +28,48 @@
                 <div class="form-text">Username must contain only lowercase letters, numbers, and underscores, and must start with a letter.</div>
             </div>
             
-            <div class="mb-3">
-                <label for="permission_level" class="form-label">Permission Level</label>
-                <select class="form-select" id="permission_level" name="permission_level" required>
-                    <option value="read_write">Read and Write</option>
-                    <option value="read_only">Read-only</option>
-                    <option value="no_access">No Access (Disabled)</option>
-                </select>
-                <div class="form-text">The level of access this user will have to the database.</div>
+            <div class="mb-4">
+                <label class="form-label">Database Permissions</label>
+                <div class="form-text mb-3">Select the appropriate permission level for this user:</div>
+                
+                <!-- Permission Setup -->
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h6 class="mb-0"><i class="fas fa-shield-alt me-2"></i>Permission Setup</h6>
+                    </div>
+                    <div class="card-body">
+                        {% for combo in permission_combinations %}
+                        <div class="form-check mb-3 p-3 border rounded permission-option" 
+                             {% if loop.first %}style="background-color: #f8fff9; border-color: #28a745 !important;"{% endif %}>
+                            <input class="form-check-input" type="radio" name="permission_combination" 
+                                   id="combo_{{ combo.value }}" value="{{ combo.value }}" required
+                                   {% if loop.first %}checked{% endif %}>
+                            <label class="form-check-label w-100" for="combo_{{ combo.value }}">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1">
+                                        <h6 class="mb-1">{{ combo.label }}</h6>
+                                        <p class="text-muted mb-2">{{ combo.description }}</p>
+                                        <div class="permission-details">
+                                            <strong>Allowed actions:</strong>
+                                            {% set allowed_actions = [] %}
+                                            {% for perm, enabled in combo.permissions.items() %}
+                                                {% if enabled %}
+                                                    {% set _ = allowed_actions.append(perm.title().replace('_', ' ')) %}
+                                                {% endif %}
+                                            {% endfor %}
+                                            {% if allowed_actions %}
+                                                <span class="text-success">{{ allowed_actions | join(', ') }}</span>
+                                            {% else %}
+                                                <span class="text-danger">No permissions granted</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
             </div>
             
             <div class="mb-3">
@@ -58,6 +92,31 @@
         </form>
     </div>
 </div>
+
+<style>
+.permission-option {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.permission-option:hover {
+    background-color: #f8f9fa;
+    border-color: #007bff !important;
+}
+
+.permission-option input[type="radio"]:checked + label {
+    color: #155724;
+}
+
+.permission-details ul {
+    margin-left: 1rem;
+}
+
+.permission-details li {
+    font-size: 0.9em;
+    margin-bottom: 0.25rem;
+}
+</style>
 
 <script>
     // Generate random password of 28 characters that meets validation requirements
@@ -90,6 +149,25 @@
     // Generate password on page load
     document.addEventListener("DOMContentLoaded", function() {
         generateUserPassword();
+        
+        // Add click handlers for permission options
+        document.querySelectorAll('.permission-option').forEach(option => {
+            option.addEventListener('click', function() {
+                const radio = this.querySelector('input[type="radio"]');
+                if (radio) {
+                    radio.checked = true;
+                    
+                    // Update visual selection
+                    document.querySelectorAll('.permission-option').forEach(opt => {
+                        opt.style.backgroundColor = '';
+                        opt.style.borderColor = '';
+                    });
+                    
+                    this.style.backgroundColor = '#f8fff9';
+                    this.style.borderColor = '#28a745';
+                }
+            });
+        });
     });
 </script>
 {% endblock %}
