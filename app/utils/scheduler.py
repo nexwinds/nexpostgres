@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 try:
     from flask_apscheduler import APScheduler
     scheduler = APScheduler()
@@ -14,7 +13,7 @@ except ImportError:
             return dummy_method
     scheduler = DummyScheduler()
 
-from app.models.database import BackupJob, BackupLog, db
+from app.models.database import BackupJob
 from app.utils.ssh_manager import SSHManager
 from app.utils.postgres_manager import PostgresManager
 
@@ -77,17 +76,6 @@ def execute_backup(job_id, manual=False):
         logger.error(f"Backup job {job_id} not found")
         return False, "Backup job not found"
     
-    # Create a backup log entry
-    backup_log = BackupLog(
-        backup_job_id=job.id,
-        status="in_progress",
-        backup_type=job.backup_type,
-        manual=manual
-    )
-    
-    db.session.add(backup_log)
-    db.session.commit()
-    
     success, message = False, "Initialization error"
     
     try:
@@ -105,8 +93,8 @@ def execute_backup(job_id, manual=False):
         # Setup PostgreSQL manager and execute backup
         pg_manager = PostgresManager(ssh)
         
-        # Configure pgBackRest and create stanza if needed
-        logger.info(f"Configuring pgBackRest for job {job.id}...")
+        # Configure WAL-G for backup job
+        logger.info(f"Configuring WAL-G for job {job.id}...")
         from app.utils.backup_service import BackupService
         config_result = BackupService.check_and_configure_backup(job)
         if not config_result['success']:
@@ -119,48 +107,16 @@ def execute_backup(job_id, manual=False):
         message = "Backup completed successfully" if success else f"Backup failed: {log_output}"
         logger.info(f"Backup job {job.name} (ID: {job.id}): {message}")
         
-        # If backup was successful, set the backup size based on database size and backup path
+        # Log backup completion (WAL-G handles metadata storage)
         if success:
-            try:
-                # Set the backup path
-                if job.s3_storage:
-                    # For S3 storage
-                    backup_path = f"s3://{job.s3_storage.bucket}/{job.database.name}"
-                    backup_log.backup_path = backup_path
-                    logger.info(f"Set backup path: {backup_path}")
-                else:
-                    # For local storage
-                    backup_path = f"/var/lib/pgbackrest/backup/{job.database.name}"
-                    backup_log.backup_path = backup_path
-                    logger.info(f"Set backup path: {backup_path}")
-                
-                # Get backup size from pgBackRest's native reporting
-                try:
-                    backups = pg_manager.backup_manager.list_backups(job.database.name)
-                    if backups:
-                        latest_backup = backups[-1]
-                        backup_log.size_bytes = latest_backup.get('size', 0)
-                        logger.info(f"Backup size: {backup_log.size_bytes} bytes")
-                except Exception as e:
-                    logger.warning(f"Could not retrieve backup size: {str(e)}")
-                    backup_log.size_bytes = 0  # Let pgBackRest handle size reporting
-                    
-            except Exception as e:
-                logger.warning(f"Backup execution error: {str(e)}")
-                backup_log.size_bytes = 0
+            logger.info(f"Backup completed successfully for database {job.database.name}")
     
     except Exception as e:
         success, message = False, str(e)
         logger.error(f"Error executing backup job {job.id}: {message}")
     
     finally:
-        # Update backup log
-        backup_log.status = "success" if success else "failed"
-        backup_log.end_time = datetime.utcnow()
-        backup_log.log_output = message
-        
-        # Clean up and save changes
-        db.session.commit()
+        # Clean up SSH connection
         if 'ssh' in locals() and ssh:
             ssh.disconnect()
     

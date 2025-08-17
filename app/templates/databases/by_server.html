@@ -148,9 +148,9 @@
                                     <i class="fas fa-check-circle me-1"></i> Online
                                 </span>
                                 <small class="d-block mt-1">PostgreSQL ${data.postgres_version}</small>
-                                ${data.pgbackrest_installed 
-                                    ? '<small class="d-block text-success"><i class="fas fa-shield-alt me-1"></i> pgBackRest installed</small>' 
-                                    : '<small class="d-block text-warning"><i class="fas fa-exclamation-triangle me-1"></i> pgBackRest not installed</small>'}
+                                ${data.walg_installed 
+                                    ? '<small class="d-block text-success"><i class="fas fa-shield-alt me-1"></i> WAL-G installed</small>' 
+                                    : '<small class="d-block text-warning"><i class="fas fa-exclamation-triangle me-1"></i> WAL-G not installed</small>'}
                             `;
                         } else {
                             if (data.can_install) {

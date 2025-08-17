@@ -20,19 +20,30 @@ class PostgresConstants:
     # Configuration file names
     CONFIG_FILES = {
         'postgresql_conf': 'postgresql.conf',
-        'pg_hba_conf': 'pg_hba.conf',
-        'pgbackrest_conf': 'pgbackrest.conf'
+        'pg_hba_conf': 'pg_hba.conf'
     }
     
-    # pgBackRest configuration - aligned with official recommendations
-    PGBACKREST = {
-        'config_dir': '/etc/pgbackrest',
-        'log_dir': '/var/log/pgbackrest',
-        'backup_dir': '/var/lib/pgbackrest',
-        'default_cipher_type': 'aes-256-cbc',
-        'default_retention_full': 2,
-        'default_retention_diff': 7,
-        'default_retention_incr': 14
+    # WAL-G configuration - S3-based backup solution
+    WALG = {
+        'binary_path': '/usr/local/bin/wal-g',
+        'config_dir': '/etc/wal-g',
+        'log_dir': '/var/log/wal-g',
+        'default_retention_count': 10,
+        'backup_timeout': 3600,
+        'restore_timeout': 7200,
+        'download_url': 'https://github.com/wal-g/wal-g/releases/latest/download/wal-g-pg-ubuntu-20.04-amd64.tar.gz'
+    }
+    
+    # WAL-G S3 environment variables
+    WALG_S3_ENV = {
+        'WALE_S3_PREFIX': None,  # Will be set to s3://bucket-name/postgres
+        'AWS_ACCESS_KEY_ID': None,
+        'AWS_SECRET_ACCESS_KEY': None,
+        'AWS_REGION': None,
+        'AWS_ENDPOINT': None,  # Optional for S3-compatible storage
+        'WALG_COMPRESSION_METHOD': 'lz4',
+        'WALG_DELTA_MAX_STEPS': '6',
+        'WALG_TAR_SIZE_THRESHOLD': '1073741823'
     }
     
     # Timeouts and retries
@@ -49,12 +60,14 @@ class PostgresConstants:
         'service_start_retries': 5
     }
     
-    # PostgreSQL settings - essential for pgBackRest
+    # PostgreSQL settings - essential for WAL-G
     POSTGRES_SETTINGS = {
         'archive_mode': 'on',
         'wal_level': 'replica',
         'max_wal_senders': '3',
-        'archive_timeout': '60'
+        'archive_timeout': '60',
+        'archive_command': "'wal-g wal-push %p'",
+        'restore_command': "'wal-g wal-fetch %f %p'"
     }
     
     # Default pg_hba.conf content
@@ -99,12 +112,12 @@ host    all             all             ::/0                    md5
         'debian': {
             'postgresql': 'postgresql',
             'postgresql_contrib': 'postgresql-contrib',
-            'pgbackrest': 'pgbackrest'
+            'dependencies': ['wget', 'tar', 'gzip']  # For WAL-G binary installation
         },
         'rhel': {
             'postgresql': 'postgresql-server',
             'postgresql_contrib': 'postgresql-contrib',
-            'pgbackrest': 'pgbackrest'
+            'dependencies': ['wget', 'tar', 'gzip']  # For WAL-G binary installation
         }
     }
     

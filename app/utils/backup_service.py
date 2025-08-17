@@ -1,4 +1,4 @@
-from app.models.database import BackupJob, BackupLog, PostgresDatabase, RestoreLog, S3Storage, db
+from app.models.database import BackupJob, PostgresDatabase, RestoreLog, S3Storage, db
 from app.utils.ssh_manager import SSHManager
 from app.utils.postgres_manager import PostgresManager
 from app.utils.scheduler import schedule_backup_job, execute_manual_backup
@@ -189,7 +189,13 @@ class BackupService:
             dict: {'success': bool, 'message': str}
         """
         def configure_operation(pg_manager):
-            # Configure pgBackRest based on storage type
+            # Install WAL-G if not already installed
+            if not pg_manager.backup_manager.is_walg_installed():
+                success, message = pg_manager.backup_manager.install_walg()
+                if not success:
+                    return {'success': False, 'message': f'Failed to install WAL-G: {message}'}
+            
+            # Configure WAL-G based on storage type
             if backup_job.s3_storage:
                 s3_config = {
                     'bucket': backup_job.s3_storage.bucket,
@@ -198,34 +204,19 @@ class BackupService:
                     'access_key': backup_job.s3_storage.access_key,
                     'secret_key': backup_job.s3_storage.secret_key
                 }
-                success, message = pg_manager.backup_manager.create_pgbackrest_config(s3_config, backup_job)
+                success, message = pg_manager.backup_manager.create_walg_config(s3_config, backup_job)
             else:
-                success, message = pg_manager.backup_manager.create_pgbackrest_config(None, backup_job)
+                return {'success': False, 'message': 'S3 storage configuration is required for WAL-G'}
             
             if not success:
-                return {'success': False, 'message': f'Failed to configure pgBackRest: {message}'}
+                return {'success': False, 'message': f'Failed to configure WAL-G: {message}'}
             
-            # Get PostgreSQL data directory for stanza configuration
-            data_dir = pg_manager.config_manager.get_data_directory()
-            if not data_dir:
-                return {'success': False, 'message': 'Could not determine PostgreSQL data directory'}
-            
-            # Create stanza configuration first (required for pg1-path)
-            success, message = pg_manager.backup_manager.create_stanza_config(backup_job.database.name, data_dir)
-            if not success:
-                return {'success': False, 'message': f'Failed to create stanza configuration: {message}'}
-            
-            # Create stanza if needed
-            success, message = pg_manager.backup_manager.create_stanza(backup_job.database.name)
-            if not success:
-                return {'success': False, 'message': f'Failed to create stanza: {message}'}
-            
-            # Configure PostgreSQL archiving (required for pgBackRest)
+            # Configure PostgreSQL archiving (required for WAL-G)
             success, message = pg_manager.configure_postgresql_archiving(backup_job.database.name)
             if not success:
                 return {'success': False, 'message': f'Failed to configure PostgreSQL archiving: {message}'}
             
-            return {'success': True, 'message': 'Backup system configured successfully'}
+            return {'success': True, 'message': 'WAL-G backup system configured successfully'}
         
         try:
             ssh, ssh_message = BackupService.create_ssh_connection(backup_job.database.server)
@@ -289,7 +280,7 @@ class BackupService:
     
     @staticmethod
     def build_backup_logs_query(job_id=None, status=None, days=None):
-        """Build filtered query for backup logs.
+        """Get filtered backup logs from WAL-G/S3.
         
         Args:
             job_id: Filter by backup job ID
@@ -297,21 +288,14 @@ class BackupService:
             days: Filter by number of days
             
         Returns:
-            Query: Filtered backup logs query
+            List: Filtered backup logs
         """
-        query = BackupLog.query
+        from app.utils.backup_metadata_service import BackupMetadataService
         
         if job_id:
-            query = query.filter(BackupLog.backup_job_id == job_id)
-        
-        if status:
-            query = query.filter(BackupLog.status == status)
-        
-        if days and days != 'all':
-            date_threshold = datetime.utcnow() - timedelta(days=int(days))
-            query = query.filter(BackupLog.start_time >= date_threshold)
-        
-        return query.order_by(BackupLog.start_time.desc())
+            return BackupMetadataService.get_backup_logs_for_job(job_id, status, days)
+        else:
+            return BackupMetadataService.get_all_backup_logs(job_id, status, days)
     
     @staticmethod
     def build_restore_logs_query(database_id=None, status=None, days=None):
@@ -339,7 +323,7 @@ class BackupService:
         
         return query.order_by(RestoreLog.start_time.desc())
     
-    # Removed apply_retention_policy - pgBackRest handles retention automatically during backup operations
+    # Removed apply_retention_policy - WAL-G handles retention through cleanup commands
     
     @staticmethod
     def delete_backup_job(backup_job):
@@ -352,8 +336,7 @@ class BackupService:
             tuple: (success, message)
         """
         try:
-            # Delete associated backup logs
-            BackupLog.query.filter_by(backup_job_id=backup_job.id).delete()
+            # Note: Backup logs are now stored in WAL-G/S3, no database cleanup needed
             
             # Delete the backup job
             db.session.delete(backup_job)
@@ -375,20 +358,19 @@ class BackupService:
         Returns:
             list: List of backup log dictionaries
         """
-        logs = BackupLog.query.filter_by(
-            backup_job_id=backup_job_id,
-            status='success'
-        ).order_by(BackupLog.end_time.desc()).all()
+        from app.utils.backup_metadata_service import BackupMetadataService
+        
+        logs = BackupMetadataService.get_backup_logs_for_job(backup_job_id, status='success')
         
         return [{
-            'id': log.id,
-            'status': log.status,
-            'start_time': log.start_time.strftime('%Y-%m-%d %H:%M:%S') if log.start_time else None,
-            'end_time': log.end_time.strftime('%Y-%m-%d %H:%M:%S') if log.end_time else None,
-            'backup_type': log.backup_type or 'full',
-            'size_mb': round(log.size_bytes / (1024 * 1024), 2) if log.size_bytes else None,
-            'output': log.log_output,
-            'error_message': None
+            'id': log['id'],
+            'status': log['status'],
+            'start_time': log['start_time'],
+            'end_time': log['end_time'],
+            'backup_type': log['backup_type'],
+            'size_mb': log['size_mb'],
+            'output': log['log_output'],
+            'error_message': log['error_message']
         } for log in logs]
 
 
@@ -427,17 +409,20 @@ class BackupRestoreService:
             return False, 'Selected database does not exist', None, None, None
         
         # Validate backup log if provided
-        backup_log = None
+        backup_name = None
         if backup_log_id:
-            backup_log = BackupLog.query.get(backup_log_id)
-            if not backup_log:
+            from app.utils.backup_metadata_service import BackupMetadataService
+            backup_log = BackupMetadataService.find_backup_by_name_or_time(backup_job_id, backup_name=backup_log_id)
+            if backup_log:
+                backup_name = backup_log.get('backup_name')
+            if not backup_name:
                 return False, 'Selected backup does not exist', None, None, None
         
         # Validate recovery time if using point-in-time recovery
         if use_recovery_time and not recovery_time:
             return False, 'Recovery time is required for point-in-time recovery', None, None, None
         
-        return True, 'Validation successful', backup_job, database, backup_log
+        return True, 'Validation successful', backup_job, database, backup_name
     
     @staticmethod
     def find_backup_name(backup_job, backup_log_id=None):
@@ -464,11 +449,10 @@ class BackupRestoreService:
             
             # If backup_log_id is provided, find corresponding backup
             if backup_log_id:
-                backup_log = BackupLog.query.get(backup_log_id)
+                from app.utils.backup_metadata_service import BackupMetadataService
+                backup_log = BackupMetadataService.find_backup_by_name_or_time(backup_job.id, backup_name=backup_log_id)
                 if backup_log:
-                    backup_name = BackupRestoreService._find_backup_by_time(
-                        backups, backup_log.start_time, backup_job.id
-                    )
+                    backup_name = backup_log.get('backup_name')
                     if backup_name:
                         return backup_name, backup_log_id
             
@@ -527,11 +511,10 @@ class BackupRestoreService:
             # If backup_log_id is provided, find corresponding backup
             if backup_log_id:
                 print(f"DEBUG: Looking for specific backup with log_id {backup_log_id}")
-                backup_log = BackupLog.query.get(backup_log_id)
+                from app.utils.backup_metadata_service import BackupMetadataService
+                backup_log = BackupMetadataService.find_backup_by_name_or_time(backup_job.id, backup_name=backup_log_id)
                 if backup_log:
-                    backup_name = BackupRestoreService._find_backup_by_time(
-                        backups, backup_log.start_time, backup_job.id
-                    )
+                    backup_name = backup_log.get('backup_name')
                     if backup_name:
                         print(f"DEBUG: Found matching backup by time: {backup_name}")
                         return backup_name, backup_log_id
@@ -584,17 +567,11 @@ class BackupRestoreService:
             if not backup_time:
                 return None
             
-            potential_logs = BackupLog.query.filter(
-                BackupLog.backup_job_id == backup_job_id,
-                BackupLog.status == 'success',
-                BackupLog.start_time >= backup_time - timedelta(seconds=60),
-                BackupLog.start_time <= backup_time + timedelta(seconds=60)
-            ).all()
+            from app.utils.backup_metadata_service import BackupMetadataService
+            backup_log = BackupMetadataService.find_backup_by_name_or_time(backup_job_id, backup_time=backup_time)
             
-            if potential_logs:
-                closest_log = min(potential_logs, 
-                    key=lambda log: abs((log.start_time - backup_time).total_seconds()))
-                return closest_log.id
+            if backup_log:
+                return backup_log['id']
             
         except Exception:
             pass
@@ -694,12 +671,12 @@ class BackupRestoreService:
                 ssh.disconnect()
     
     @staticmethod
-    def create_restore_log(database_id, backup_log_id, recovery_time, use_recovery_time):
+    def create_restore_log(database_id, backup_name, recovery_time, use_recovery_time):
         """Create restore log entry.
         
         Args:
             database_id: Database ID
-            backup_log_id: Backup log ID
+            backup_name: WAL-G backup name
             recovery_time: Recovery time string
             use_recovery_time: Whether using point-in-time recovery
             
@@ -708,7 +685,7 @@ class BackupRestoreService:
         """
         restore_log = RestoreLog(
             database_id=database_id,
-            backup_log_id=backup_log_id if backup_log_id else None,
+            backup_name=backup_name if backup_name else None,
             restore_point=datetime.fromisoformat(recovery_time) if recovery_time and use_recovery_time else None,
             status='in_progress'
         )
@@ -719,24 +696,22 @@ class BackupRestoreService:
         return restore_log
     
     @staticmethod
-    def _execute_restore_operation(database, backup_name, recovery_time, restore_log, stanza_name=None):
-        """Execute restore operation.
+    def _execute_restore_operation(database, backup_name, recovery_time, restore_log):
+        """Execute restore operation using WAL-G.
         
         Args:
             database: Database object
             backup_name: Name of backup to restore
             recovery_time: Recovery time (optional)
             restore_log: RestoreLog object to update
-            stanza_name: Stanza name to use for restore (defaults to database.name)
             
         Returns:
             tuple: (success, message)
         """
         def restore_operation(pg_manager):
-            # Use stanza_name if provided, otherwise fall back to database.name
-            restore_stanza = stanza_name or database.name
+            # WAL-G doesn't use stanzas, just restore directly
             success, log_output = pg_manager.restore_database(
-                restore_stanza, backup_name
+                backup_name
             )
             
             # Update restore log
@@ -745,7 +720,7 @@ class BackupRestoreService:
             restore_log.log_output = log_output
             
             # Try to find actual backup used from log output
-            if success and backup_name and "restore backup set" in log_output:
+            if success and backup_name and "backup-fetch" in log_output:
                 BackupRestoreService._update_restore_log_with_actual_backup(
                     restore_log, log_output
                 )
@@ -788,21 +763,9 @@ class BackupRestoreService:
             if backup_set_match:
                 actual_backup_name = backup_set_match.group(1)
                 
-                # If we don't have a backup_log_id yet, try to find one
-                if not restore_log.backup_log_id:
-                    backup_time = BackupRestoreService._parse_backup_name_timestamp(actual_backup_name)
-                    if backup_time:
-                        # Find matching backup log
-                        potential_logs = BackupLog.query.filter(
-                            BackupLog.status == 'success',
-                            BackupLog.start_time >= backup_time - timedelta(seconds=60),
-                            BackupLog.start_time <= backup_time + timedelta(seconds=60)
-                        ).all()
-                        
-                        if potential_logs:
-                            closest_log = min(potential_logs, 
-                                key=lambda log: abs((log.start_time - backup_time).total_seconds()))
-                            restore_log.backup_log_id = closest_log.id
+                # If we don't have a backup_name yet, set it from the actual backup used
+                if not restore_log.backup_name:
+                    restore_log.backup_name = actual_backup_name
         except Exception:
             pass  # Ignore errors in this optional enhancement
     
@@ -830,7 +793,7 @@ class BackupRestoreService:
             print(f"DEBUG: Target server SSH key length: {len(database.server.ssh_key_content) if database.server.ssh_key_content else 0}")
             print(f"DEBUG: Source database: {backup_job.database.name} on server: {backup_job.database.server.name}")
             
-            # Always configure pgBackRest on target server for S3 restore (disaster recovery scenario)
+            # Always configure WAL-G on target server for S3 restore (disaster recovery scenario)
             # This ensures we can restore from S3 even if the original server is down
             print("DEBUG: Configuring S3 restore on target server (disaster recovery mode)")
             s3_storage = backup_job.s3_storage
@@ -844,37 +807,32 @@ class BackupRestoreService:
             
             print(f"DEBUG: Backup configuration successful: {config_result['message']}")
             
-            # Create backup stanza on target server for the source database
-            def create_stanza_operation(pg_manager):
-                # For S3 restore, we need to create the stanza to access S3 backups
+            # Configure WAL-G on target server for the source database
+            def configure_walg_operation(pg_manager):
+                # For S3 restore, we need to configure WAL-G to access S3 backups
                 data_dir = pg_manager.config_manager.get_data_directory()
                 if not data_dir:
                     return False, "Could not determine PostgreSQL data directory"
                 
-                print(f"DEBUG: Creating stanza config for database '{backup_job.database.name}' with data_dir '{data_dir}'")
+                print(f"DEBUG: Configuring WAL-G for database '{backup_job.database.name}' with data_dir '{data_dir}'")
                 
-                # Create stanza configuration
-                success, message = pg_manager.backup_manager.create_stanza_config(backup_job.database.name, data_dir)
-                if not success:
-                    print(f"DEBUG: Stanza config creation failed: {message}")
-                    return False, f"Stanza config creation failed: {message}"
+                # WAL-G configuration is already handled by check_and_configure_backup
+                # Just verify WAL-G is properly installed and configured
+                if not pg_manager.backup_manager.is_walg_installed():
+                    print("DEBUG: WAL-G not found, installing...")
+                    success, message = pg_manager.backup_manager.install_walg()
+                    if not success:
+                        print(f"DEBUG: WAL-G installation failed: {message}")
+                        return False, f"WAL-G installation failed: {message}"
                 
-                print("DEBUG: Stanza config created successfully, now creating stanza")
-                
-                # Create the stanza (this will access S3 to verify)
-                success, stanza_result = pg_manager.backup_manager.create_stanza(backup_job.database.name)
-                if not success:
-                    print(f"DEBUG: Stanza creation failed: {stanza_result}")
-                    return False, f"Stanza creation failed: {stanza_result}"
-                
-                print(f"DEBUG: Stanza created successfully: {stanza_result}")
-                return True, stanza_result
+                print("DEBUG: WAL-G configured successfully for S3 restore")
+                return True, "WAL-G configured for S3 restore"
             
-            success, stanza_message = BackupService.execute_with_postgres(
-                database.server, 'Backup stanza creation', create_stanza_operation
+            success, walg_message = BackupService.execute_with_postgres(
+                database.server, 'WAL-G configuration', configure_walg_operation
             )
             if not success:
-                return False, f'Failed to create backup stanza on target server: {stanza_message}. This is required for S3 restores.'
+                return False, f'Failed to configure WAL-G on target server: {walg_message}. This is required for S3 restores.'
             
 
             
@@ -886,18 +844,17 @@ class BackupRestoreService:
             # Create restore log
             restore_log = self.create_restore_log(
                 database.id, 
-                updated_backup_log_id, 
+                backup_name, 
                 recovery_time, 
                 use_recovery_time
             )
             
-            # Execute restore using the source database name as stanza name
+            # Execute restore using WAL-G
             success, message = self._execute_restore_operation(
                 database, 
                 backup_name, 
                 recovery_time, 
-                restore_log,
-                stanza_name=backup_job.database.name
+                restore_log
             )
             
             return success, message

@@ -99,30 +99,15 @@ class BackupJob(BaseModel):
     enabled = db.Column(db.Boolean, default=True)
     s3_storage_id = db.Column(db.Integer, db.ForeignKey('s3_storage.id'), nullable=False)
     retention_count = db.Column(db.Integer, default=7)  # Maximum number of backups to keep
-    encryption_key = db.Column(db.String(255), nullable=True)  # Base64-encoded encryption key for pgBackRest
-    
-    # Relationships
-    logs = db.relationship('BackupLog', backref='backup_job', lazy=True, cascade="all, delete-orphan")
+    encryption_key = db.Column(db.String(255), nullable=True)  # Base64-encoded encryption key for WAL-G
     
     def __repr__(self):
         return f'<BackupJob {self.name} for database {self.database_id}>'
 
-class BackupLog(BaseModel):
-    backup_job_id = db.Column(db.Integer, db.ForeignKey('backup_job.id', ondelete='CASCADE'), nullable=False)
-    start_time = db.Column(db.DateTime, default=datetime.utcnow)
-    end_time = db.Column(db.DateTime)
-    status = db.Column(db.String(20))  # success, failed, in_progress
-    backup_type = db.Column(db.String(20))  # full or incr
-    size_bytes = db.Column(db.BigInteger)
-    log_output = db.Column(db.Text)
-    manual = db.Column(db.Boolean, default=False)
-    backup_path = db.Column(db.String(255))  # Path to the backup files
-    
-    # Relationships
-    restore_logs = db.relationship('RestoreLog', backref='backup_log', lazy=True)
+
 
 class RestoreLog(BaseModel):
-    backup_log_id = db.Column(db.Integer, db.ForeignKey('backup_log.id'), nullable=True)
+    backup_name = db.Column(db.String(255), nullable=True)  # WAL-G backup name instead of backup_log_id
     database_id = db.Column(db.Integer, db.ForeignKey('postgres_database.id', ondelete='CASCADE'), nullable=False)
     start_time = db.Column(db.DateTime, default=datetime.utcnow)
     end_time = db.Column(db.DateTime)

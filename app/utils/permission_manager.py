@@ -132,7 +132,7 @@ class PermissionManager:
                 return combo.value, True
         
         # If no exact match, return closest match or custom
-        logger.info(f"DEBUG: No exact match found, returning custom")
+        logger.info("DEBUG: No exact match found, returning custom")
         return "custom", False
     
     @classmethod

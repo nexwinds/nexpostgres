@@ -91,20 +91,20 @@
                 <tr>
                     {% if not backup_job %}
                     <td>
-                        <a href="{{ url_for('backups.backup_logs', backup_job_id=log.backup_job_id) }}">{{ log.backup_job.name }}</a>
+                        <a href="{{ url_for('backups.backup_logs', backup_job_id=log.backup_job_id) }}">{{ log.backup_job_name }}</a>
                     </td>
                     {% endif %}
-                    <td>{{ log.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                    <td>{{ log.start_time }}</td>
                     <td>
                         {% if log.end_time %}
-                        {{ log.end_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                        {{ log.end_time }}
                         {% else %}
                         <span class="text-muted">-</span>
                         {% endif %}
                     </td>
                     <td>
-                        {% if log.end_time %}
-                        {{ (log.end_time - log.start_time).total_seconds()|round|int }} seconds
+                        {% if log.end_time and log.start_time %}
+                        {{ log.duration }} seconds
                         {% else %}
                         <span class="text-muted">-</span>
                         {% endif %}
@@ -130,7 +130,7 @@
                         {% endif %}
                     </td>
                     <td>
-                        <a href="{{ url_for('backups.view_log', id=log.id) }}" class="btn btn-sm btn-outline-info">
+                        <a href="{{ url_for('backups.view_log', backup_id=log.backup_job_id ~ '_' ~ log.backup_name) }}" class="btn btn-sm btn-outline-info">
                             <i class="fas fa-file-alt"></i> Details
                         </a>
                     </td>

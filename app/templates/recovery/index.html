@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+
+{% block title %}Database Recovery{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        <i class="fas fa-database"></i>
+                        Database Recovery
+                    </h3>
+                    <p class="card-text text-muted">Select a database backup and target server to initiate recovery</p>
+                </div>
+                <div class="card-body">
+                    <form id="recoveryForm">
+                        <!-- Database Selection -->
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <label for="databaseSelect" class="form-label">
+                                    <i class="fas fa-database"></i> Select Database
+                                </label>
+                                <select class="form-select" id="databaseSelect" required>
+                                    <option value="">Choose a database...</option>
+                                    {% for database in databases %}
+                                    <option value="{{ database }}">{{ database }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="serverSelect" class="form-label">
+                                    <i class="fas fa-server"></i> Target Server
+                                </label>
+                                <select class="form-select" id="serverSelect" required>
+                                    <option value="">Choose target server...</option>
+                                    {% for server in servers %}
+                                    <option value="{{ server.id }}">{{ server.name }} ({{ server.host }})</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Backup Selection -->
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <label class="form-label">
+                                    <i class="fas fa-archive"></i> Available Backups
+                                </label>
+                                <div id="backupsList" class="border rounded p-3" style="min-height: 200px; background-color: #f8f9fa;">
+                                    <div class="text-center text-muted">
+                                        <i class="fas fa-info-circle"></i>
+                                        Select a database to view available backups
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Recovery Actions -->
+                        <div class="row">
+                            <div class="col-12">
+                                <button type="submit" class="btn btn-primary" id="initiateRecovery" disabled>
+                                    <i class="fas fa-play"></i> Initiate Recovery
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="resetForm()">
+                                    <i class="fas fa-undo"></i> Reset
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recovery Status Modal -->
+    <div class="modal fade" id="recoveryStatusModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-cogs"></i> Recovery Status
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="recoveryStatusContent">
+                        <div class="text-center">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Initiating recovery...</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.backup-item {
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 1rem;
+    margin-bottom: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.backup-item:hover {
+    border-color: #0d6efd;
+    background-color: #f8f9ff;
+}
+
+.backup-item.selected {
+    border-color: #0d6efd;
+    background-color: #e7f1ff;
+}
+
+.backup-meta {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+.backup-size {
+    font-weight: 600;
+    color: #198754;
+}
+</style>
+
+<script>
+let selectedBackup = null;
+
+// Load backups when database is selected
+document.getElementById('databaseSelect').addEventListener('change', function() {
+    const databaseName = this.value;
+    const backupsList = document.getElementById('backupsList');
+    const initiateButton = document.getElementById('initiateRecovery');
+    
+    selectedBackup = null;
+    initiateButton.disabled = true;
+    
+    if (!databaseName) {
+        backupsList.innerHTML = `
+            <div class="text-center text-muted">
+                <i class="fas fa-info-circle"></i>
+                Select a database to view available backups
+            </div>
+        `;
+        return;
+    }
+    
+    // Show loading
+    backupsList.innerHTML = `
+        <div class="text-center">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading backups...</p>
+        </div>
+    `;
+    
+    // Fetch backups
+    fetch(`/recovery/api/database/${databaseName}/backups`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                displayBackups(data.backups);
+            } else {
+                backupsList.innerHTML = `
+                    <div class="text-center text-danger">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        Error loading backups: ${data.error}
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            backupsList.innerHTML = `
+                <div class="text-center text-danger">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    Error loading backups
+                </div>
+            `;
+        });
+});
+
+function displayBackups(backups) {
+    const backupsList = document.getElementById('backupsList');
+    
+    if (backups.length === 0) {
+        backupsList.innerHTML = `
+            <div class="text-center text-muted">
+                <i class="fas fa-info-circle"></i>
+                No backups available for this database
+            </div>
+        `;
+        return;
+    }
+    
+    let html = '';
+    backups.forEach(backup => {
+        const size = formatBytes(backup.size);
+        const date = new Date(backup.last_modified).toLocaleString();
+        
+        html += `
+            <div class="backup-item" onclick="selectBackup('${backup.key}', this)">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <h6 class="mb-1">
+                            <i class="fas fa-archive"></i> ${backup.backup_name}
+                        </h6>
+                        <div class="backup-meta">
+                            <span><i class="fas fa-calendar"></i> ${date}</span>
+                            <span class="ms-3"><i class="fas fa-server"></i> ${backup.server_name}</span>
+                        </div>
+                    </div>
+                    <div class="text-end">
+                        <div class="backup-size">${size}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    
+    backupsList.innerHTML = html;
+}
+
+function selectBackup(backupKey, element) {
+    // Remove previous selection
+    document.querySelectorAll('.backup-item').forEach(item => {
+        item.classList.remove('selected');
+    });
+    
+    // Select current backup
+    element.classList.add('selected');
+    selectedBackup = backupKey;
+    
+    // Enable initiate button if server is also selected
+    const serverSelect = document.getElementById('serverSelect');
+    const initiateButton = document.getElementById('initiateRecovery');
+    initiateButton.disabled = !selectedBackup || !serverSelect.value;
+}
+
+// Enable/disable initiate button when server is selected
+document.getElementById('serverSelect').addEventListener('change', function() {
+    const initiateButton = document.getElementById('initiateRecovery');
+    initiateButton.disabled = !selectedBackup || !this.value;
+});
+
+// Handle form submission
+document.getElementById('recoveryForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const databaseName = document.getElementById('databaseSelect').value;
+    const serverId = document.getElementById('serverSelect').value;
+    
+    if (!selectedBackup || !databaseName || !serverId) {
+        alert('Please select a database, backup, and target server');
+        return;
+    }
+    
+    // Show status modal
+    const modal = new bootstrap.Modal(document.getElementById('recoveryStatusModal'));
+    modal.show();
+    
+    // Initiate recovery
+    fetch('/recovery/initiate', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            database_name: databaseName,
+            backup_key: selectedBackup,
+            target_server_id: serverId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showRecoveryStatus(data.recovery_id);
+        } else {
+            document.getElementById('recoveryStatusContent').innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    Error: ${data.error}
+                </div>
+            `;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        document.getElementById('recoveryStatusContent').innerHTML = `
+            <div class="alert alert-danger">
+                <i class="fas fa-exclamation-triangle"></i>
+                Error initiating recovery
+            </div>
+        `;
+    });
+});
+
+function showRecoveryStatus(recoveryId) {
+    const statusContent = document.getElementById('recoveryStatusContent');
+    
+    function updateStatus() {
+        fetch(`/recovery/status/${recoveryId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const status = data.status;
+                    let statusClass = 'info';
+                    let statusIcon = 'fas fa-info-circle';
+                    
+                    if (status.status === 'completed') {
+                        statusClass = 'success';
+                        statusIcon = 'fas fa-check-circle';
+                    } else if (status.status === 'failed') {
+                        statusClass = 'danger';
+                        statusIcon = 'fas fa-exclamation-triangle';
+                    } else if (status.status === 'running') {
+                        statusClass = 'warning';
+                        statusIcon = 'fas fa-cogs';
+                    }
+                    
+                    statusContent.innerHTML = `
+                        <div class="alert alert-${statusClass}">
+                            <h6><i class="${statusIcon}"></i> Recovery Status: ${status.status.toUpperCase()}</h6>
+                            <p><strong>Recovery ID:</strong> ${status.recovery_id}</p>
+                            <p><strong>Database:</strong> ${status.database_name}</p>
+                            <p><strong>Target Server:</strong> ${status.server_name}</p>
+                            <p><strong>Backup:</strong> ${status.backup_name}</p>
+                            ${status.start_time ? `<p><strong>Started:</strong> ${new Date(status.start_time).toLocaleString()}</p>` : ''}
+                            ${status.end_time ? `<p><strong>Completed:</strong> ${new Date(status.end_time).toLocaleString()}</p>` : ''}
+                            ${status.error_details ? `<div class="mt-2"><strong>Error:</strong><br><code>${status.error_details}</code></div>` : ''}
+                        </div>
+                    `;
+                    
+                    // Continue polling if still running
+                    if (status.status === 'running' || status.status === 'initiated') {
+                        setTimeout(updateStatus, 3000);
+                    }
+                } else {
+                    statusContent.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            Error getting status: ${data.error}
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                statusContent.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        Error getting recovery status
+                    </div>
+                `;
+            });
+    }
+    
+    updateStatus();
+}
+
+function resetForm() {
+    document.getElementById('recoveryForm').reset();
+    selectedBackup = null;
+    document.getElementById('initiateRecovery').disabled = true;
+    document.getElementById('backupsList').innerHTML = `
+        <div class="text-center text-muted">
+            <i class="fas fa-info-circle"></i>
+            Select a database to view available backups
+        </div>
+    `;
+}
+
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+</script>
+{% endblock %}

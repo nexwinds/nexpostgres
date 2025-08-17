@@ -5,7 +5,7 @@
 [![Flask](https://img.shields.io/badge/flask-2.3.3-green.svg)](https://flask.palletsprojects.com/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 
-NEXPOSTGRES is a comprehensive, web-based PostgreSQL database management platform for managing PostgreSQL databases on remote Ubuntu VPS servers over SSH. It provides enterprise-grade backup automation using pgBackRest with scheduling, monitoring, and point-in-time recovery.
+NEXPOSTGRES is a comprehensive, web-based PostgreSQL database management platform for managing PostgreSQL databases on remote Ubuntu VPS servers over SSH. It provides enterprise-grade backup automation using WAL-G with scheduling, monitoring, and point-in-time recovery.
 
 ## 🚀 Key Benefits
 
@@ -14,7 +14,7 @@ NEXPOSTGRES is a comprehensive, web-based PostgreSQL database management platfor
 - **💾 Intelligent Backups** - Automated full, incremental, and differential strategies
 - **🔒 Enterprise Security** - AES-256-CBC encryption, SSH key authentication
 - **⚡ Lightweight** - Minimal resource consumption on production servers
-- **🔄 Point-in-Time Recovery** - Restore to any point in time with pgBackRest
+- **🔄 Point-in-Time Recovery** - Restore to any point in time with WAL-G
 
 ## ✨ Features
 
@@ -25,7 +25,7 @@ NEXPOSTGRES is a comprehensive, web-based PostgreSQL database management platfor
 
 ### 🖥️ VPS Server Management
 - Multi-server support for unlimited Ubuntu VPS servers
-- Automated PostgreSQL and pgBackRest installation
+- Automated PostgreSQL and WAL-G installation
 - Support for PostgreSQL versions 15, 16, and 17
 - Real-time health monitoring and SSH connection testing
 
@@ -79,7 +79,7 @@ NEXPOSTGRES is a comprehensive, web-based PostgreSQL database management platfor
 
 ### PostgreSQL Compatibility
 - **Versions**: PostgreSQL 15.x, 16.x, 17.x (17.x recommended)
-- **pgBackRest**: Automatically installed (version 2.50+)
+- **WAL-G**: Automatically installed (latest version)
 - **Extensions**: None required (base installation sufficient)
 
 ## 🚀 Installation
@@ -234,7 +234,7 @@ chmod 600 app/ssh_keys/*.pem
 
 4. **Test connection and initialize**
    - Click "Test Connection" to verify SSH access
-   - NEXPOSTGRES will automatically install PostgreSQL and pgBackRest
+   - NEXPOSTGRES will automatically install PostgreSQL and WAL-G
 
 ### Managing PostgreSQL Databases
 
@@ -342,11 +342,11 @@ sudo systemctl start postgresql
 
 **"Backup Job Failed":**
 ```bash
-# Check pgBackRest configuration
-sudo -u postgres pgbackrest --stanza=mydb check
+# Check WAL-G configuration
+sudo -u postgres wal-g backup-list
 
-# View logs
-sudo tail -f /var/log/pgbackrest/pgbackrest.log
+# View backup logs
+sudo tail -f /var/log/walg/walg.log
 ```
 
 **"S3 Access Denied":**
@@ -391,7 +391,7 @@ docker-compose up -d
 - **Web Interface**: Flask application with responsive design
 - **SSH Manager**: Secure connections using Paramiko with key-based auth
 - **Database Manager**: PostgreSQL operations and connection management
-- **Backup Service**: pgBackRest integration with S3 storage
+- **Backup Service**: WAL-G integration with S3 storage
 - **Scheduler**: APScheduler for cron-like job scheduling
 - **Security**: AES-256-CBC encryption and secure credential storage
 
@@ -399,7 +399,7 @@ docker-compose up -d
 1. User Interaction → Web Interface → Authentication
 2. Server Management → SSH Manager → Remote VPS
 3. Database Operations → PostgreSQL Manager → Database
-4. Backup Jobs → Scheduler → pgBackRest → S3 Storage
+4. Backup Jobs → Scheduler → WAL-G → S3 Storage
 5. Monitoring → Log Manager → Dashboard Updates
 
 ## 🔒 Security Best Practices
@@ -535,7 +535,7 @@ NEXPOSTGRES is licensed under the **GPLv3 License**.
 ### Third-Party Dependencies
 - **Flask** (BSD-3-Clause) - Web framework
 - **PostgreSQL** (PostgreSQL License) - Database system
-- **pgBackRest** (MIT) - Backup solution
+- **WAL-G** (Apache 2.0) - Backup solution
 - **Docker** (Apache 2.0) - Containerization
 
 ---

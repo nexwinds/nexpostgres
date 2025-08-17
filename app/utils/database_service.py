@@ -217,7 +217,7 @@ class DatabaseService:
                         # No need to override with legacy mapping - trust the real database state
                         
                         user_individual_permissions[username] = individual_perms
-        except Exception as e:
+        except Exception:
             # Return empty dict on error
             pass
         finally:
@@ -290,26 +290,32 @@ class DatabaseService:
             if not ssh:
                 return {
                     'success': False,
-                    'message': 'Failed to connect to server via SSH'
+                    'message': 'Failed to connect to server via SSH',
+                    'can_install': False
                 }
             
             pg_manager = DatabaseService.create_postgres_manager(ssh)
             if not pg_manager:
                 return {
                     'success': False,
-                    'message': 'PostgreSQL is not installed on the server'
+                    'message': 'PostgreSQL is not installed on the server',
+                    'can_install': True
                 }
             
             pg_version = pg_manager.get_postgres_version()
+            walg_installed = pg_manager.backup_manager.is_walg_installed()
+            
             return {
                 'success': True,
-                'postgres_version': pg_version
+                'postgres_version': pg_version,
+                'walg_installed': walg_installed
             }
             
         except Exception as e:
             return {
                 'success': False,
-                'message': str(e)
+                'message': str(e),
+                'can_install': False
             }
         finally:
             if ssh:

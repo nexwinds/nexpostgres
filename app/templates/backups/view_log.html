@@ -23,20 +23,16 @@
                 <table class="table">
                     <tr>
                         <th style="width: 35%">Job Name</th>
-                        <td>{{ log.backup_job.name }}</td>
+                        <td>{{ log.backup_job_name }}</td>
                     </tr>
                     <tr>
-                        <th>Database</th>
-                        <td>{{ log.backup_job.database.name }}</td>
-                    </tr>
-                    <tr>
-                        <th>Server</th>
-                        <td>{{ log.backup_job.server.name }} ({{ log.backup_job.server.host }})</td>
+                        <th>Backup Name</th>
+                        <td><code>{{ log.backup_name }}</code></td>
                     </tr>
                     <tr>
                         <th>Backup Type</th>
                         <td>
-                            {% if log.backup_job.backup_type == 'full' %}
+                            {% if log.backup_type == 'full' %}
                             <span class="badge bg-primary">Full</span>
                             {% else %}
                             <span class="badge bg-info">Incremental</span>
@@ -59,13 +55,13 @@
                     </tr>
                     <tr>
                         <th>Start Time</th>
-                        <td>{{ log.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                        <td>{{ log.start_time if log.start_time else '-' }}</td>
                     </tr>
                     <tr>
                         <th>End Time</th>
                         <td>
                             {% if log.end_time %}
-                            {{ log.end_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                            {{ log.end_time }}
                             {% else %}
                             <span class="text-muted">Still running</span>
                             {% endif %}
@@ -74,8 +70,8 @@
                     <tr>
                         <th>Duration</th>
                         <td>
-                            {% if log.end_time %}
-                            {{ (log.end_time - log.start_time).total_seconds()|round|int }} seconds
+                            {% if log.duration %}
+                            {{ log.duration }} seconds
                             {% else %}
                             <span class="text-muted">-</span>
                             {% endif %}
@@ -116,11 +112,11 @@
                     </tr>
                     <tr>
                         <th>S3 Bucket</th>
-                        <td>{{ log.backup_job.s3_storage.bucket }}</td>
+                        <td>{{ log.s3_bucket if log.s3_bucket else 'N/A' }}</td>
                     </tr>
                     <tr>
                         <th>S3 Region</th>
-                        <td>{{ log.backup_job.s3_storage.region }}</td>
+                        <td>{{ log.s3_region if log.s3_region else 'N/A' }}</td>
                     </tr>
                     <tr>
                         <th>Backup Path</th>
@@ -136,7 +132,7 @@
                 
                 {% if log.status == 'success' %}
                 <div class="mt-3">
-                    <a href="{{ url_for('backups.restore') }}?source_log_id={{ log.id }}" class="btn btn-success">
+                    <a href="{{ url_for('backups.restore') }}?backup_name={{ log.backup_name }}" class="btn btn-success">
                         <i class="fas fa-undo me-1"></i> Restore from this Backup
                     </a>
                 </div>

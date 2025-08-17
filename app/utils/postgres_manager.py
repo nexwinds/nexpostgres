@@ -9,7 +9,7 @@ from .postgres_manager.core import PostgresManager
 
 # Import individual components for direct access if needed
 from .postgres_manager.config_manager import PostgresConfigManager
-from .postgres_manager.backup_manager import PostgresBackupManager
+
 from .postgres_manager.user_manager import PostgresUserManager
 from .postgres_manager.system_utils import SystemUtils
 from .postgres_manager.constants import PostgresConstants
@@ -18,7 +18,6 @@ from .postgres_manager.constants import PostgresConstants
 __all__ = [
     'PostgresManager',
     'PostgresConfigManager', 
-    'PostgresBackupManager',
     'PostgresUserManager',
     'SystemUtils',
     'PostgresConstants'

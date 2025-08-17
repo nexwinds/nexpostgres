@@ -16,6 +16,7 @@ from app.routes.backups import backups_bp
 from app.routes.dashboard import dashboard_bp
 from app.routes.app_backup import app_backup_bp
 from app.routes.s3_storage import s3_storage_bp
+from app.routes.recovery import recovery_bp
 
 
 
@@ -70,7 +71,7 @@ def create_app(config_class=Config):
     security_logger.setLevel(logging.WARNING)
     
     # Register blueprints
-    blueprints = [auth_bp, servers_bp, databases_bp, backups_bp, dashboard_bp, app_backup_bp, s3_storage_bp]
+    blueprints = [auth_bp, servers_bp, databases_bp, backups_bp, dashboard_bp, app_backup_bp, s3_storage_bp, recovery_bp]
     for bp in blueprints:
         app.register_blueprint(bp)
     

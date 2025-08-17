@@ -139,17 +139,17 @@ def add():
                         if queue_key in progress_queues:
                             progress_queues[queue_key].put({
                                 'step': 'configuring',
-                                'message': 'Installing pgBackRest...',
+                                'message': 'Installing WAL-G...',
                                 'progress': 70
                             })
                         
-                        # Install pgBackRest
-                        backup_success, backup_message = pg_manager.backup_manager.install_pgbackrest()
+                        # Install WAL-G
+                        backup_success, backup_message = pg_manager.backup_manager.install_walg()
                         if not backup_success:
                             if queue_key in progress_queues:
                                 progress_queues[queue_key].put({
                                     'step': 'warning',
-                                    'message': f'pgBackRest installation failed: {backup_message}',
+                                    'message': f'WAL-G installation failed: {backup_message}',
                                     'progress': 80
                                 })
                         
@@ -477,15 +477,15 @@ def status_data(id):
         try:
             pg_manager = PostgresManager(ssh)
             postgres_version = pg_manager.get_postgres_version() or "Not Installed"
-        except Exception as e:
+        except Exception:
             postgres_version = "Error detecting version"
         
-        # Get pgBackRest version with error handling
+        # Get WAL-G version with error handling
         try:
-            pgbackrest_version_result = ssh.execute_command("pgbackrest version 2>/dev/null || echo 'Not Installed'")
-            pgbackrest_version = pgbackrest_version_result['stdout'].strip() if pgbackrest_version_result['exit_code'] == 0 else "Not Installed"
-        except Exception as e:
-            pgbackrest_version = "Error detecting version"
+            walg_version_result = ssh.execute_command("wal-g --version 2>/dev/null || echo 'Not Installed'")
+            walg_version = walg_version_result['stdout'].strip() if walg_version_result['exit_code'] == 0 else "Not Installed"
+        except Exception:
+            walg_version = "Error detecting version"
         
         # Disconnect
         ssh.disconnect()
@@ -509,7 +509,7 @@ def status_data(id):
             },
             'cpu_usage_percent': cpu_usage_percent,
             'postgres_version': postgres_version,
-            'pgbackrest_version': pgbackrest_version
+            'walg_version': walg_version
         }
         
         logger.info(f"Successfully collected status data for server {id}")

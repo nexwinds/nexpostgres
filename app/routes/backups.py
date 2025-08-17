@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
-from app.models.database import BackupJob, BackupLog, RestoreLog, PostgresDatabase, S3Storage
+from app.models.database import BackupJob, RestoreLog, PostgresDatabase, S3Storage
 from app.models.database import db
 from app.utils.backup_service import BackupService, BackupRestoreService, S3TestService
 from app.utils.unified_validation_service import UnifiedValidationService
@@ -198,19 +198,20 @@ def backup_logs():
     # Get filter parameters
     backup_job_id = request.args.get('backup_job_id')
     status = request.args.get('status')
+    days = request.args.get('days')
     
     # Get backup job if backup_job_id is provided
     backup_job = None
     if backup_job_id:
         backup_job = BackupJob.query.get(backup_job_id)
     
-    # Query backup logs with filters
-    query = BackupLog.query
-    if backup_job_id:
-        query = query.filter_by(backup_job_id=backup_job_id)
-    if status:
-        query = query.filter_by(status=status)
-    logs = query.order_by(BackupLog.start_time.desc()).all()
+    # Get backup logs using metadata service
+    from app.utils.backup_metadata_service import BackupMetadataService
+    logs = BackupMetadataService.get_all_backup_logs(
+        job_id=int(backup_job_id) if backup_job_id else None,
+        status=status,
+        days=int(days) if days and days != 'all' else None
+    )
     
     backup_jobs = BackupJob.query.all()
     return render_template('backups/logs.html', 
@@ -267,10 +268,25 @@ def view_restore_log(log_id):
     return render_template('backups/view_restore_log.html', log=log)
 
 
-@backups_bp.route('/view_log/<int:id>')
-def view_log(id):
+@backups_bp.route('/view_log/<backup_id>')
+def view_log(backup_id):
     """View detailed backup log."""
-    log = BackupLog.query.get_or_404(id)
+    # Parse backup_id to get job_id and backup_name
+    try:
+        if '_' in backup_id:
+            job_id, backup_name = backup_id.split('_', 1)
+            from app.utils.backup_metadata_service import BackupMetadataService
+            log = BackupMetadataService.find_backup_by_name_or_time(int(job_id), backup_name=backup_name)
+            if not log:
+                flash('Backup log not found', 'error')
+                return redirect(url_for('backups.backup_logs'))
+        else:
+            flash('Invalid backup log ID', 'error')
+            return redirect(url_for('backups.backup_logs'))
+    except (ValueError, TypeError):
+        flash('Invalid backup log ID', 'error')
+        return redirect(url_for('backups.backup_logs'))
+    
     return render_template('backups/view_log.html', log=log)
 
 
@@ -304,7 +320,7 @@ def fix_archive_command(database_id):
     return redirect(url_for('backups.backups'))
 
 
-# Removed apply_retention route - pgBackRest handles retention automatically during backup operations
+# Removed apply_retention route - WAL-G handles retention automatically during backup operations
 
 
 @backups_bp.route('/api/logs/<int:backup_job_id>')
@@ -369,10 +385,8 @@ def get_backup_logs(backup_job_id):
     if not is_valid:
         return jsonify({'error': error}), 404
     
-    logs = BackupLog.query.filter_by(
-        backup_job_id=backup_job_id,
-        status='completed'
-    ).order_by(BackupLog.end_time.desc()).all()
+    from app.utils.backup_metadata_service import BackupMetadataService
+    logs = BackupMetadataService.get_backup_logs_for_job(backup_job_id, status='completed')
     
     return jsonify({
         'logs': [{

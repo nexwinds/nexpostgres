@@ -4,7 +4,7 @@ import logging
 import secrets
 import string
 from typing import Any, Dict, List, Optional, Tuple
-from .backup_manager import PostgresBackupManager
+from .walg_backup_manager import WalgBackupManager
 from .config_manager import PostgresConfigManager
 from .system_utils import SystemUtils
 from .error_handler import PostgresErrorHandler
@@ -23,7 +23,7 @@ class PostgresManager:
         self.system_utils = SystemUtils(ssh_manager, logger)
         self.config_manager = PostgresConfigManager(ssh_manager, self.system_utils, logger)
         self.user_manager = PostgresUserManager(ssh_manager, self.system_utils, logger)
-        self.backup_manager = PostgresBackupManager(ssh_manager, self.system_utils, self.config_manager, logger)
+        self.backup_manager = WalgBackupManager(ssh_manager, self.system_utils, self.config_manager, logger)
         
         # Cache for expensive operations
         self._postgres_version = None
@@ -467,14 +467,14 @@ class PostgresManager:
                 settings[setting_name] = value
         return settings
     
-    def configure_for_pgbackrest(self) -> Tuple[bool, str]:
-        """Configure PostgreSQL for pgBackRest."""
-        self.logger.info("Configuring PostgreSQL for pgBackRest")
+    def configure_for_walg(self) -> Tuple[bool, str]:
+        """Configure PostgreSQL for WAL-G."""
+        self.logger.info("Configuring PostgreSQL for WAL-G")
         
-        # Required settings for pgBackRest
+        # Required settings for WAL-G
         settings = {
             'archive_mode': 'on',
-            'archive_command': "'pgbackrest --stanza=main archive-push %p'",
+            'archive_command': "'source /etc/wal-g/walg.env && wal-g wal-push %p'",
             'max_wal_senders': '3',
             'wal_level': 'replica'
         }
@@ -671,7 +671,7 @@ class PostgresManager:
         """Delete a backup."""
         return self.backup_manager.delete_backup(backup_name)
     
-    def perform_backup(self, db_name: str, backup_type: str = 'incr') -> Tuple[bool, str]:
+    def perform_backup(self, db_name: str, backup_type: str = 'delta') -> Tuple[bool, str]:
         """Perform a backup."""
         return self.backup_manager.perform_backup(db_name, backup_type)
     
@@ -680,7 +680,7 @@ class PostgresManager:
         return self.backup_manager.restore_database(db_name, backup_label)
     
     def cleanup_old_backups(self, db_name: str, retention_count: int = None) -> Tuple[bool, str]:
-        """Clean up old backups (handled automatically by pgBackRest)."""
+        """Clean up old backups using WAL-G retention policy."""
         return self.backup_manager.cleanup_old_backups(db_name, retention_count)
     
     def check_health(self, db_name: str) -> Tuple[bool, str, Dict]:
@@ -688,11 +688,11 @@ class PostgresManager:
         return self.backup_manager.health_check(db_name)
     
     def setup_log_rotation(self) -> Tuple[bool, str]:
-        """Set up log rotation for pgBackRest logs."""
+        """Set up log rotation for WAL-G logs."""
         return self.backup_manager.setup_log_rotation()
     
     def configure_postgresql_archiving(self, db_name: str) -> Tuple[bool, str]:
-        """Configure PostgreSQL for archiving with pgBackRest."""
+        """Configure PostgreSQL for archiving with WAL-G."""
         return self.backup_manager.configure_postgresql_archiving(db_name)
     
     # ===== INSTALLATION =====

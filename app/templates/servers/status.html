@@ -92,8 +92,8 @@
                             <td id="postgres-version"><div class="placeholder-glow"><span class="placeholder col-6"></span></div></td>
                         </tr>
                         <tr>
-                            <th><i class="fas fa-archive me-2"></i> pgBackRest</th>
-                            <td id="pgbackrest-version"><div class="placeholder-glow"><span class="placeholder col-6"></span></div></td>
+                            <th><i class="fas fa-archive me-2"></i> WAL-G</th>
+                            <td id="walg-version"><div class="placeholder-glow"><span class="placeholder col-6"></span></div></td>
                         </tr>
                     </tbody>
                 </table>
@@ -367,7 +367,7 @@
                         document.getElementById('ram-info').textContent = `${data.ram.used} MB / ${data.ram.total} MB`;
                         document.getElementById('disk-info').textContent = `${data.disk.used} / ${data.disk.total} (${data.disk.free} free)`;
                         document.getElementById('postgres-version').textContent = data.postgres_version;
-                        document.getElementById('pgbackrest-version').textContent = data.pgbackrest_version;
+                        document.getElementById('walg-version').textContent = data.walg_version;
                         
                         // Update resource usage
                         document.getElementById('cpu-percent').textContent = `${data.cpu_usage_percent}%`;

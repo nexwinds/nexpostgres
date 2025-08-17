@@ -536,7 +536,7 @@ class PostgresUserManager:
             for i, line in enumerate(lines):
                 line = line.strip()
                 if ('|' in line and not line.startswith('-') and 
-                    not 'priv' in line and  # Skip header line with column names
+                    'priv' not in line and  # Skip header line with column names
                     ('t' in line or 'f' in line) and
                     not line.startswith('(')):  # Skip footer line
                     data_line = line
@@ -559,7 +559,7 @@ class PostgresUserManager:
                     return permissions_result
         
         # Default to no permissions if query fails
-        self.logger.warning(f"DEBUG: Failed to parse permissions, returning default (no permissions)")
+        self.logger.warning("DEBUG: Failed to parse permissions, returning default (no permissions)")
         return {
             'connect': False,
             'select': False,

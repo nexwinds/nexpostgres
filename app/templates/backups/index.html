@@ -93,7 +93,7 @@
                                 <a href="{{ url_for('backups.edit_backup', backup_job_id=job.id) }}" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-edit"></i> Edit
                                 </a>
-                                <!-- Retention policy is now handled automatically by pgBackRest -->
+                                <!-- Retention policy is now handled automatically by WAL-G -->
                                 <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteModal{{ job.id }}">
                                     <i class="fas fa-trash"></i> Delete
                                 </button>
@@ -113,7 +113,7 @@
                                         <div class="modal-body">
                                             <div class="alert alert-info">
                                                 <h6><i class="fas fa-info-circle me-2"></i>What will be changed:</h6>
-                                                <p>This update will modify the pgBackRest configuration to exclude the unnecessary directory levels <code>var/lib/pgbackrest/*</code> in S3 storage, making it easier to navigate your backup files.</p>
+                                                <p>This update will modify the WAL-G configuration to exclude the unnecessary directory levels <code>var/lib/walg/*</code> in S3 storage, making it easier to navigate your backup files.</p>
                                                 <p><strong>Note:</strong> This will only affect <em>new</em> backups. Existing backups will remain in their current location.</p>
                                             </div>
                                             
