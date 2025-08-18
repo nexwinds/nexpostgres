@@ -1,8 +1,7 @@
 from flask import Blueprint, render_template
 from flask_login import login_required
-from app.models.database import VpsServer, PostgresDatabase, BackupJob, db
+from app.models.database import VpsServer, PostgresDatabase, BackupJob
 from app.routes.auth import first_login_required
-from sqlalchemy import text
 from datetime import datetime, timedelta
 
 dashboard_bp = Blueprint('dashboard', __name__)
@@ -33,7 +32,6 @@ def index():
     recent_logs = BackupMetadataService.get_recent_backup_logs(limit=10)
     
     # Calculate backup statistics for last 7 days using BackupMetadataService
-    seven_days_ago = datetime.utcnow() - timedelta(days=7)
     
     # Get backup statistics from S3/WAL-G instead of database
     daily_stats = BackupMetadataService.get_backup_statistics(days=7)

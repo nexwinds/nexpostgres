@@ -36,14 +36,14 @@ def add():
             flash('A storage configuration with this name already exists', 'danger')
             return render_template('s3_storage/add.html')
         
-        # Create S3 storage
+        # Create S3 storage (strip whitespace and carriage returns to prevent URL parsing issues)
         storage = S3Storage(
-            name=name,
-            bucket=bucket,
-            region=region,
-            endpoint=endpoint if endpoint else None,
-            access_key=access_key,
-            secret_key=secret_key,
+            name=name.strip().replace('\r', '').replace('\n', ''),
+            bucket=bucket.strip().replace('\r', '').replace('\n', ''),
+            region=region.strip().replace('\r', '').replace('\n', ''),
+            endpoint=endpoint.strip().replace('\r', '').replace('\n', '') if endpoint else None,
+            access_key=access_key.strip().replace('\r', '').replace('\n', ''),
+            secret_key=secret_key.strip().replace('\r', '').replace('\n', ''),
             # Removed user_id for single-user mode
         )
         
@@ -80,16 +80,16 @@ def edit(id):
             flash('A storage configuration with this name already exists', 'danger')
             return render_template('s3_storage/edit.html', storage=storage)
         
-        # Update storage
-        storage.name = name
-        storage.bucket = bucket
-        storage.region = region
-        storage.endpoint = endpoint if endpoint else None
-        storage.access_key = access_key
+        # Update storage (strip whitespace and carriage returns to prevent URL parsing issues)
+        storage.name = name.strip().replace('\r', '').replace('\n', '')
+        storage.bucket = bucket.strip().replace('\r', '').replace('\n', '')
+        storage.region = region.strip().replace('\r', '').replace('\n', '')
+        storage.endpoint = endpoint.strip().replace('\r', '').replace('\n', '') if endpoint else None
+        storage.access_key = access_key.strip().replace('\r', '').replace('\n', '')
         
         # Only update secret key if provided
         if secret_key:
-            storage.secret_key = secret_key
+            storage.secret_key = secret_key.strip().replace('\r', '').replace('\n', '')
         
         db.session.commit()
         

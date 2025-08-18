@@ -115,7 +115,7 @@ class RestoreService:
             exit_status = stdout.channel.recv_exit_status()
             
             output = stdout.read().decode('utf-8')
-            error_output = stderr.read().decode('utf-8')
+            stderr.read().decode('utf-8')  # Read stderr but don't store
             
             if exit_status == 0:
                 # Start PostgreSQL service

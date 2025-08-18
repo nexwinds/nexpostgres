@@ -68,8 +68,8 @@ class BackupMetadataService:
                         
                 backup_logs.append(backup_log)
                 
-            # Sort by start time descending
-            backup_logs.sort(key=lambda x: x['start_time'], reverse=True)
+            # Sort by start time descending, handling None values
+            backup_logs.sort(key=lambda x: x['start_time'] or '', reverse=True)
             return backup_logs
             
         except Exception as e:
@@ -102,8 +102,8 @@ class BackupMetadataService:
             job_logs = BackupMetadataService.get_backup_logs_for_job(job.id, status, days)
             all_logs.extend(job_logs)
             
-        # Sort by start time descending
-        all_logs.sort(key=lambda x: x['start_time'], reverse=True)
+        # Sort by start time descending, handling None values
+        all_logs.sort(key=lambda x: x['start_time'] or '', reverse=True)
         return all_logs
     
     @staticmethod
@@ -298,11 +298,14 @@ class BackupMetadataService:
             if backup_name and log.get('backup_name') == backup_name:
                 return log
                 
-            if backup_time:
-                log_time = datetime.fromisoformat(log['start_time'])
-                time_diff = abs((log_time - backup_time).total_seconds())
-                if time_diff <= 60:  # Within 1 minute
-                    return log
+            if backup_time and log.get('start_time'):
+                try:
+                    log_time = datetime.fromisoformat(log['start_time'])
+                    time_diff = abs((log_time - backup_time).total_seconds())
+                    if time_diff <= 60:  # Within 1 minute
+                        return log
+                except (ValueError, TypeError):
+                    continue
                     
         return None
     
@@ -323,9 +326,19 @@ class BackupMetadataService:
         backup_job = BackupJob.query.get(backup_job_id)
         backup_job_name = backup_job.name if backup_job else f'Job {backup_job_id}'
         
-        # Parse backup name to extract timestamp
+        # Get backup name
         backup_name = backup.get('name', '')
-        start_time = BackupMetadataService._parse_backup_name_timestamp(backup_name)
+        
+        # Use timestamp from backup data if available, otherwise parse from name
+        start_time = None
+        if 'timestamp' in backup:
+            try:
+                start_time = datetime.fromisoformat(backup['timestamp'].replace('Z', '+00:00'))
+            except (ValueError, TypeError):
+                pass
+        
+        if not start_time:
+            start_time = BackupMetadataService._parse_backup_name_timestamp(backup_name)
         
         # Estimate end time and calculate duration
         end_time = start_time

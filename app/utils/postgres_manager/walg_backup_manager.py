@@ -127,14 +127,29 @@ class WalgBackupManager:
         
         # Create environment file content
         env_content = "# WAL-G Environment Configuration\n"
-        env_content += f"export WALE_S3_PREFIX=s3://{s3_config.get('bucket', '')}/postgres\n"
-        env_content += f"export AWS_ACCESS_KEY_ID={s3_config.get('access_key', '')}\n"
-        env_content += f"export AWS_SECRET_ACCESS_KEY={s3_config.get('secret_key', '')}\n"
-        env_content += f"export AWS_REGION={s3_config.get('region', 'us-east-1')}\n"
+        # Strip any whitespace/carriage returns from bucket name to prevent URL parsing errors
+        bucket_name = str(s3_config.get('bucket', '')).strip().replace('\r', '').replace('\n', '')
+        
+        # Use database-specific prefix to separate backups by database
+        if backup_job and backup_job.database:
+            db_name = backup_job.database.name
+            env_content += f"export WALE_S3_PREFIX=s3://{bucket_name}/postgres/{db_name}\n"
+        else:
+            # Fallback to generic prefix if no database specified
+            env_content += f"export WALE_S3_PREFIX=s3://{bucket_name}/postgres\n"
+        # Strip whitespace from all S3 configuration values
+        access_key = str(s3_config.get('access_key', '')).strip().replace('\r', '').replace('\n', '')
+        secret_key = str(s3_config.get('secret_key', '')).strip().replace('\r', '').replace('\n', '')
+        region = str(s3_config.get('region', 'us-east-1')).strip().replace('\r', '').replace('\n', '')
+        env_content += f"export AWS_ACCESS_KEY_ID={access_key}\n"
+        env_content += f"export AWS_SECRET_ACCESS_KEY={secret_key}\n"
+        env_content += f"export AWS_REGION={region}\n"
         
         # Add endpoint if provided (for S3-compatible storage)
-        if s3_config.get('endpoint'):
-            env_content += f"export AWS_ENDPOINT={s3_config.get('endpoint')}\n"
+        endpoint = s3_config.get('endpoint')
+        if endpoint:
+            endpoint = str(endpoint).strip().replace('\r', '').replace('\n', '')
+            env_content += f"export AWS_ENDPOINT={endpoint}\n"
         
         # Add WAL-G specific settings
         env_content += f"export WALG_COMPRESSION_METHOD={PostgresConstants.WALG_S3_ENV['WALG_COMPRESSION_METHOD']}\n"
@@ -144,9 +159,9 @@ class WalgBackupManager:
         # Write environment file
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
         
-        # Create temporary file
+        # Create temporary file with Unix line endings
         temp_file = os.path.join(tempfile.gettempdir(), 'walg.env')
-        with open(temp_file, 'w') as f:
+        with open(temp_file, 'w', newline='\n') as f:
             f.write(env_content)
         
         # Upload and move to final location
@@ -225,8 +240,8 @@ class WalgBackupManager:
         # Source WAL-G environment
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
         
-        # Perform backup
-        backup_cmd = f"source {env_file} && wal-g backup-push {data_dir}"
+        # Perform backup using bash to handle 'source' command
+        backup_cmd = f"bash -c 'source {env_file} && wal-g backup-push {data_dir}'"
         
         result = self.system_utils.execute_as_postgres_user(backup_cmd)
         
@@ -260,9 +275,9 @@ class WalgBackupManager:
         
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
         
-        # WAL-G delete specific backup
+        # WAL-G delete specific backup using bash to handle 'source' command
         result = self.system_utils.execute_as_postgres_user(
-            f"source {env_file} && wal-g delete target {backup_name}"
+            f"bash -c 'source {env_file} && wal-g delete target {backup_name}'"
         )
         
         if result['exit_code'] == 0:
@@ -291,12 +306,12 @@ class WalgBackupManager:
         # Source WAL-G environment
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
         
-        # Perform backup
+        # Perform backup using bash to handle 'source' command
         if backup_type == 'full':
-            backup_cmd = f"source {env_file} && wal-g backup-push {data_dir}"
+            backup_cmd = f"bash -c 'source {env_file} && wal-g backup-push {data_dir}'"
         else:
             # WAL-G automatically determines if delta backup is possible
-            backup_cmd = f"source {env_file} && wal-g backup-push {data_dir}"
+            backup_cmd = f"bash -c 'source {env_file} && wal-g backup-push {data_dir}'"
         
         result = self.system_utils.execute_as_postgres_user(backup_cmd)
         
@@ -318,7 +333,7 @@ class WalgBackupManager:
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
         
         result = self.system_utils.execute_as_postgres_user(
-            f"source {env_file} && wal-g backup-list --json"
+            f"bash -c 'source {env_file} && wal-g backup-list --json'"
         )
         
         backups = []
@@ -367,9 +382,9 @@ class WalgBackupManager:
         # Source WAL-G environment
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
         
-        # Build restore command
+        # Build restore command using bash to handle 'source' command
         backup_target = backup_name or 'LATEST'
-        restore_cmd = f"source {env_file} && wal-g backup-fetch {data_dir} {backup_target}"
+        restore_cmd = f"bash -c 'source {env_file} && wal-g backup-fetch {data_dir} {backup_target}'"
         
         # Perform restore
         self.logger.info(f"Executing restore command: {restore_cmd}")
@@ -402,7 +417,7 @@ class WalgBackupManager:
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
         
         result = self.system_utils.execute_as_postgres_user(
-            f"source {env_file} && wal-g delete retain {retention}"
+            f"bash -c 'source {env_file} && wal-g delete retain {retention}'"
         )
         
         if result['exit_code'] == 0:

@@ -262,7 +262,7 @@ class SystemUtils:
         return self.execute_as_postgres_user(command)
     
     def check_service_status(self, service_name: str) -> Tuple[bool, str]:
-        """Check if a service is running.
+        """Check if a service is running with improved error handling.
         
         Args:
             service_name: Name of the service
@@ -275,7 +275,18 @@ class SystemUtils:
         if result['exit_code'] == 0 and 'active' in result['stdout']:
             return True, "Service is running"
         else:
-            return False, f"Service is not running: {result.get('stdout', 'Unknown status')}"
+            status_output = result.get('stdout', '').strip()
+            stderr_output = result.get('stderr', '').strip()
+            
+            # Check for common status messages
+            if 'inactive' in status_output:
+                return False, "Service is not running: inactive"
+            elif 'failed' in status_output:
+                return False, "Service is not running: failed"
+            elif 'not found' in stderr_output or 'could not be found' in stderr_output:
+                return False, f"Service not found: {stderr_output}"
+            else:
+                return False, f"Service is not running: {status_output or stderr_output or 'Unknown status'}"
     
     def start_service(self, service_name: str) -> Tuple[bool, str]:
         """Start a system service.
@@ -340,13 +351,13 @@ class SystemUtils:
             return False, f"Failed to restart {service_name}: {result.get('stderr', 'Unknown error')}"
     
     def check_postgresql_service(self) -> Dict[str, Any]:
-        """Check PostgreSQL service status.
+        """Check PostgreSQL service status with improved service name detection.
         
         Returns:
             dict: Service status information
         """
         os_type = self.detect_os()
-        service_name = 'postgresql'
+        service_candidates = ['postgresql']
         
         # For RHEL-based systems, try to detect the version-specific service
         if os_type == 'rhel':
@@ -358,14 +369,27 @@ class SystemUtils:
                 version_match = re.search(r'postgresql(\d+)-server', version_result['stdout'])
                 if version_match:
                     version = version_match.group(1)
-                    service_name = f'postgresql-{version}'
+                    service_candidates.insert(0, f'postgresql-{version}')
         
-        is_running, status = self.check_service_status(service_name)
+        # Add common service name variations
+        service_candidates.extend(['postgresql.service', 'postgres', 'postgres.service'])
         
+        # Try each service name candidate
+        for service_name in service_candidates:
+            is_running, status = self.check_service_status(service_name)
+            # If we get a meaningful response (not "Unit not found"), use this service name
+            if 'not found' not in status.lower() and 'could not be found' not in status.lower():
+                return {
+                    'service_name': service_name,
+                    'is_running': is_running,
+                    'status': status
+                }
+        
+        # If no service found, return the first candidate with error status
         return {
-            'service_name': service_name,
-            'is_running': is_running,
-            'status': status
+            'service_name': service_candidates[0],
+            'is_running': False,
+            'status': 'PostgreSQL service not found on system'
         }
     
     def start_postgresql_service(self) -> Tuple[bool, str]:
