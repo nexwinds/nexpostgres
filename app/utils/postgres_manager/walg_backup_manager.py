@@ -286,17 +286,16 @@ class WalgBackupManager:
             error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
             return False, f"Failed to delete backup '{backup_name}': {error_msg}"
     
-    def perform_backup(self, db_name: str, backup_type: str = 'delta') -> Tuple[bool, str]:
+    def perform_backup(self, db_name: str) -> Tuple[bool, str]:
         """Perform a backup using WAL-G.
         
         Args:
             db_name: Database name
-            backup_type: 'full' or 'delta' (WAL-G doesn't use 'incr')
             
         Returns:
             tuple: (success, message)
         """
-        self.logger.info(f"Performing {backup_type} backup for {db_name} using WAL-G...")
+        self.logger.info(f"Performing incremental backup for {db_name} using WAL-G...")
         
         # Get data directory
         data_dir = self.config_manager.get_data_directory()
@@ -306,17 +305,13 @@ class WalgBackupManager:
         # Source WAL-G environment
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
         
-        # Perform backup using bash to handle 'source' command
-        if backup_type == 'full':
-            backup_cmd = f"bash -c 'source {env_file} && wal-g backup-push {data_dir}'"
-        else:
-            # WAL-G automatically determines if delta backup is possible
-            backup_cmd = f"bash -c 'source {env_file} && wal-g backup-push {data_dir}'"
+        # WAL-G automatically determines if delta backup is possible
+        backup_cmd = f"bash -c 'source {env_file} && wal-g backup-push {data_dir}'"
         
         result = self.system_utils.execute_as_postgres_user(backup_cmd)
         
         if result['exit_code'] == 0:
-            return True, f"{backup_type.capitalize()} backup completed successfully"
+            return True, "Incremental backup completed successfully"
         
         error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
         return False, f"{backup_type.capitalize()} backup failed: {error_msg}"

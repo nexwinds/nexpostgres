@@ -78,13 +78,12 @@ class BackupService:
                 ssh.disconnect()
     
     @staticmethod
-    def validate_backup_job_data(name, database_id, backup_type, s3_storage_id, retention_count, backup_job_id=None):
+    def validate_backup_job_data(name, database_id, s3_storage_id, retention_count, backup_job_id=None):
         """Validate backup job form data with one-to-one relationship enforcement.
         
         Args:
             name: Backup job name
             database_id: Database ID
-            backup_type: Type of backup (full/incr)
             s3_storage_id: S3 storage configuration ID
             retention_count: Number of backups to retain
             backup_job_id: Existing backup job ID (for updates, None for new jobs)
@@ -109,10 +108,6 @@ class BackupService:
         if not s3_storage:
             return False, 'Selected S3 storage configuration does not exist', None, None
         
-        # Validate backup type
-        if backup_type not in ['full', 'incr']:
-            return False, 'Invalid backup type', None, None
-        
         # Validate retention count
         if not retention_count or retention_count < 1:
             return False, 'Retention count must be at least 1', None, None
@@ -120,13 +115,12 @@ class BackupService:
         return True, 'Validation successful', database, s3_storage
     
     @staticmethod
-    def create_backup_job(name, database_id, backup_type, cron_expression, s3_storage_id, retention_count):
+    def create_backup_job(name, database_id, cron_expression, s3_storage_id, retention_count):
         """Create and save backup job.
         
         Args:
             name: Backup job name
             database_id: Database ID
-            backup_type: Type of backup
             cron_expression: Cron schedule expression
             s3_storage_id: S3 storage ID
             retention_count: Retention count
@@ -140,7 +134,6 @@ class BackupService:
             name=name,
             database_id=database_id,
             vps_server_id=database.vps_server_id,
-            backup_type=backup_type,
             cron_expression=cron_expression,
             s3_storage_id=s3_storage_id,
             retention_count=retention_count
@@ -152,14 +145,13 @@ class BackupService:
         return backup_job
     
     @staticmethod
-    def update_backup_job(backup_job, name, database_id, backup_type, cron_expression, enabled, s3_storage_id, retention_count):
+    def update_backup_job(backup_job, name, database_id, cron_expression, enabled, s3_storage_id, retention_count):
         """Update existing backup job.
         
         Args:
             backup_job: Existing backup job
             name: New name
             database_id: New database ID
-            backup_type: New backup type
             cron_expression: New cron expression
             enabled: Whether job is enabled
             s3_storage_id: New S3 storage ID
@@ -170,7 +162,6 @@ class BackupService:
         backup_job.name = name
         backup_job.database_id = database_id
         backup_job.vps_server_id = database.vps_server_id
-        backup_job.backup_type = backup_type
         backup_job.cron_expression = cron_expression
         backup_job.enabled = enabled
         backup_job.s3_storage_id = s3_storage_id

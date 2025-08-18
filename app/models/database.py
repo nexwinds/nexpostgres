@@ -94,7 +94,6 @@ class BackupJob(BaseModel):
     name = db.Column(db.String(80), nullable=False)
     database_id = db.Column(db.Integer, db.ForeignKey('postgres_database.id', ondelete='CASCADE'), nullable=False, unique=True)  # Enforce one-to-one at DB level
     vps_server_id = db.Column(db.Integer, db.ForeignKey('vps_server.id', ondelete='CASCADE'), nullable=False)
-    backup_type = db.Column(db.String(20), default='full')  # full or incr
     cron_expression = db.Column(db.String(50), nullable=False)
     enabled = db.Column(db.Boolean, default=True)
     s3_storage_id = db.Column(db.Integer, db.ForeignKey('s3_storage.id'), nullable=False)

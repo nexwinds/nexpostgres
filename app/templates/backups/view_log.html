@@ -29,16 +29,7 @@
                         <th>Backup Name</th>
                         <td><code>{{ log.backup_name }}</code></td>
                     </tr>
-                    <tr>
-                        <th>Backup Type</th>
-                        <td>
-                            {% if log.backup_type == 'full' %}
-                            <span class="badge bg-primary">Full</span>
-                            {% else %}
-                            <span class="badge bg-info">Incremental</span>
-                            {% endif %}
-                        </td>
-                    </tr>
+
                     <tr>
                         <th>Status</th>
                         <td>

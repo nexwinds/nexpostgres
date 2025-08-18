@@ -63,7 +63,6 @@
                             <th>Backup Job</th>
                             <th>Database</th>
                             <th>Server</th>
-                            <th>Type</th>
                             <th>Status</th>
                             <th>Started</th>
                             <th>Duration</th>
@@ -77,7 +76,6 @@
                             <td>{{ log.backup_job.name }}</td>
                             <td>{{ log.backup_job.database.name }}</td>
                             <td>{{ log.backup_job.server.name }}</td>
-                            <td>{{ log.backup_type }}</td>
                             <td>{{ status_badge(log.status) }}</td>
                             <td>{{ log.start_time.strftime('%Y-%m-%d %H:%M') }}</td>
                             <td>

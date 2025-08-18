@@ -147,7 +147,7 @@
                         options = '<option value="latest" selected>Latest backup</option>';
                         
                         data.logs.forEach(log => {
-                            options += `<option value="${log.id}">${log.start_time} - ${log.backup_type} - ${log.size_mb ? log.size_mb + ' MB' : 'Size unknown'}</option>`;
+                            options += `<option value="${log.id}">${log.start_time} - ${log.size_mb ? log.size_mb + ' MB' : 'Size unknown'}</option>`;
                         });
                         hasBackups = true;
                     } else {

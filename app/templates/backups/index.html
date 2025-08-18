@@ -31,7 +31,6 @@
                         <th>Database</th>
                         <th>Server</th>
                         <th>S3 Storage</th>
-                        <th>Type</th>
                         <th>Schedule</th>
                         <th>Status</th>
                         <th>Retention</th>
@@ -50,13 +49,7 @@
                                 {{ job.s3_storage.name }}
                             </a>
                         </td>
-                        <td>
-                            {% if job.backup_type == 'full' %}
-                            <span class="badge bg-primary">Full</span>
-                            {% else %}
-                            <span class="badge bg-info">Incremental</span>
-                            {% endif %}
-                        </td>
+
                         <td>
                             <code>{{ job.cron_expression }}</code>
                         </td>

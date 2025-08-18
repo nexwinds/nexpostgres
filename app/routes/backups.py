@@ -37,7 +37,6 @@ def add_backup():
         backup_job = backup_service.create_backup_job(
             name=validated_data['name'],
             database_id=validated_data['database_id'],
-            backup_type=validated_data['backup_type'],
             cron_expression=validated_data['cron_expression'],
             s3_storage_id=validated_data['s3_storage_id'],
             retention_count=validated_data['retention_count']
@@ -130,7 +129,6 @@ def edit_backup(backup_job_id):
             backup_job=backup_job,
             name=validated_data['name'],
             database_id=validated_data['database_id'],
-            backup_type=validated_data['backup_type'],
             cron_expression=validated_data['cron_expression'],
             enabled=validated_data.get('enabled', True),
             s3_storage_id=validated_data['s3_storage_id'],

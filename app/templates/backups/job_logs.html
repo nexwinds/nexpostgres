@@ -98,7 +98,6 @@
                         <th>Start Time</th>
                         <th>End Time</th>
                         <th>Duration</th>
-                        <th>Type</th>
                         <th>Size</th>
                         <th>Status</th>
                         <th>Actions</th>
@@ -132,14 +131,6 @@
                             {% endif %}
                         </td>
                         <td>
-                            {% if log.backup_type == 'full' %}
-                            <span class="badge bg-primary">Full</span>
-                            {% elif log.backup_type == 'incr' %}
-                            <span class="badge bg-info">Incremental</span>
-                            {% else %}
-                            <span class="badge bg-secondary">{{ log.backup_type }}</span>
-                            {% endif %}
-                            
                             {% if log.is_manual %}
                             <span class="badge bg-warning">Manual</span>
                             {% endif %}

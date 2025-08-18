@@ -33,15 +33,6 @@
             </div>
             
             <div class="mb-3">
-                <label for="backup_type" class="form-label">Backup Type</label>
-                <select class="form-select" id="backup_type" name="backup_type" required>
-                    <option value="full" {% if backup_job.backup_type == 'full' %}selected{% endif %}>Full Backup</option>
-                    <option value="incr" {% if backup_job.backup_type == 'incr' %}selected{% endif %}>Incremental Backup</option>
-                </select>
-                <div class="form-text">Full backups contain all data. Incremental backups only contain changes since the last backup.</div>
-            </div>
-            
-            <div class="mb-3">
                 <label for="cron_expression" class="form-label">Schedule (Cron Expression)</label>
                 <input type="text" class="form-control" id="cron_expression" name="cron_expression" value="{{ backup_job.cron_expression }}" required>
                 <div class="form-text">

@@ -144,23 +144,6 @@ class UnifiedValidationService:
         return True, None
     
     @staticmethod
-    def validate_backup_type(backup_type: str) -> Tuple[bool, Optional[str]]:
-        """Validate backup type.
-        
-        Args:
-            backup_type: Type of backup
-            
-        Returns:
-            Tuple of (is_valid, error_message)
-        """
-        valid_types = ['full', 'incr']
-        
-        if backup_type not in valid_types:
-            return False, f"Invalid backup type. Must be one of: {', '.join(valid_types)}"
-        
-        return True, None
-    
-    @staticmethod
     def validate_cron_expression(cron_expression: str) -> Tuple[bool, Optional[str]]:
         """Validate cron expression format.
         
@@ -558,7 +541,7 @@ class UnifiedValidationService:
         validated_data = {}
         
         # Required fields validation
-        required_fields = ['name', 'database_id', 'backup_type', 'cron_expression', 's3_storage_id', 'retention_count']
+        required_fields = ['name', 'database_id', 'cron_expression', 's3_storage_id', 'retention_count']
         is_valid, field_errors = cls.validate_required_fields(form_data, required_fields)
         if not is_valid:
             errors.extend(field_errors)
@@ -570,14 +553,6 @@ class UnifiedValidationService:
                 errors.append(error)
             else:
                 validated_data['name'] = form_data['name'].strip()
-        
-        # Backup type validation
-        if form_data.get('backup_type'):
-            is_valid, error = cls.validate_backup_type(form_data['backup_type'])
-            if not is_valid:
-                errors.append(error)
-            else:
-                validated_data['backup_type'] = form_data['backup_type']
         
         # Cron expression validation
         if form_data.get('cron_expression'):

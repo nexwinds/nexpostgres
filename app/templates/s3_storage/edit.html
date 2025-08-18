@@ -65,7 +65,6 @@
                     <tr>
                         <th>Job Name</th>
                         <th>Database</th>
-                        <th>Backup Type</th>
                         <th>Schedule</th>
                         <th>Actions</th>
                     </tr>
@@ -75,13 +74,7 @@
                     <tr>
                         <td>{{ job.name }}</td>
                         <td>{{ job.database.name }}</td>
-                        <td>
-                            {% if job.backup_type == 'full' %}
-                            <span class="badge bg-primary">Full</span>
-                            {% else %}
-                            <span class="badge bg-info">Incremental</span>
-                            {% endif %}
-                        </td>
+
                         <td><code>{{ job.cron_expression }}</code></td>
                         <td>
                             <a href="{{ url_for('backups.edit_backup', backup_job_id=job.id) }}" class="btn btn-sm btn-outline-primary">
