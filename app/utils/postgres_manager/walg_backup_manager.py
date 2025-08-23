@@ -125,65 +125,67 @@ class WalgBackupManager:
         if not s3_config:
             return False, "S3 configuration is required for WAL-G"
         
-        # Create environment file content
-        env_content = "# WAL-G Environment Configuration\n"
-        # Strip any whitespace/carriage returns from bucket name to prevent URL parsing errors
-        bucket_name = str(s3_config.get('bucket', '')).strip().replace('\r', '').replace('\n', '')
+        # Create environment file content with sanitized values
+        def sanitize_value(value, default=''):
+            """Remove whitespace and line breaks from configuration values."""
+            return str(value or default).strip().replace('\r', '').replace('\n', '')
         
-        # Use database-specific prefix to separate backups by database
-        if backup_job and backup_job.database:
-            db_name = backup_job.database.name
-            env_content += f"export WALE_S3_PREFIX=s3://{bucket_name}/postgres/{db_name}\n"
-        else:
-            # Fallback to generic prefix if no database specified
-            env_content += f"export WALE_S3_PREFIX=s3://{bucket_name}/postgres\n"
-        # Strip whitespace from all S3 configuration values
-        access_key = str(s3_config.get('access_key', '')).strip().replace('\r', '').replace('\n', '')
-        secret_key = str(s3_config.get('secret_key', '')).strip().replace('\r', '').replace('\n', '')
-        region = str(s3_config.get('region', 'us-east-1')).strip().replace('\r', '').replace('\n', '')
-        env_content += f"export AWS_ACCESS_KEY_ID={access_key}\n"
-        env_content += f"export AWS_SECRET_ACCESS_KEY={secret_key}\n"
-        env_content += f"export AWS_REGION={region}\n"
+        bucket_name = sanitize_value(s3_config.get('bucket'))
+        access_key = sanitize_value(s3_config.get('access_key'))
+        secret_key = sanitize_value(s3_config.get('secret_key'))
+        region = sanitize_value(s3_config.get('region'), 'us-east-1')
         
-        # Add endpoint if provided (for S3-compatible storage)
-        endpoint = s3_config.get('endpoint')
+        # Build environment configuration
+        env_vars = [
+            "# WAL-G Environment Configuration",
+            f"export WALE_S3_PREFIX=s3://{bucket_name}/postgres/{backup_job.database.name if backup_job and backup_job.database else 'default'}",
+            f"export AWS_ACCESS_KEY_ID={access_key}",
+            f"export AWS_SECRET_ACCESS_KEY={secret_key}",
+            f"export AWS_REGION={region}"
+        ]
+        
+        # Add optional endpoint for S3-compatible storage
+        endpoint = sanitize_value(s3_config.get('endpoint'))
         if endpoint:
-            endpoint = str(endpoint).strip().replace('\r', '').replace('\n', '')
-            env_content += f"export AWS_ENDPOINT={endpoint}\n"
+            env_vars.append(f"export AWS_ENDPOINT={endpoint}")
         
         # Add WAL-G specific settings
-        env_content += f"export WALG_COMPRESSION_METHOD={PostgresConstants.WALG_S3_ENV['WALG_COMPRESSION_METHOD']}\n"
-        env_content += f"export WALG_DELTA_MAX_STEPS={PostgresConstants.WALG_S3_ENV['WALG_DELTA_MAX_STEPS']}\n"
-        env_content += f"export WALG_TAR_SIZE_THRESHOLD={PostgresConstants.WALG_S3_ENV['WALG_TAR_SIZE_THRESHOLD']}\n"
+        walg_settings = PostgresConstants.WALG_S3_ENV
+        env_vars.extend([
+            f"export WALG_COMPRESSION_METHOD={walg_settings['WALG_COMPRESSION_METHOD']}",
+            f"export WALG_DELTA_MAX_STEPS={walg_settings['WALG_DELTA_MAX_STEPS']}",
+            f"export WALG_TAR_SIZE_THRESHOLD={walg_settings['WALG_TAR_SIZE_THRESHOLD']}"
+        ])
         
-        # Write environment file
+        env_content = '\n'.join(env_vars) + '\n'
+        
+        # Deploy environment file efficiently
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
-        
-        # Create temporary file with Unix line endings
-        temp_file = os.path.join(tempfile.gettempdir(), 'walg.env')
-        with open(temp_file, 'w', newline='\n') as f:
-            f.write(env_content)
-        
-        # Upload and move to final location
         remote_temp_file = '/tmp/walg.env'
-        upload_result = self.ssh.upload_file(temp_file, remote_temp_file)
-        if not upload_result:
-            return False, "Failed to upload WAL-G configuration"
         
-        move_result = self.ssh.execute_command(f"sudo cp {remote_temp_file} {env_file}")
-        if move_result['exit_code'] != 0:
-            return False, f"Failed to create WAL-G config: {move_result.get('stderr', 'Unknown error')}"
-        
-        # Set permissions
-        self.ssh.execute_command(f"sudo chown postgres:postgres {env_file}")
-        self.ssh.execute_command(f"sudo chmod 640 {env_file}")
-        
-        # Clean up temp files
         try:
-            os.remove(temp_file)
-        except OSError:
-            pass
-        self.ssh.execute_command(f"rm -f {remote_temp_file}")
+            # Create temporary file with Unix line endings
+            temp_file = os.path.join(tempfile.gettempdir(), 'walg.env')
+            with open(temp_file, 'w', newline='\n') as f:
+                f.write(env_content)
+            
+            # Upload configuration file
+            if not self.ssh.upload_file(temp_file, remote_temp_file):
+                return False, "Failed to upload WAL-G configuration"
+            
+            # Deploy with proper permissions in one operation
+            deploy_cmd = f"sudo cp {remote_temp_file} {env_file} && sudo chown postgres:postgres {env_file} && sudo chmod 640 {env_file}"
+            deploy_result = self.ssh.execute_command(deploy_cmd)
+            if deploy_result['exit_code'] != 0:
+                return False, f"Failed to deploy WAL-G config: {deploy_result.get('stderr', 'Unknown error')}"
+            
+        finally:
+            # Clean up temporary files
+            try:
+                os.remove(temp_file)
+            except (OSError, NameError):
+                pass
+            self.ssh.execute_command(f"rm -f {remote_temp_file}")
         
         return True, "WAL-G configuration created successfully"
     
@@ -198,20 +200,25 @@ class WalgBackupManager:
         """
         self.logger.info("Configuring PostgreSQL for WAL-G archiving...")
         
-        # Update PostgreSQL settings for WAL-G
-        settings = {
+        # Define optimized PostgreSQL settings for WAL-G
+        walg_settings = {
             'wal_level': 'replica',
-            'archive_mode': 'on',
+            'archive_mode': 'on', 
             'archive_command': "'wal-g wal-push %p'",
             'restore_command': "'wal-g wal-fetch %f %p'",
             'max_wal_senders': '3',
             'archive_timeout': '60'
         }
         
-        for setting, value in settings.items():
+        # Update all settings efficiently
+        failed_settings = []
+        for setting, value in walg_settings.items():
             success, message = self.config_manager.update_postgresql_setting(setting, value)
             if not success:
-                return False, f"Failed to update {setting}: {message}"
+                failed_settings.append(f"{setting}: {message}")
+        
+        if failed_settings:
+            return False, f"Failed to update settings: {'; '.join(failed_settings)}"
         
         # Restart PostgreSQL to apply archive_mode changes
         self.logger.info("Restarting PostgreSQL to apply archiving configuration...")

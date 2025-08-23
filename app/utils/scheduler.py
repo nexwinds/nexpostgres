@@ -93,14 +93,20 @@ def execute_backup(job_id, manual=False):
         # Setup PostgreSQL manager and execute backup
         pg_manager = PostgresManager(ssh)
         
-        # Configure WAL-G for backup job
-        logger.info(f"Configuring WAL-G for job {job.id}...")
+        # Use optimized configuration check with intelligent caching
+        backup_type = "manual" if manual else "scheduled"
+        logger.info(f"Configuring WAL-G for {backup_type} backup job {job.id}...")
+        
         from app.utils.backup_service import BackupService
         config_result = BackupService.check_and_configure_backup(job)
         if not config_result['success']:
             error_msg = f"Failed to configure backup: {config_result['message']}"
             logger.error(error_msg)
             raise Exception(error_msg)
+        
+        # Log cache hit for performance monitoring
+        if "cached" in config_result.get('message', '').lower():
+            logger.debug(f"Configuration cache hit for job {job.id} - skipping redundant checks")
                 
         # Execute the backup (always incremental)
         success, log_output = pg_manager.perform_backup(job.database.name)

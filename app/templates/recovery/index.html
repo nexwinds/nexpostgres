@@ -16,18 +16,19 @@
                 </div>
                 <div class="card-body">
                     <form id="recoveryForm">
-                        <!-- Database Selection -->
+                        <!-- S3 Storage Selection -->
                         <div class="row mb-4">
                             <div class="col-md-6">
-                                <label for="databaseSelect" class="form-label">
-                                    <i class="fas fa-database"></i> Select Database
+                                <label for="s3StorageSelect" class="form-label">
+                                    <i class="fas fa-cloud"></i> S3 Storage Configuration
                                 </label>
-                                <select class="form-select" id="databaseSelect" required>
-                                    <option value="">Choose a database...</option>
-                                    {% for database in databases %}
-                                    <option value="{{ database }}">{{ database }}</option>
+                                <select class="form-select" id="s3StorageSelect" required>
+                                    <option value="">Choose an S3 storage...</option>
+                                    {% for storage in s3_storages %}
+                                    <option value="{{ storage.id }}">{{ storage.name }} ({{ storage.bucket }})</option>
                                     {% endfor %}
                                 </select>
+                                <div class="form-text">Select the S3 storage containing the backup to restore</div>
                             </div>
                             <div class="col-md-6">
                                 <label for="serverSelect" class="form-label">
@@ -39,19 +40,20 @@
                                     <option value="{{ server.id }}">{{ server.name }} ({{ server.host }})</option>
                                     {% endfor %}
                                 </select>
+                                <div class="form-text">Server where the database will be restored</div>
                             </div>
                         </div>
 
-                        <!-- Backup Selection -->
+                        <!-- Database Selection with Metadata -->
                         <div class="row mb-4">
                             <div class="col-12">
                                 <label class="form-label">
-                                    <i class="fas fa-archive"></i> Available Backups
+                                    <i class="fas fa-database"></i> Available Databases
                                 </label>
-                                <div id="backupsList" class="border rounded p-3" style="min-height: 200px; background-color: #f8f9fa;">
+                                <div id="databasesList" class="border rounded p-3" style="min-height: 200px; background-color: #f8f9fa;">
                                     <div class="text-center text-muted">
                                         <i class="fas fa-info-circle"></i>
-                                        Select a database to view available backups
+                                        Select an S3 storage to view available databases
                                     </div>
                                 </div>
                             </div>
@@ -134,135 +136,142 @@
 </style>
 
 <script>
-let selectedBackup = null;
+let selectedDatabase = null;
 
-// Load backups when database is selected
-document.getElementById('databaseSelect').addEventListener('change', function() {
-    const databaseName = this.value;
-    const backupsList = document.getElementById('backupsList');
+// Load databases when S3 storage is selected
+document.getElementById('s3StorageSelect').addEventListener('change', function() {
+    const s3StorageId = this.value;
+    const databasesList = document.getElementById('databasesList');
     const initiateButton = document.getElementById('initiateRecovery');
     
-    selectedBackup = null;
+    selectedDatabase = null;
     initiateButton.disabled = true;
     
-    if (!databaseName) {
-        backupsList.innerHTML = `
+    if (!s3StorageId) {
+        databasesList.innerHTML = `
             <div class="text-center text-muted">
                 <i class="fas fa-info-circle"></i>
-                Select a database to view available backups
+                Select an S3 storage to view available databases
             </div>
         `;
         return;
     }
     
     // Show loading
-    backupsList.innerHTML = `
+    databasesList.innerHTML = `
         <div class="text-center">
             <div class="spinner-border text-primary" role="status">
                 <span class="visually-hidden">Loading...</span>
             </div>
-            <p class="mt-2">Loading backups...</p>
+            <p class="mt-2">Loading databases...</p>
         </div>
     `;
     
-    // Fetch backups
-    fetch(`/recovery/api/database/${databaseName}/backups`)
+    // Fetch databases from S3
+    fetch(`/recovery/api/s3/${s3StorageId}/databases`)
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                displayBackups(data.backups);
+                displayDatabases(data.databases);
             } else {
-                backupsList.innerHTML = `
+                databasesList.innerHTML = `
                     <div class="text-center text-danger">
                         <i class="fas fa-exclamation-triangle"></i>
-                        Error loading backups: ${data.error}
+                        Error loading databases: ${data.error}
                     </div>
                 `;
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            backupsList.innerHTML = `
+            databasesList.innerHTML = `
                 <div class="text-center text-danger">
                     <i class="fas fa-exclamation-triangle"></i>
-                    Error loading backups
+                    Error loading databases
                 </div>
             `;
         });
 });
 
-function displayBackups(backups) {
-    const backupsList = document.getElementById('backupsList');
+function displayDatabases(databases) {
+    const databasesList = document.getElementById('databasesList');
     
-    if (backups.length === 0) {
-        backupsList.innerHTML = `
+    if (databases.length === 0) {
+        databasesList.innerHTML = `
             <div class="text-center text-muted">
                 <i class="fas fa-info-circle"></i>
-                No backups available for this database
+                No databases found in this S3 storage
             </div>
         `;
         return;
     }
     
     let html = '';
-    backups.forEach(backup => {
-        const size = formatBytes(backup.size);
-        const date = new Date(backup.last_modified).toLocaleString();
+    databases.forEach(database => {
+        const size = formatBytes(database.total_size);
+        const date = new Date(database.last_backup_date).toLocaleString();
         
         html += `
-            <div class="backup-item" onclick="selectBackup('${backup.key}', this)">
+            <div class="database-item" onclick="selectDatabase('${database.name}', '${database.latest_backup_key}', this)">
                 <div class="d-flex justify-content-between align-items-start">
                     <div>
                         <h6 class="mb-1">
-                            <i class="fas fa-archive"></i> ${backup.backup_name}
+                            <i class="fas fa-database"></i> ${database.name}
                         </h6>
-                        <div class="backup-meta">
-                            <span><i class="fas fa-calendar"></i> ${date}</span>
-                            <span class="ms-3"><i class="fas fa-server"></i> ${backup.server_name}</span>
+                        <div class="database-meta">
+                            <span><i class="fas fa-calendar"></i> Last backup: ${date}</span>
+                            <span class="ms-3"><i class="fas fa-archive"></i> ${database.backup_count} backups</span>
+                        </div>
+                        <div class="text-muted small mt-1">
+                            <i class="fas fa-info-circle"></i> Only the most recent backup will be restored
                         </div>
                     </div>
                     <div class="text-end">
-                        <div class="backup-size">${size}</div>
+                        <div class="database-size">${size}</div>
+                        <div class="text-muted small">Total size</div>
                     </div>
                 </div>
             </div>
         `;
     });
     
-    backupsList.innerHTML = html;
+    databasesList.innerHTML = html;
 }
 
-function selectBackup(backupKey, element) {
+function selectDatabase(databaseName, backupKey, element) {
     // Remove previous selection
-    document.querySelectorAll('.backup-item').forEach(item => {
+    document.querySelectorAll('.database-item').forEach(item => {
         item.classList.remove('selected');
     });
     
-    // Select current backup
+    // Select current database
     element.classList.add('selected');
-    selectedBackup = backupKey;
+    selectedDatabase = {
+        name: databaseName,
+        backup_key: backupKey
+    };
     
     // Enable initiate button if server is also selected
     const serverSelect = document.getElementById('serverSelect');
     const initiateButton = document.getElementById('initiateRecovery');
-    initiateButton.disabled = !selectedBackup || !serverSelect.value;
+    initiateButton.disabled = !selectedDatabase || !serverSelect.value;
 }
 
 // Enable/disable initiate button when server is selected
 document.getElementById('serverSelect').addEventListener('change', function() {
     const initiateButton = document.getElementById('initiateRecovery');
-    initiateButton.disabled = !selectedBackup || !this.value;
+    initiateButton.disabled = !selectedDatabase || !this.value;
 });
 
 // Handle form submission
 document.getElementById('recoveryForm').addEventListener('submit', function(e) {
     e.preventDefault();
     
-    const databaseName = document.getElementById('databaseSelect').value;
+    const s3StorageId = document.getElementById('s3StorageSelect').value;
     const serverId = document.getElementById('serverSelect').value;
     
-    if (!selectedBackup || !databaseName || !serverId) {
-        alert('Please select a database, backup, and target server');
+    if (!selectedDatabase || !s3StorageId || !serverId) {
+        alert('Please select an S3 storage, database, and target server');
         return;
     }
     
@@ -271,15 +280,13 @@ document.getElementById('recoveryForm').addEventListener('submit', function(e) {
     modal.show();
     
     // Initiate recovery
-    fetch('/recovery/initiate', {
+    csrfFetch('/recovery/initiate', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
-            database_name: databaseName,
-            backup_key: selectedBackup,
-            target_server_id: serverId
+            database_name: selectedDatabase.name,
+            backup_key: selectedDatabase.backup_key,
+            target_server_id: serverId,
+            s3_storage_id: s3StorageId
         })
     })
     .then(response => response.json())

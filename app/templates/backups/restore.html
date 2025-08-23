@@ -22,31 +22,45 @@
     <div class="card-body">
         <form method="post" id="restoreForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-            <!-- Source Backup -->
-            <h4 class="border-bottom pb-2 mb-3">Source Backup</h4>
+            <!-- Database Selection -->
+            <h4 class="border-bottom pb-2 mb-3">Database Selection</h4>
             
             <div class="mb-3">
-                <label for="backup_job_id" class="form-label">Backup Job</label>
-                <select class="form-select" id="backup_job_id" name="backup_job_id" required>
-                    <option value="" selected disabled>Select a backup job</option>
-                    {% for job in backup_jobs %}
-                    <option value="{{ job.id }}" data-database-id="{{ job.database_id }}">
-                        {{ job.name }} ({{ job.database.name }} on {{ job.server.name }})
+                <label for="database_id" class="form-label">Target Database</label>
+                <select class="form-select" id="database_id" name="database_id" required>
+                    <option value="" selected disabled>Select a database to restore</option>
+                    {% for db in databases %}
+                    <option value="{{ db.id }}" data-backup-job-id="{{ db.backup_job.id }}">
+                        {{ db.name }} on {{ db.server.name }}
                     </option>
                     {% endfor %}
                 </select>
+                <div class="form-text">Select the database you want to restore (maintains one-to-one relationship with backup jobs)</div>
             </div>
             
-            <div class="mb-3" id="backupLogSelection">
-                <label for="backup_log_id" class="form-label">Backup to Restore</label>
-                <select class="form-select" id="backup_log_id" name="backup_log_id">
-                    <option value="" selected disabled>Select backup job first</option>
-                </select>
-                <div class="form-text">Only successful backups are shown</div>
+            <div class="mb-3" id="backupSelection">
+                <label for="backup_type" class="form-label">Backup Selection</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="backup_type" id="latest_backup" value="latest" checked>
+                    <label class="form-check-label" for="latest_backup">
+                        <strong>Latest Backup</strong> (Recommended)
+                    </label>
+                </div>
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="radio" name="backup_type" id="specific_backup" value="specific">
+                    <label class="form-check-label" for="specific_backup">
+                        <strong>Specific Backup</strong> (Choose from available backups)
+                    </label>
+                </div>
             </div>
-
-            <!-- Hidden input to store database ID -->
-            <input type="hidden" id="database_id" name="database_id" value="">
+            
+            <div class="mb-3" id="specificBackupSelection" style="display: none;">
+                <label for="backup_log_id" class="form-label">Available Backups</label>
+                <select class="form-select" id="backup_log_id" name="backup_log_id">
+                    <option value="" selected disabled>Select database first</option>
+                </select>
+                <div class="form-text">Hourly backup options will be displayed when available</div>
+            </div>
             
             <!-- Target Options -->
             <h4 class="border-bottom pb-2 mb-3 mt-5">Target Options</h4>
@@ -106,23 +120,24 @@
 {% block extra_js %}
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        const backupJobSelect = document.getElementById('backup_job_id');
         const restoreToSameCheckbox = document.getElementById('restore_to_same');
         const targetDatabaseDiv = document.getElementById('targetDatabaseDiv');
         const recoveryTargetTimeCheckbox = document.getElementById('recovery_target_time');
         const recoveryTimeDiv = document.getElementById('recoveryTimeDiv');
-        const backupLogSelection = document.getElementById('backupLogSelection');
-        const databaseIdInput = document.getElementById('database_id');
-        const recoveryTimeSelect = document.getElementById('recovery_time');
         
-        // Handle backup job selection change
-        backupJobSelect.addEventListener('change', function() {
-            const jobId = this.value;
-            if (!jobId) return;
+        // Handle database selection change
+        const databaseSelect = document.getElementById('database_id');
+        const specificBackupRadio = document.getElementById('specific_backup');
+        const specificBackupSelection = document.getElementById('specificBackupSelection');
+        const latestBackupRadio = document.getElementById('latest_backup');
+        
+        // Handle database selection change
+        databaseSelect.addEventListener('change', function() {
+            const databaseId = this.value;
+            if (!databaseId) return;
             
-            // Get the database ID from the selected job option
-            const databaseId = this.options[this.selectedIndex].getAttribute('data-database-id');
-            databaseIdInput.value = databaseId;
+            // Get the backup job ID from the selected database option
+            const backupJobId = this.options[this.selectedIndex].getAttribute('data-backup-job-id');
             
             // Show loading indicator for backup logs
             backupLogSelection.innerHTML = `
@@ -133,6 +148,37 @@
                     </div>
                     <span>Loading backup logs...</span>
                 </div>
+            `;
+            
+            // If specific backup is selected, fetch backup logs
+            if (specificBackupRadio.checked) {
+                loadBackupLogs(backupJobId);
+            }
+        });
+        
+        // Handle backup type radio button changes
+        document.querySelectorAll('input[name="backup_type"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.value === 'specific') {
+                    specificBackupSelection.style.display = 'block';
+                    const databaseSelect = document.getElementById('database_id');
+                    const backupJobId = databaseSelect.options[databaseSelect.selectedIndex]?.getAttribute('data-backup-job-id');
+                    if (backupJobId) {
+                        loadBackupLogs(backupJobId);
+                    }
+                } else {
+                    specificBackupSelection.style.display = 'none';
+                }
+            });
+        });
+        
+        // Function to load backup logs
+        function loadBackupLogs(jobId) {
+            const backupLogSelect = document.getElementById('backup_log_id');
+            
+            // Show loading indicator
+            backupLogSelect.innerHTML = `
+                <option value="" selected disabled>Loading backup logs...</option>
             `;
             
             // Fetch backup logs for selected job
@@ -155,55 +201,52 @@
                     }
                     
                     // Update backup log select options
-                    const selectHtml = `
-                        <label for="backup_log_id" class="form-label">Backup to Restore</label>
-                        <select class="form-select" id="backup_log_id" name="backup_log_id" ${!recoveryTargetTimeCheckbox.checked ? '' : ''}>${options}</select>
-                        <div class="form-text">Only successful backups are shown</div>
-                        <input type="hidden" name="has_backups" value="${hasBackups ? 'true' : 'false'}">
-                    `;
+                    backupLogSelect.innerHTML = options;
                     
-                    backupLogSelection.innerHTML = selectHtml;
-                    
-                    // If no backups available, suggest using point-in-time recovery
-                    if (!hasBackups && !recoveryTargetTimeCheckbox.checked) {
-                        backupLogSelection.innerHTML += `
-                            <div class="alert alert-info mt-2">
-                                <i class="fas fa-info-circle me-2"></i>
-                                No successful backups found. The system will attempt to use the latest backup if available.
-                            </div>
+                    // If no backups available, show info message
+                    if (!hasBackups) {
+                        const infoDiv = document.createElement('div');
+                        infoDiv.className = 'alert alert-info mt-2';
+                        infoDiv.innerHTML = `
+                            <i class="fas fa-info-circle me-2"></i>
+                            No successful backups found. Please use the "Latest Backup" option instead.
                         `;
+                        specificBackupSelection.appendChild(infoDiv);
                     }
                 })
                 .catch(error => {
                     console.error('Error fetching backup logs:', error);
-                    backupLogSelection.innerHTML = `
-                        <label for="backup_log_id" class="form-label">Backup to Restore</label>
-                        <select class="form-select" id="backup_log_id" name="backup_log_id" disabled>
-                            <option value="" selected disabled>Error loading backups</option>
-                        </select>
-                        <div class="form-text text-danger">Failed to load backup logs: ${error.message}</div>
+                    backupLogSelect.innerHTML = `
+                        <option value="" selected disabled>Error loading backups</option>
                     `;
+                    
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'form-text text-danger';
+                    errorDiv.textContent = `Failed to load backup logs: ${error.message}`;
+                    specificBackupSelection.appendChild(errorDiv);
                 });
                 
             // Load recovery points when recovery_target_time is checked
-            if (recoveryTargetTimeCheckbox.checked) {
-                loadRecoveryPoints(jobId);
-            }
-        });
+                if (recoveryTargetTimeCheckbox.checked) {
+                    loadRecoveryPoints(backupJobId);
+                }
+            });
+        }
         
         // Function to load recovery points
         function loadRecoveryPoints(jobId) {
+            const recoveryTimeSelect = document.getElementById('recovery_time');
             recoveryTimeSelect.innerHTML = `
                 <option value="" selected disabled>Loading recovery points...</option>
             `;
             
-            // Get database ID from the selected backup job
-            const selectedOption = backupJobSelect.options[backupJobSelect.selectedIndex];
-            const databaseId = selectedOption.getAttribute('data-database-id');
+            // Get database ID from the selected database
+            const databaseSelect = document.getElementById('database_id');
+            const databaseId = databaseSelect.value;
             
             if (!databaseId) {
                 recoveryTimeSelect.innerHTML = `
-                    <option value="" selected disabled>Error: No database ID found</option>
+                    <option value="" selected disabled>Error: No database selected</option>
                 `;
                 return;
             }
@@ -244,6 +287,7 @@
         
         // Handle recovery target time checkbox
         recoveryTargetTimeCheckbox.addEventListener('change', function() {
+            const recoveryTimeSelect = document.getElementById('recovery_time');
             if (this.checked) {
                 recoveryTimeDiv.style.display = 'block';
                 recoveryTimeSelect.required = true;
@@ -254,9 +298,12 @@
                     backupLogSelect.required = false;
                 }
                 
-                const jobId = backupJobSelect.value;
-                if (jobId) {
-                    loadRecoveryPoints(jobId);
+                // Load recovery points if database is already selected
+                const databaseSelect = document.getElementById('database_id');
+                const selectedDatabaseId = databaseSelect.value;
+                if (selectedDatabaseId) {
+                    const backupJobId = databaseSelect.options[databaseSelect.selectedIndex].getAttribute('data-backup-job-id');
+                    loadRecoveryPoints(backupJobId);
                 }
             } else {
                 recoveryTimeDiv.style.display = 'none';
@@ -272,43 +319,40 @@
         
         // Form submission validation
         document.getElementById('restoreForm').addEventListener('submit', function(e) {
-            const backupJobSelect = document.getElementById('backup_job_id');
+            const databaseSelect = document.getElementById('database_id');
             const backupLogSelect = document.getElementById('backup_log_id');
             const useRecoveryTime = recoveryTargetTimeCheckbox.checked;
+            const recoveryTimeSelect = document.getElementById('recovery_time');
             const recoveryTimeValue = recoveryTimeSelect.value;
-            const databaseIdInput = document.getElementById('database_id');
+            const backupTypeRadios = document.querySelectorAll('input[name="backup_type"]');
+            const selectedBackupType = Array.from(backupTypeRadios).find(radio => radio.checked)?.value;
             
             // Check if there are real recovery points available (not just placeholder options)
             const recoveryPointsAvailable = Array.from(recoveryTimeSelect.options).some(option => 
                 !option.disabled && !option.textContent.includes('No recovery points available')
             );
             
-            // Validate backup job selection
-            if (!backupJobSelect.value) {
+            // Validate database selection
+            if (!databaseSelect.value) {
                 e.preventDefault();
-                alert('Please select a backup job first');
-                backupJobSelect.focus();
+                alert('Please select a database first');
+                databaseSelect.focus();
                 return false;
             }
             
-            // Ensure database ID is set from the backup job if not already set
-            if (!databaseIdInput.value && backupJobSelect.selectedIndex > 0) {
-                const databaseId = backupJobSelect.options[backupJobSelect.selectedIndex].getAttribute('data-database-id');
-                if (databaseId) {
-                    databaseIdInput.value = databaseId;
-                }
-            }
-            
-            if (!useRecoveryTime && (!backupLogSelect || !backupLogSelect.value)) {
-                // For standard restore, we try to use the latest backup automatically,
-                // so only show warning if no backups are available
+            // Validate specific backup selection if chosen
+            if (selectedBackupType === 'specific' && (!backupLogSelect || !backupLogSelect.value)) {
                 const noBackupsAvailable = backupLogSelect && 
                     (!backupLogSelect.options.length || 
                     (backupLogSelect.options.length === 1 && backupLogSelect.options[0].disabled));
                 
                 if (noBackupsAvailable) {
                     e.preventDefault();
-                    alert('No backups available for this job. Please create a backup first or try another job.');
+                    alert('No specific backups available for this database. Please use "Latest Backup" option instead.');
+                    return false;
+                } else {
+                    e.preventDefault();
+                    alert('Please select a specific backup or choose "Latest Backup" option.');
                     return false;
                 }
             }
@@ -324,9 +368,8 @@
             }
             
             // If point-in-time recovery is enabled but no recovery points are available,
-            // allow the form to submit if a backup job is selected
-            if (useRecoveryTime && !recoveryPointsAvailable && (!backupLogSelect || !backupLogSelect.value)) {
-                // The server will attempt to use the latest backup
+            // allow the form to submit if a database is selected
+            if (useRecoveryTime && !recoveryPointsAvailable) {
                 console.log('No recovery points available, using latest backup instead');
             }
             

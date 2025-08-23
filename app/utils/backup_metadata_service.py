@@ -223,8 +223,8 @@ class BackupMetadataService:
                     region_name=job.s3_storage.region
                 )
                 
-                # List objects in the S3 bucket with the job's prefix
-                prefix = f"backups/{job.database.name}/"
+                # List objects in the S3 bucket with WAL-G's postgres prefix
+                prefix = f"postgres/{job.database.name}/"
                 response = s3_client.list_objects_v2(
                     Bucket=job.s3_storage.bucket,
                     Prefix=prefix
@@ -269,6 +269,108 @@ class BackupMetadataService:
         """
         backup_structure = BackupMetadataService.get_s3_backup_structure()
         return backup_structure.get(database_name, [])
+    
+    @staticmethod
+    def get_s3_databases_with_metadata(s3_storage) -> List[Dict]:
+        """Get databases with metadata from a specific S3 storage.
+        
+        Args:
+            s3_storage: S3Storage instance
+            
+        Returns:
+            List of database dictionaries with metadata (name, last_backup_date, size)
+        """
+        import boto3
+        from botocore.exceptions import ClientError
+        
+        databases = []
+        
+        try:
+            # Initialize S3 client
+            s3_client = boto3.client(
+                's3',
+                aws_access_key_id=s3_storage.access_key,
+                aws_secret_access_key=s3_storage.secret_key,
+                region_name=s3_storage.region,
+                endpoint_url=s3_storage.endpoint if s3_storage.endpoint else None
+            )
+            
+            # List all objects in the S3 bucket with postgres prefix
+            response = s3_client.list_objects_v2(
+                Bucket=s3_storage.bucket,
+                Prefix='postgres/',
+                Delimiter='/'
+            )
+            
+            # Extract database names from common prefixes
+            if 'CommonPrefixes' in response:
+                for prefix in response['CommonPrefixes']:
+                    # Extract database name from prefix like 'postgres/database_name/'
+                    database_name = prefix['Prefix'].replace('postgres/', '').rstrip('/')
+                    if database_name:
+                        # Get metadata for this database
+                        db_metadata = BackupMetadataService._get_database_metadata_from_s3(
+                            s3_client, s3_storage.bucket, database_name
+                        )
+                        if db_metadata:
+                            databases.append(db_metadata)
+            
+            # Sort by last backup date (newest first)
+            databases.sort(key=lambda x: x.get('last_backup_date', ''), reverse=True)
+            
+        except ClientError as e:
+            logger.error(f"Error accessing S3 storage {s3_storage.name}: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error accessing S3 storage {s3_storage.name}: {str(e)}")
+            
+        return databases
+    
+    @staticmethod
+    def _get_database_metadata_from_s3(s3_client, bucket, database_name) -> Optional[Dict]:
+        """Get metadata for a specific database from S3.
+        
+        Args:
+            s3_client: Boto3 S3 client
+            bucket: S3 bucket name
+            database_name: Name of the database
+            
+        Returns:
+            Dictionary with database metadata or None if no backups found
+        """
+        try:
+            # List objects for this database
+            prefix = f"postgres/{database_name}/"
+            response = s3_client.list_objects_v2(
+                Bucket=bucket,
+                Prefix=prefix
+            )
+            
+            if 'Contents' not in response or not response['Contents']:
+                return None
+                
+            # Find the most recent backup and calculate total size
+            latest_backup = None
+            total_size = 0
+            
+            for obj in response['Contents']:
+                total_size += obj['Size']
+                if not latest_backup or obj['LastModified'] > latest_backup['LastModified']:
+                    latest_backup = obj
+            
+            if not latest_backup:
+                return None
+                
+            return {
+                'name': database_name,
+                'last_backup_date': latest_backup['LastModified'].isoformat(),
+                'total_size': total_size,
+                'backup_count': len(response['Contents']),
+                'latest_backup_key': latest_backup['Key']
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting metadata for database {database_name}: {str(e)}")
+            return None
     
     @staticmethod
     def get_all_databases_with_backups() -> List[str]:

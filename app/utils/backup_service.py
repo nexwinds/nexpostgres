@@ -5,10 +5,18 @@ from app.utils.scheduler import schedule_backup_job, execute_manual_backup
 from datetime import datetime, timedelta
 import os
 import re
+import hashlib
+import threading
+from functools import lru_cache
 
 
 class BackupService:
     """Service class for handling backup operations and SSH connections."""
+    
+    # In-memory cache for configuration validation results
+    _config_cache = {}
+    _cache_lock = threading.Lock()
+    _cache_ttl = 3600  # 1 hour cache TTL
     
     @staticmethod
     def create_ssh_connection(server):
@@ -171,7 +179,7 @@ class BackupService:
     
     @staticmethod
     def check_and_configure_backup(backup_job):
-        """Configure backup system for the given backup job.
+        """Configure backup system for the given backup job with intelligent caching.
         
         Args:
             backup_job: BackupJob object containing all necessary configuration
@@ -179,12 +187,15 @@ class BackupService:
         Returns:
             dict: {'success': bool, 'message': str}
         """
+        # Generate cache key and check for cached result
+        cache_key = BackupService._generate_cache_key(backup_job)
+        cached_result = BackupService._get_cached_result(cache_key)
+        
+        if cached_result:
+            return {'success': True, 'message': 'WAL-G backup system already configured and validated (cached)'}
+        
         def configure_operation(pg_manager):
-            # Install WAL-G if not already installed
-            if not pg_manager.backup_manager.is_walg_installed():
-                success, message = pg_manager.backup_manager.install_walg()
-                if not success:
-                    return {'success': False, 'message': f'Failed to install WAL-G: {message}'}
+            # WAL-G is pre-installed during server provisioning, so skip installation check
             
             # Configure WAL-G based on storage type
             if backup_job.s3_storage:
@@ -217,10 +228,83 @@ class BackupService:
             pg_manager = BackupService.create_postgres_manager(ssh)
             result = configure_operation(pg_manager)
             
+            # Cache successful configuration
+            if result.get('success'):
+                BackupService._cache_result(cache_key, result)
+            
             ssh.disconnect()
             return result
         except Exception as e:
             return {'success': False, 'message': f'Configuration error: {str(e)}'}
+    
+    @staticmethod
+    def _generate_cache_key(backup_job):
+        """Generate a unique cache key for the backup job configuration.
+        
+        Args:
+            backup_job: BackupJob object
+            
+        Returns:
+            str: SHA256 hash of configuration for caching
+        """
+        # Use only essential configuration elements for cache key
+        key_elements = [
+            str(backup_job.id),
+            str(backup_job.database_id), 
+            str(backup_job.vps_server_id),
+            str(backup_job.s3_storage_id),
+            str(backup_job.encryption_key or '')
+        ]
+        key_string = '|'.join(key_elements)
+        return hashlib.sha256(key_string.encode()).hexdigest()[:12]
+    
+    @staticmethod
+    def _get_cached_result(cache_key):
+        """Get cached configuration result if valid.
+        
+        Args:
+            cache_key: Configuration cache key
+            
+        Returns:
+            dict or None: Cached result if valid, None otherwise
+        """
+        with BackupService._cache_lock:
+            if cache_key in BackupService._config_cache:
+                cached_data = BackupService._config_cache[cache_key]
+                cache_time = cached_data.get('timestamp', 0)
+                
+                # Check if cache is still valid (within TTL)
+                if (datetime.utcnow().timestamp() - cache_time) < BackupService._cache_ttl:
+                    return cached_data.get('result')
+                else:
+                    # Remove expired cache entry
+                    del BackupService._config_cache[cache_key]
+        
+        return None
+    
+    @staticmethod
+    def _cache_result(cache_key, result):
+        """Cache configuration result.
+        
+        Args:
+            cache_key: Configuration cache key
+            result: Result to cache
+        """
+        with BackupService._cache_lock:
+            BackupService._config_cache[cache_key] = {
+                'result': result,
+                'timestamp': datetime.utcnow().timestamp()
+            }
+            
+            # Clean up old cache entries to prevent memory leaks
+            current_time = datetime.utcnow().timestamp()
+            expired_keys = [
+                key for key, data in BackupService._config_cache.items()
+                if (current_time - data.get('timestamp', 0)) >= BackupService._cache_ttl
+            ]
+            
+            for key in expired_keys:
+                del BackupService._config_cache[key]
     
     @staticmethod
     def schedule_backup_job_safe(backup_job):

@@ -36,6 +36,7 @@ class VpsServer(BaseModel):
     postgres_port = db.Column(db.Integer, default=5432)  # PostgreSQL port
     username = db.Column(db.String(80))
     ssh_key_content = db.Column(db.Text)
+    postgres_data_dir = db.Column(db.String(255), default='/var/lib/postgresql/data')  # PostgreSQL data directory
     initialized = db.Column(db.Boolean, default=False)
     
     # Relationships
@@ -113,6 +114,8 @@ class RestoreLog(BaseModel):
     status = db.Column(db.String(20))  # success, failed, in_progress
     log_output = db.Column(db.Text)
     restore_point = db.Column(db.DateTime, nullable=True)  # For point-in-time recovery
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class FlaskSession(db.Model):
     id = db.Column(db.String(255), primary_key=True)

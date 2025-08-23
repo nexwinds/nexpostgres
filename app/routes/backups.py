@@ -222,18 +222,17 @@ def backup_logs():
 
 @backups_bp.route('/restore', methods=['GET', 'POST'])
 def restore():
-    """Initiate database restore."""
+    """Initiate database restore - routine restoration with database selection."""
     if request.method == 'POST':
         # Validate form data
         is_valid, errors, validated_data = UnifiedValidationService.validate_restore_form_data(request.form)
         
         if not is_valid:
             UnifiedValidationService.flash_validation_errors(errors)
-            backup_jobs = BackupJob.query.all()
-            databases = PostgresDatabase.query.all()
+            # Get databases that have backup jobs (one-to-one relationship)
+            databases_with_backups = PostgresDatabase.query.join(BackupJob).all()
             return render_template('backups/restore.html', 
-                                 backup_jobs=backup_jobs,
-                                 databases=databases)
+                                 databases=databases_with_backups)
         
         # Execute restore
         restore_service = BackupRestoreService()
@@ -245,11 +244,10 @@ def restore():
         else:
             flash(message, 'danger')
     
-    backup_jobs = BackupJob.query.all()
-    databases = PostgresDatabase.query.all()
+    # Get databases that have backup jobs (one-to-one relationship)
+    databases_with_backups = PostgresDatabase.query.join(BackupJob).all()
     return render_template('backups/restore.html', 
-                         backup_jobs=backup_jobs,
-                         databases=databases)
+                         databases=databases_with_backups)
 
 
 @backups_bp.route('/restore_logs')
