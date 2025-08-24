@@ -6,8 +6,8 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>Backup Log Details</h1>
     <div>
-        <a href="{{ url_for('backups.backup_logs', backup_job_id=log.backup_job_id) }}" class="btn btn-secondary">
-            <i class="fas fa-arrow-left me-1"></i> Back to Logs
+        <a href="{{ url_for('backups.backups', backup_job_id=log.backup_job_id) }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Logs
         </a>
     </div>
 </div>
@@ -24,6 +24,14 @@
                     <tr>
                         <th style="width: 35%">Job Name</th>
                         <td>{{ log.backup_job_name }}</td>
+                    </tr>
+                    <tr>
+                        <th>Backup Database</th>
+                        <td>{{ log.database_name }}</td>
+                    </tr>
+                    <tr>
+                        <th>Backup Server</th>
+                        <td>{{ log.server_name }}</td>
                     </tr>
                     <tr>
                         <th>Backup Name</th>
@@ -61,8 +69,14 @@
                     <tr>
                         <th>Duration</th>
                         <td>
-                            {% if log.duration %}
-                            {{ log.duration }} seconds
+                            {% if log.duration is not none %}
+                                {% if log.duration >= 3600 %}
+                                {{ (log.duration // 3600)|int }}h {{ ((log.duration % 3600) // 60)|int }}m {{ (log.duration % 60)|int }}s
+                                {% elif log.duration >= 60 %}
+                                {{ (log.duration // 60)|int }}m {{ (log.duration % 60)|int }}s
+                                {% else %}
+                                {{ log.duration|int }}s
+                                {% endif %}
                             {% else %}
                             <span class="text-muted">-</span>
                             {% endif %}

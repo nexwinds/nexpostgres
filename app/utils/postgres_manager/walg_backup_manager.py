@@ -133,7 +133,17 @@ class WalgBackupManager:
         bucket_name = sanitize_value(s3_config.get('bucket'))
         access_key = sanitize_value(s3_config.get('access_key'))
         secret_key = sanitize_value(s3_config.get('secret_key'))
-        region = sanitize_value(s3_config.get('region'), 'us-east-1')
+        region = sanitize_value(s3_config.get('region'))  # No default region
+        
+        # Validate required fields (no defaults allowed)
+        if not bucket_name:
+            return False, "S3 bucket name is required"
+        if not access_key:
+            return False, "AWS access key is required"
+        if not secret_key:
+            return False, "AWS secret key is required"
+        if not region:
+            return False, "AWS region is required"
         
         # Build environment configuration
         env_vars = [
@@ -149,13 +159,18 @@ class WalgBackupManager:
         if endpoint:
             env_vars.append(f"export AWS_ENDPOINT={endpoint}")
         
-        # Add WAL-G specific settings
+        # Add WAL-G specific settings only if explicitly configured (no defaults)
         walg_settings = PostgresConstants.WALG_S3_ENV
-        env_vars.extend([
-            f"export WALG_COMPRESSION_METHOD={walg_settings['WALG_COMPRESSION_METHOD']}",
-            f"export WALG_DELTA_MAX_STEPS={walg_settings['WALG_DELTA_MAX_STEPS']}",
-            f"export WALG_TAR_SIZE_THRESHOLD={walg_settings['WALG_TAR_SIZE_THRESHOLD']}"
-        ])
+        
+        # Only add settings that are explicitly configured
+        if walg_settings.get('WALG_COMPRESSION_METHOD'):
+            env_vars.append(f"export WALG_COMPRESSION_METHOD={walg_settings['WALG_COMPRESSION_METHOD']}")
+        
+        if walg_settings.get('WALG_DELTA_MAX_STEPS'):
+            env_vars.append(f"export WALG_DELTA_MAX_STEPS={walg_settings['WALG_DELTA_MAX_STEPS']}")
+        
+        if walg_settings.get('WALG_TAR_SIZE_THRESHOLD'):
+            env_vars.append(f"export WALG_TAR_SIZE_THRESHOLD={walg_settings['WALG_TAR_SIZE_THRESHOLD']}")
         
         env_content = '\n'.join(env_vars) + '\n'
         
@@ -334,26 +349,52 @@ class WalgBackupManager:
         """
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
         
-        result = self.system_utils.execute_as_postgres_user(
-            f"bash -c 'source {env_file} && wal-g backup-list --json'"
-        )
+        command = f"bash -c 'source {env_file} && wal-g backup-list --json --detail'"
+        self.logger.info(f"[WALGBackupManager] Executing WAL-G command: {command}")
+        result = self.system_utils.execute_as_postgres_user(command)
+        
+        self.logger.info(f"[WALGBackupManager] WAL-G command exit code: {result['exit_code']}")
+        if result['stdout']:
+            self.logger.info(f"[WALGBackupManager] WAL-G stdout: {result['stdout'][:1000]}...")  # First 1000 chars for debugging
+        if result['stderr']:
+            self.logger.warning(f"[WALGBackupManager] WAL-G stderr: {result['stderr']}")
         
         backups = []
         if result['exit_code'] == 0 and result['stdout'].strip():
             try:
+                self.logger.info("[WALGBackupManager] Parsing JSON output...")
                 backup_data = json.loads(result['stdout'])
+                self.logger.info(f"[WALGBackupManager] Parsed {len(backup_data)} backups from WAL-G")
                 
-                for backup in backup_data:
-                    backups.append({
+                for i, backup in enumerate(backup_data):
+                    self.logger.info(f"[WALGBackupManager] Processing backup {i+1}: {backup.get('backup_name', 'unknown')}")
+                    # Map WAL-G backup fields according to official documentation
+                    # WAL-G --json --detail provides: backup_name, time, uncompressed_size, compressed_size, start_time, finish_time, etc.
+                    backup_info = {
                         'name': backup.get('backup_name', ''),
                         'type': 'full' if backup.get('is_permanent', False) else 'delta',
                         'timestamp': backup.get('time', ''),
-                        'size': backup.get('uncompressed_size', 0),
-                        'info': backup
-                    })
+                        'size': backup.get('uncompressed_size', 0),  # Primary size field
+                        'compressed_size': backup.get('compressed_size', 0),  # Additional size info
+                        'is_permanent': backup.get('is_permanent', False),
+                        'wal_file_name': backup.get('wal_file_name', ''),
+                        'start_time': backup.get('start_time', ''),
+                        'finish_time': backup.get('finish_time', ''),
+                        'hostname': backup.get('hostname', ''),
+                        'data_dir': backup.get('data_dir', ''),
+                        'pg_version': backup.get('pg_version', ''),
+                        'start_lsn': backup.get('start_lsn', ''),
+                        'finish_lsn': backup.get('finish_lsn', ''),
+                        'info': backup  # Keep full backup info for debugging
+                    }
+                    backups.append(backup_info)
+                    self.logger.info(f"[WALGBackupManager] Added backup info: {backup_info['name']} at {backup_info['timestamp']}")
             except (json.JSONDecodeError, KeyError) as e:
-                self.logger.error(f"Failed to parse backup info: {str(e)}")
+                self.logger.error(f"[WALGBackupManager] Failed to parse backup info: {str(e)}")
+        else:
+            self.logger.warning("[WALGBackupManager] WAL-G command failed or returned empty output")
         
+        self.logger.info(f"[WALGBackupManager] Returning {len(backups)} backups")
         return backups
     
     def restore_database(self, db_name: str, backup_name: str = None) -> Tuple[bool, str]:
@@ -409,12 +450,15 @@ class WalgBackupManager:
         
         Args:
             db_name: Database name
-            retention_count: Number of backups to keep
+            retention_count: Number of backups to keep (required)
             
         Returns:
             tuple: (success, message)
         """
-        retention = retention_count or PostgresConstants.WALG['default_retention_count']
+        if not retention_count:
+            return False, "Retention count must be explicitly specified"
+        
+        retention = retention_count
         
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
         

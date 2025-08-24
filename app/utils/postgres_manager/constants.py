@@ -23,27 +23,26 @@ class PostgresConstants:
         'pg_hba_conf': 'pg_hba.conf'
     }
     
-    # WAL-G configuration - S3-based backup solution
+    # WAL-G configuration - S3-based backup solution (no default values)
     WALG = {
         'binary_path': '/usr/local/bin/wal-g',
         'config_dir': '/etc/wal-g',
         'log_dir': '/var/log/wal-g',
-        'default_retention_count': 10,
         'backup_timeout': 3600,
         'restore_timeout': 7200,
         'download_url': 'https://github.com/wal-g/wal-g/releases/latest/download/wal-g-pg-ubuntu-20.04-amd64.tar.gz'
     }
     
-    # WAL-G S3 environment variables
+    # WAL-G S3 environment variables - no default values per requirements
     WALG_S3_ENV = {
         'WALE_S3_PREFIX': None,  # Will be set to s3://bucket-name/postgres
         'AWS_ACCESS_KEY_ID': None,
         'AWS_SECRET_ACCESS_KEY': None,
         'AWS_REGION': None,
         'AWS_ENDPOINT': None,  # Optional for S3-compatible storage
-        'WALG_COMPRESSION_METHOD': 'lz4',
-        'WALG_DELTA_MAX_STEPS': '6',
-        'WALG_TAR_SIZE_THRESHOLD': '1073741823'
+        'WALG_COMPRESSION_METHOD': None,  # Must be explicitly configured
+        'WALG_DELTA_MAX_STEPS': None,  # Must be explicitly configured
+        'WALG_TAR_SIZE_THRESHOLD': None  # Must be explicitly configured
     }
     
     # Timeouts and retries

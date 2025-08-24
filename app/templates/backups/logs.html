@@ -61,8 +61,8 @@
             <button type="submit" class="btn btn-primary">
                 <i class="fas fa-filter me-1"></i> Apply Filters
             </button>
-            <a href="{{ url_for('backups.backup_logs', backup_job_id=backup_job.id) if backup_job else url_for('backups.backup_logs') }}" class="btn btn-outline-secondary">
-                <i class="fas fa-times me-1"></i> Clear Filters
+            <a href="{{ url_for('backups.backups', backup_job_id=backup_job.id) if backup_job else url_for('backups.backups') }}" class="btn btn-outline-secondary">
+                <i class="fas fa-sync-alt"></i> Refresh
             </a>
         </div>
     </form>
@@ -91,7 +91,7 @@
                 <tr>
                     {% if not backup_job %}
                     <td>
-                        <a href="{{ url_for('backups.backup_logs', backup_job_id=log.backup_job_id) }}">{{ log.backup_job_name }}</a>
+                        <a href="{{ url_for('backups.backups', backup_job_id=log.backup_job_id) }}">{{ log.backup_job_name }}</a>
                     </td>
                     {% endif %}
                     <td>{{ log.start_time }}</td>
@@ -103,7 +103,7 @@
                         {% endif %}
                     </td>
                     <td>
-                        {% if log.end_time and log.start_time %}
+                        {% if log.duration is not none %}
                         {{ log.duration }} seconds
                         {% else %}
                         <span class="text-muted">-</span>

@@ -77,6 +77,7 @@ def execute_backup(job_id, manual=False):
         return False, "Backup job not found"
     
     success, message = False, "Initialization error"
+    ssh = None
     
     try:
         # Connect to server
@@ -112,7 +113,7 @@ def execute_backup(job_id, manual=False):
     
     finally:
         # Clean up SSH connection
-        if 'ssh' in locals() and ssh:
+        if ssh:
             ssh.disconnect()
     
     return success, message

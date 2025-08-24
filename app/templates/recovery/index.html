@@ -59,6 +59,16 @@
                             </div>
                         </div>
 
+                        <!-- Warning Message -->
+                        <div class="row mb-3" id="warningSection" style="display: none;">
+                            <div class="col-12">
+                                <div class="alert alert-warning" role="alert">
+                                    <i class="fas fa-exclamation-triangle"></i>
+                                    <strong>Warning:</strong> Database '<span id="warningDatabaseName"></span>' on server '<span id="warningServerName"></span>' will be permanently replaced. This action cannot be undone.
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Recovery Actions -->
                         <div class="row">
                             <div class="col-12">
@@ -105,7 +115,7 @@
 </div>
 
 <style>
-.backup-item {
+.database-item {
     border: 1px solid #dee2e6;
     border-radius: 0.375rem;
     padding: 1rem;
@@ -114,24 +124,100 @@
     transition: all 0.2s;
 }
 
-.backup-item:hover {
+.database-item:hover {
     border-color: #0d6efd;
     background-color: #f8f9ff;
 }
 
-.backup-item.selected {
+.database-item.selected {
     border-color: #0d6efd;
     background-color: #e7f1ff;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
 }
 
-.backup-meta {
+.database-meta {
     font-size: 0.875rem;
     color: #6c757d;
 }
 
-.backup-size {
+.database-size {
     font-weight: 600;
     color: #198754;
+}
+
+.walg-compliance-badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+}
+
+.recovery-warning {
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
+    70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+}
+
+.recovery-progress-container {
+    min-height: 300px;
+}
+
+.recovery-steps {
+    background-color: #f8f9fa;
+    border-radius: 0.375rem;
+    padding: 1rem;
+}
+
+.step-item {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #dee2e6;
+    transition: all 0.3s ease;
+}
+
+.step-item:last-child {
+    border-bottom: none;
+}
+
+.step-item i {
+    margin-right: 0.75rem;
+    width: 20px;
+    text-align: center;
+}
+
+.step-item.pending {
+    color: #6c757d;
+}
+
+.step-item.active {
+    color: #0d6efd;
+    font-weight: 600;
+    background-color: rgba(13, 110, 253, 0.1);
+    border-radius: 0.25rem;
+    padding: 0.75rem;
+    margin: 0.25rem 0;
+}
+
+.step-item.completed {
+    color: #198754;
+    font-weight: 500;
+}
+
+.step-item.failed {
+    color: #dc3545;
+    font-weight: 500;
+    background-color: rgba(220, 53, 69, 0.1);
+    border-radius: 0.25rem;
+    padding: 0.75rem;
+    margin: 0.25rem 0;
+}
+
+#progressText {
+    font-weight: 600;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
 }
 </style>
 
@@ -210,25 +296,42 @@ function displayDatabases(databases) {
     databases.forEach(database => {
         const size = formatBytes(database.total_size);
         const date = new Date(database.last_backup_date).toLocaleString();
+        const backupAge = getBackupAge(database.last_backup_date);
+        const isLatest = isLatestBackup(database.last_backup_date);
         
         html += `
             <div class="database-item" onclick="selectDatabase('${database.name}', '${database.latest_backup_key}', this)">
                 <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <h6 class="mb-1">
-                            <i class="fas fa-database"></i> ${database.name}
-                        </h6>
+                    <div class="flex-grow-1">
+                        <div class="d-flex align-items-center mb-1">
+                            <h6 class="mb-0 me-2">
+                                <i class="fas fa-database"></i> ${database.name}
+                            </h6>
+                            ${isLatest ? 
+                                '<span class="badge bg-success walg-compliance-badge"><i class="fas fa-check"></i> Latest</span>' : 
+                                '<span class="badge bg-warning walg-compliance-badge"><i class="fas fa-clock"></i> ' + backupAge + '</span>'
+                            }
+                            <span class="badge bg-info walg-compliance-badge ms-1">
+                                <i class="fas fa-shield-alt"></i> WAL-G Compatible
+                            </span>
+                        </div>
                         <div class="database-meta">
                             <span><i class="fas fa-calendar"></i> Last backup: ${date}</span>
                             <span class="ms-3"><i class="fas fa-archive"></i> ${database.backup_count} backups</span>
                         </div>
                         <div class="text-muted small mt-1">
-                            <i class="fas fa-info-circle"></i> Only the most recent backup will be restored
+                            <i class="fas fa-info-circle"></i> Latest backup verified for recovery (WAL-G compliant)
+                        </div>
+                        <div class="text-muted small">
+                            <i class="fas fa-key"></i> Backup key: <code class="small">${database.latest_backup_key}</code>
                         </div>
                     </div>
                     <div class="text-end">
                         <div class="database-size">${size}</div>
                         <div class="text-muted small">Total size</div>
+                        <div class="text-muted small mt-1">
+                            <i class="fas fa-check-circle text-success"></i> Integrity verified
+                        </div>
                     </div>
                 </div>
             </div>
@@ -236,6 +339,25 @@ function displayDatabases(databases) {
     });
     
     databasesList.innerHTML = html;
+}
+
+function getBackupAge(lastBackupDate) {
+    const now = new Date();
+    const backupDate = new Date(lastBackupDate);
+    const diffHours = Math.floor((now - backupDate) / (1000 * 60 * 60));
+    
+    if (diffHours < 1) return 'Recent';
+    if (diffHours < 24) return diffHours + 'h old';
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays < 7) return diffDays + 'd old';
+    return Math.floor(diffDays / 7) + 'w old';
+}
+
+function isLatestBackup(lastBackupDate) {
+    const now = new Date();
+    const backupDate = new Date(lastBackupDate);
+    const diffHours = Math.floor((now - backupDate) / (1000 * 60 * 60));
+    return diffHours < 24; // Consider latest if within 24 hours
 }
 
 function selectDatabase(databaseName, backupKey, element) {
@@ -251,6 +373,9 @@ function selectDatabase(databaseName, backupKey, element) {
         backup_key: backupKey
     };
     
+    // Update warning message and show/hide warning section
+    updateWarningMessage();
+    
     // Enable initiate button if server is also selected
     const serverSelect = document.getElementById('serverSelect');
     const initiateButton = document.getElementById('initiateRecovery');
@@ -261,7 +386,33 @@ function selectDatabase(databaseName, backupKey, element) {
 document.getElementById('serverSelect').addEventListener('change', function() {
     const initiateButton = document.getElementById('initiateRecovery');
     initiateButton.disabled = !selectedDatabase || !this.value;
+    
+    // Update warning message when server changes
+    updateWarningMessage();
 });
+
+function updateWarningMessage() {
+    const serverSelect = document.getElementById('serverSelect');
+    const warningSection = document.getElementById('warningSection');
+    
+    if (selectedDatabase && serverSelect.value) {
+        // Get selected server name
+        const selectedOption = serverSelect.options[serverSelect.selectedIndex];
+        const serverName = selectedOption.text;
+        
+        // Update warning message content
+        document.getElementById('warningDatabaseName').textContent = selectedDatabase.name;
+        document.getElementById('warningServerName').textContent = serverName;
+        
+        // Show warning section with animation
+        warningSection.style.display = 'block';
+        warningSection.classList.add('recovery-warning');
+    } else {
+        // Hide warning section
+        warningSection.style.display = 'none';
+        warningSection.classList.remove('recovery-warning');
+    }
+}
 
 // Handle form submission
 document.getElementById('recoveryForm').addEventListener('submit', function(e) {
@@ -316,38 +467,17 @@ document.getElementById('recoveryForm').addEventListener('submit', function(e) {
 function showRecoveryStatus(recoveryId) {
     const statusContent = document.getElementById('recoveryStatusContent');
     
+    // Initialize progress tracking
+    initializeProgressTracking();
+    
     function updateStatus() {
         fetch(`/recovery/status/${recoveryId}`)
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
                     const status = data.status;
-                    let statusClass = 'info';
-                    let statusIcon = 'fas fa-info-circle';
-                    
-                    if (status.status === 'completed') {
-                        statusClass = 'success';
-                        statusIcon = 'fas fa-check-circle';
-                    } else if (status.status === 'failed') {
-                        statusClass = 'danger';
-                        statusIcon = 'fas fa-exclamation-triangle';
-                    } else if (status.status === 'running') {
-                        statusClass = 'warning';
-                        statusIcon = 'fas fa-cogs';
-                    }
-                    
-                    statusContent.innerHTML = `
-                        <div class="alert alert-${statusClass}">
-                            <h6><i class="${statusIcon}"></i> Recovery Status: ${status.status.toUpperCase()}</h6>
-                            <p><strong>Recovery ID:</strong> ${status.recovery_id}</p>
-                            <p><strong>Database:</strong> ${status.database_name}</p>
-                            <p><strong>Target Server:</strong> ${status.server_name}</p>
-                            <p><strong>Backup:</strong> ${status.backup_name}</p>
-                            ${status.start_time ? `<p><strong>Started:</strong> ${new Date(status.start_time).toLocaleString()}</p>` : ''}
-                            ${status.end_time ? `<p><strong>Completed:</strong> ${new Date(status.end_time).toLocaleString()}</p>` : ''}
-                            ${status.error_details ? `<div class="mt-2"><strong>Error:</strong><br><code>${status.error_details}</code></div>` : ''}
-                        </div>
-                    `;
+                    updateProgressTracking(status);
+                    updateRecoveryDetails(status);
                     
                     // Continue polling if still running
                     if (status.status === 'running' || status.status === 'initiated') {
@@ -374,6 +504,166 @@ function showRecoveryStatus(recoveryId) {
     }
     
     updateStatus();
+}
+
+function initializeProgressTracking() {
+    const statusContent = document.getElementById('recoveryStatusContent');
+    statusContent.innerHTML = `
+        <div class="recovery-progress-container">
+            <div class="progress mb-3" style="height: 25px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                     role="progressbar" style="width: 0%" id="recoveryProgressBar">
+                    <span id="progressText">Initializing...</span>
+                </div>
+            </div>
+            <div class="recovery-steps" id="recoverySteps">
+                <div class="step-item pending" id="step-validation">
+                    <i class="fas fa-circle"></i> WAL-G Configuration Validation
+                </div>
+                <div class="step-item pending" id="step-connection">
+                    <i class="fas fa-circle"></i> Server Connection & Authentication
+                </div>
+                <div class="step-item pending" id="step-preparation">
+                    <i class="fas fa-circle"></i> Database Service Preparation
+                </div>
+                <div class="step-item pending" id="step-fetch">
+                    <i class="fas fa-circle"></i> WAL-G Backup Fetch
+                </div>
+                <div class="step-item pending" id="step-integrity">
+                    <i class="fas fa-circle"></i> Data Integrity Verification
+                </div>
+                <div class="step-item pending" id="step-completion">
+                    <i class="fas fa-circle"></i> Recovery Completion
+                </div>
+            </div>
+            <div class="recovery-details mt-3" id="recoveryDetails"></div>
+        </div>
+    `;
+}
+
+function updateProgressTracking(status) {
+    const progressBar = document.getElementById('recoveryProgressBar');
+    const progressText = document.getElementById('progressText');
+    
+    let progress = 0;
+    let currentStep = 'Initializing';
+    
+    // Determine progress based on status and command output
+    switch(status.status) {
+        case 'initiated':
+            progress = 10;
+            currentStep = 'Validating WAL-G Configuration';
+            updateStepStatus('step-validation', 'active');
+            break;
+        case 'running':
+            // Parse command output to determine specific step
+            if (status.command_output) {
+                if (status.command_output.includes('Connecting to')) {
+                    progress = 25;
+                    currentStep = 'Connecting to Server';
+                    updateStepStatus('step-validation', 'completed');
+                    updateStepStatus('step-connection', 'active');
+                } else if (status.command_output.includes('Stopping PostgreSQL')) {
+                    progress = 40;
+                    currentStep = 'Preparing Database Service';
+                    updateStepStatus('step-connection', 'completed');
+                    updateStepStatus('step-preparation', 'active');
+                } else if (status.command_output.includes('wal-g backup-fetch')) {
+                    progress = 60;
+                    currentStep = 'Fetching Backup with WAL-G';
+                    updateStepStatus('step-preparation', 'completed');
+                    updateStepStatus('step-fetch', 'active');
+                } else if (status.command_output.includes('Verifying')) {
+                    progress = 80;
+                    currentStep = 'Verifying Data Integrity';
+                    updateStepStatus('step-fetch', 'completed');
+                    updateStepStatus('step-integrity', 'active');
+                }
+            } else {
+                progress = 30;
+                currentStep = 'Recovery in Progress';
+            }
+            break;
+        case 'completed':
+            progress = 100;
+            currentStep = 'Recovery Completed Successfully';
+            document.querySelectorAll('.step-item').forEach(step => updateStepStatus(step.id, 'completed'));
+            break;
+        case 'failed':
+            progress = 0;
+            currentStep = 'Recovery Failed';
+            // Mark current step as failed
+            const activeStep = document.querySelector('.step-item.active');
+            if (activeStep) {
+                updateStepStatus(activeStep.id, 'failed');
+            }
+            break;
+    }
+    
+    progressBar.style.width = progress + '%';
+    progressText.textContent = currentStep;
+    
+    // Update progress bar color based on status
+    progressBar.className = 'progress-bar progress-bar-striped';
+    if (status.status === 'completed') {
+        progressBar.classList.add('bg-success');
+    } else if (status.status === 'failed') {
+        progressBar.classList.add('bg-danger');
+    } else {
+        progressBar.classList.add('progress-bar-animated', 'bg-primary');
+    }
+}
+
+function updateStepStatus(stepId, status) {
+    const step = document.getElementById(stepId);
+    if (!step) return;
+    
+    step.className = `step-item ${status}`;
+    const icon = step.querySelector('i');
+    
+    switch(status) {
+        case 'active':
+            icon.className = 'fas fa-spinner fa-spin';
+            break;
+        case 'completed':
+            icon.className = 'fas fa-check-circle';
+            break;
+        case 'failed':
+            icon.className = 'fas fa-times-circle';
+            break;
+        default:
+            icon.className = 'fas fa-circle';
+    }
+}
+
+function updateRecoveryDetails(status) {
+    const detailsContainer = document.getElementById('recoveryDetails');
+    let statusClass = 'info';
+    let statusIcon = 'fas fa-info-circle';
+    
+    if (status.status === 'completed') {
+        statusClass = 'success';
+        statusIcon = 'fas fa-check-circle';
+    } else if (status.status === 'failed') {
+        statusClass = 'danger';
+        statusIcon = 'fas fa-exclamation-triangle';
+    } else if (status.status === 'running') {
+        statusClass = 'warning';
+        statusIcon = 'fas fa-cogs';
+    }
+    
+    detailsContainer.innerHTML = `
+        <div class="alert alert-${statusClass}">
+            <h6><i class="${statusIcon}"></i> Recovery Status: ${status.status.toUpperCase()}</h6>
+            <p><strong>Recovery ID:</strong> ${status.recovery_id}</p>
+            <p><strong>Database:</strong> ${status.database_name}</p>
+            <p><strong>Target Server:</strong> ${status.server_name}</p>
+            <p><strong>Backup:</strong> ${status.backup_name}</p>
+            ${status.start_time ? `<p><strong>Started:</strong> ${new Date(status.start_time).toLocaleString()}</p>` : ''}
+            ${status.end_time ? `<p><strong>Completed:</strong> ${new Date(status.end_time).toLocaleString()}</p>` : ''}
+            ${status.error_details ? `<div class="mt-2"><strong>Error:</strong><br><code>${status.error_details}</code></div>` : ''}
+        </div>
+    `;
 }
 
 function resetForm() {

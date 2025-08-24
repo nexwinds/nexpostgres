@@ -9,9 +9,37 @@ backups_bp = Blueprint('backups', __name__)
 
 @backups_bp.route('/backups')
 def backups():
-    """Display all backup jobs."""
-    backup_jobs = BackupJob.query.all()
-    return render_template('backups/index.html', backup_jobs=backup_jobs)
+    """Display backup jobs or backup logs based on parameters."""
+    # Check if backup_job_id is provided to show logs instead of jobs
+    backup_job_id = request.args.get('backup_job_id')
+    status = request.args.get('status')
+    days = request.args.get('days')
+    
+    if backup_job_id or status or days:
+        # Show backup logs (previous backup_logs functionality)
+        backup_job = None
+        if backup_job_id:
+            backup_job = BackupJob.query.get(backup_job_id)
+        
+        # Get backup logs using metadata service
+        from app.utils.backup_metadata_service import BackupMetadataService
+        logs = BackupMetadataService.get_all_backup_logs(
+            job_id=int(backup_job_id) if backup_job_id else None,
+            status=status,
+            days=int(days) if days and days != 'all' else None
+        )
+        
+        backup_jobs = BackupJob.query.all()
+        return render_template('backups/logs.html', 
+                             logs=logs, 
+                             backup_jobs=backup_jobs,
+                             backup_job=backup_job,
+                             selected_backup_job_id=backup_job_id,
+                             selected_status=status)
+    else:
+        # Show backup jobs (original functionality)
+        backup_jobs = BackupJob.query.all()
+        return render_template('backups/index.html', backup_jobs=backup_jobs)
 
 
 @backups_bp.route('/backups/add', methods=['GET', 'POST'])
@@ -179,34 +207,7 @@ def execute_backup(backup_job_id):
     return redirect(url_for('backups.backups'))
 
 
-@backups_bp.route('/backup_logs')
-def backup_logs():
-    """Display backup logs with filtering."""
-    # Get filter parameters
-    backup_job_id = request.args.get('backup_job_id')
-    status = request.args.get('status')
-    days = request.args.get('days')
-    
-    # Get backup job if backup_job_id is provided
-    backup_job = None
-    if backup_job_id:
-        backup_job = BackupJob.query.get(backup_job_id)
-    
-    # Get backup logs using metadata service
-    from app.utils.backup_metadata_service import BackupMetadataService
-    logs = BackupMetadataService.get_all_backup_logs(
-        job_id=int(backup_job_id) if backup_job_id else None,
-        status=status,
-        days=int(days) if days and days != 'all' else None
-    )
-    
-    backup_jobs = BackupJob.query.all()
-    return render_template('backups/logs.html', 
-                         logs=logs, 
-                         backup_jobs=backup_jobs,
-                         backup_job=backup_job,
-                         selected_backup_job_id=backup_job_id,
-                         selected_status=status)
+# Removed backup_logs route - functionality merged into /backups route
 
 
 @backups_bp.route('/restore', methods=['GET', 'POST'])
@@ -367,6 +368,77 @@ def api_recovery_points(database_id):
         return jsonify({'error': 'Failed to retrieve recovery points'}), 500
     
     return jsonify({'recovery_points': recovery_points})
+
+
+@backups_bp.route('/api/backups/<int:backup_job_id>/recovery-points')
+def api_backup_recovery_points(backup_job_id):
+    """API endpoint for recovery points by backup job ID with date filtering."""
+    # Validate backup job exists
+    is_valid, error, backup_job = UnifiedValidationService.validate_backup_job_exists(backup_job_id)
+    if not is_valid:
+        return jsonify({'error': error}), 404
+    
+    # Get the date parameter
+    selected_date = request.args.get('date')
+    if not selected_date:
+        return jsonify({'error': 'Date parameter is required'}), 400
+    
+    # Get the database associated with this backup job
+    database = backup_job.database
+    if not database:
+        return jsonify({'error': 'No database associated with this backup job'}), 404
+    
+    # Get real recovery points from the backup system
+    try:
+        restore_service = BackupRestoreService()
+        success, recovery_points = restore_service.get_recovery_points(database)
+        
+        if not success:
+            return jsonify({'error': 'Failed to retrieve recovery points'}), 500
+        
+        # Filter recovery points by the selected date
+        from datetime import datetime
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"Total recovery points retrieved: {len(recovery_points)}")
+        logger.info(f"Selected date for filtering: {selected_date}")
+        
+        filtered_points = []
+        
+        for point in recovery_points:
+            try:
+                logger.info(f"Processing recovery point: {point}")
+                # Parse the datetime from the recovery point
+                # Handle both ISO format with and without timezone
+                datetime_str = point['datetime']
+                if datetime_str.endswith('Z'):
+                    datetime_str = datetime_str.replace('Z', '+00:00')
+                point_datetime = datetime.fromisoformat(datetime_str)
+                point_date = point_datetime.date().isoformat()
+                
+                logger.info(f"Point date: {point_date}, Selected date: {selected_date}")
+                
+                # Check if this point matches the selected date
+                if point_date == selected_date:
+                    filtered_point = {
+                        'timestamp': point['datetime'],
+                        'time': point_datetime.strftime('%H:%M'),
+                        'size': point.get('size', 'Unknown')
+                    }
+                    filtered_points.append(filtered_point)
+                    logger.info(f"Added filtered point: {filtered_point}")
+            except (ValueError, KeyError) as e:
+                logger.error(f"Error processing recovery point {point}: {e}")
+                # Skip invalid recovery points
+                continue
+        
+        logger.info(f"Total filtered points: {len(filtered_points)}")
+        
+        return jsonify({'recovery_points': filtered_points})
+        
+    except Exception as e:
+        return jsonify({'error': f'Error retrieving recovery points: {str(e)}'}), 500
 
 
 @backups_bp.route('/debug/restore_log/<int:log_id>')

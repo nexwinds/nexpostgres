@@ -151,8 +151,13 @@ def edit_database(database_id):
         # Get permission combinations for the UI
         permission_combinations = PermissionManager.get_permission_combinations()
         
+        # Debug: Print actual permission values
+        print(f"DEBUG: user_individual_perms for {primary_user.username}: {user_individual_perms}")
+        
         # Detect current combination
-        current_combination, is_exact_match = PermissionManager.detect_combination_from_permissions(user_individual_perms)
+        current_combination, is_exact_match, _ = PermissionManager.detect_combination_from_permissions_enhanced(user_individual_perms)
+        
+        print(f"DEBUG: detected combination: {current_combination}, exact_match: {is_exact_match}")
         
         return render_template('databases/edit_user.html', 
                              database=database, 
@@ -160,6 +165,7 @@ def edit_database(database_id):
                              current_permission=current_permission,
                              user_individual_permissions=user_individual_perms,
                              permission_combinations=permission_combinations,
+                             individual_permissions=PermissionManager.get_individual_permissions(),
                              current_combination=current_combination,
                              is_exact_match=is_exact_match)
     
@@ -226,17 +232,26 @@ def add_database_user(database_id):
     ).first_or_404()
     
     if request.method == 'GET':
-        # Get permission combinations for the UI
-        permission_combinations = PermissionManager.get_permission_combinations()
+        # Get permission combinations and individual permissions for the UI
+        permission_combinations = PermissionManager.get_permission_combinations(include_custom=False)
+        individual_permissions = PermissionManager.get_individual_permissions()
         return render_template('databases/add_user.html', 
                              database=database,
-                             permission_combinations=permission_combinations)
+                             permission_combinations=permission_combinations,
+                             individual_permissions=individual_permissions)
     
     # POST request - process form
     data = request.form.to_dict()
     
-    # Validate required fields
-    required_fields = ['username', 'permission_combination', 'password']
+    # Determine permission mode
+    permission_mode = data.get('permission_mode', 'preset')
+    
+    # Validate required fields based on permission mode
+    if permission_mode == 'preset':
+        required_fields = ['username', 'permission_combination', 'password']
+    else:  # individual mode
+        required_fields = ['username', 'password']
+    
     fields_valid, field_errors = UnifiedValidationService.validate_required_fields(data, required_fields)
     
     # Validate individual fields
@@ -276,8 +291,28 @@ def add_database_user(database_id):
         flash(message, 'error')
         return redirect(url_for('databases.add_database_user', database_id=database_id))
     
-    # Then grant the selected permissions
-    permissions = PermissionManager.get_permissions_for_combination(data['permission_combination'])
+    # Handle permissions based on mode
+    if permission_mode == 'preset':
+        # Use preset permission combination
+        permissions = PermissionManager.get_permissions_for_combination(data['permission_combination'])
+    else:
+        # Use individual permissions
+        individual_permissions = {}
+        for key in data:
+            if key.startswith('individual_'):
+                perm_name = key.replace('individual_', '')
+                individual_permissions[perm_name] = data[key] == 'true'
+        
+        # Validate individual permissions
+        validation_result = PermissionManager.validate_individual_permissions(individual_permissions)
+        if not validation_result['valid']:
+            flash(validation_result['message'], 'error')
+            return redirect(url_for('databases.add_database_user', database_id=database_id))
+        
+        # Apply individual permissions
+        permissions = PermissionManager.apply_individual_permissions(individual_permissions)
+    
+    # Grant the permissions
     success, message = DatabaseService.execute_with_postgres(
         database.server,
         'Permission assignment',
@@ -320,11 +355,14 @@ def database_users(database_id):
     users = PostgresDatabaseUser.query.filter_by(database_id=database_id).all()
     user_permissions = DatabaseService.get_user_permissions(database.server, database.name)
     
+    # Get individual permissions for each user
+    all_individual_permissions = DatabaseService.get_user_individual_permissions(database.server, database.name)
+    
     # Detect permission combinations for each user
     user_permission_groups = {}
     for user in users:
-        individual_perms = DatabaseService.get_user_individual_permissions(database.server, database.name).get(user.username, {})
-        combination, is_exact_match = PermissionManager.detect_combination_from_permissions(individual_perms)
+        individual_perms = all_individual_permissions.get(user.username, {})
+        combination, is_exact_match, _ = PermissionManager.detect_combination_from_permissions_enhanced(individual_perms)
         user_permission_groups[user.username] = {
             'combination': combination,
             'label': PermissionManager.get_combination_label(combination) if is_exact_match else 'Custom Permissions',
@@ -380,11 +418,16 @@ def database_users(database_id):
         if ssl_enabled:
             jdbc_url += "?ssl=true&sslmode=require"
     
+    # Get list of available individual permissions
+    individual_permissions = PermissionManager.get_individual_permissions()
+    
     return render_template('databases/credentials.html', 
                          database=database, 
                          users=users, 
                          user_permissions=user_permissions,
                          user_permission_groups=user_permission_groups,
+                         all_individual_permissions=all_individual_permissions,
+                         individual_permissions=individual_permissions,
                          server=database.server,
                          primary_user=primary_user,
                          connection_url=connection_url,
@@ -414,9 +457,15 @@ def edit_database_user(database_id, user_id):
         )
         user_individual_perms = individual_permissions.get(user.username, {})
         
+        # Debug: Print actual permission values
+        print(f"DEBUG: user_individual_perms for {user.username}: {user_individual_perms}")
+        
         # Get permission combinations and current combination
-        permission_combinations = PermissionManager.get_permission_combinations()
-        current_combination, is_exact_match = PermissionManager.detect_combination_from_permissions(user_individual_perms)
+        permission_combinations = PermissionManager.get_permission_combinations(include_custom=False)
+        individual_permissions = PermissionManager.get_individual_permissions()
+        current_combination, is_exact_match, _ = PermissionManager.detect_combination_from_permissions_enhanced(user_individual_perms)
+        
+        print(f"DEBUG: detected combination: {current_combination}, exact_match: {is_exact_match}")
         
         return render_template('databases/edit_user.html', 
                              database=database, 
@@ -424,16 +473,19 @@ def edit_database_user(database_id, user_id):
                              current_permission=current_permission,
                              user_individual_permissions=user_individual_perms,
                              permission_combinations=permission_combinations,
+                             individual_permissions=individual_permissions,
                              current_combination=current_combination,
                              is_exact_match=is_exact_match)
     
     # POST request - update permissions and/or regenerate password
-    permission_combination = request.form.get('permission_combination')
-    regenerate_password = request.form.get('regenerate_password') == 'on'
+    data = request.form.to_dict()
+    permission_mode = data.get('permission_mode', 'preset')
+    permission_combination = data.get('permission_combination')
+    regenerate_password = data.get('regenerate_password') == 'on'
     
     # Validate permission combination if provided
-    if permission_combination:
-        valid_combinations = [combo['value'] for combo in PermissionManager.get_permission_combinations()]
+    if permission_mode == 'preset' and permission_combination:
+        valid_combinations = [combo['value'] for combo in PermissionManager.get_permission_combinations(include_custom=False)]
         if permission_combination not in valid_combinations:
             flash('Invalid permission combination selected', 'error')
             return redirect(url_for('databases.edit_database_user', 
@@ -444,8 +496,9 @@ def edit_database_user(database_id, user_id):
     if regenerate_password:
         new_password = UnifiedValidationService.generate_password()
     
-    # Apply permission combination if provided
-    if permission_combination:
+    # Apply permissions based on mode
+    permissions_updated = False
+    if permission_mode == 'preset' and permission_combination:
         result = DatabaseService.apply_permission_combination(
             database.server, database.name, user.username, permission_combination
         )
@@ -454,6 +507,38 @@ def edit_database_user(database_id, user_id):
             flash(result['message'], 'error')
             return redirect(url_for('databases.edit_database_user', 
                                   database_id=database_id, user_id=user_id))
+        permissions_updated = True
+    elif permission_mode == 'individual':
+        # Handle individual permissions
+        individual_permissions = {}
+        for key in data:
+            if key.startswith('individual_'):
+                perm_name = key.replace('individual_', '')
+                individual_permissions[perm_name] = data[key] == 'true'
+        
+        # Validate individual permissions
+        validation_result = PermissionManager.validate_individual_permissions(individual_permissions)
+        if not validation_result['valid']:
+            flash(validation_result['message'], 'error')
+            return redirect(url_for('databases.edit_database_user', 
+                                  database_id=database_id, user_id=user_id))
+        
+        # Apply individual permissions
+        permissions = PermissionManager.apply_individual_permissions(individual_permissions)
+        
+        # Grant the permissions
+        success, message = DatabaseService.execute_with_postgres(
+            database.server,
+            'Permission update',
+            DatabaseService.grant_individual_permissions_operation,
+            user.username, user.password, database.name, permissions
+        )
+        
+        if not success:
+            flash(f'Failed to update permissions: {message}', 'error')
+            return redirect(url_for('databases.edit_database_user', 
+                                  database_id=database_id, user_id=user_id))
+        permissions_updated = True
     
     # Update password if regenerated
     if regenerate_password:
@@ -475,12 +560,18 @@ def edit_database_user(database_id, user_id):
             user.password = new_password
         db.session.commit()
         
-        if permission_combination and regenerate_password:
-            combination_label = PermissionManager.get_combination_label(permission_combination)
-            flash(f'User updated successfully. Applied "{combination_label}" permissions. New password: {new_password}', 'success')
-        elif permission_combination:
-            combination_label = PermissionManager.get_combination_label(permission_combination)
-            flash(f'User permissions updated successfully. Applied "{combination_label}" permissions.', 'success')
+        if permissions_updated and regenerate_password:
+            if permission_mode == 'preset' and permission_combination:
+                combination_label = PermissionManager.get_combination_label(permission_combination)
+                flash(f'User updated successfully. Applied "{combination_label}" permissions. New password: {new_password}', 'success')
+            else:
+                flash(f'User updated successfully. Applied individual permissions. New password: {new_password}', 'success')
+        elif permissions_updated:
+            if permission_mode == 'preset' and permission_combination:
+                combination_label = PermissionManager.get_combination_label(permission_combination)
+                flash(f'User permissions updated successfully. Applied "{combination_label}" permissions.', 'success')
+            else:
+                flash('User permissions updated successfully. Applied individual permissions.', 'success')
         elif regenerate_password:
             flash(f'User password updated successfully. New password: {new_password}', 'success')
         else:

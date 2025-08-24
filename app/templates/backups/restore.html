@@ -40,16 +40,38 @@
             
             <div class="mb-3" id="backupSelection">
                 <label for="backup_type" class="form-label">Backup Selection</label>
+                
+                <!-- Point-in-time recovery option moved to top -->
                 <div class="form-check">
+                    <input class="form-check-input" type="radio" name="backup_type" id="point_in_time" value="point_in_time">
+                    <label class="form-check-label" for="point_in_time">
+                        <strong>Restore to a specific point in time</strong> (Point-in-time recovery)
+                    </label>
+                </div>
+                
+                <div class="form-check mt-2">
                     <input class="form-check-input" type="radio" name="backup_type" id="latest_backup" value="latest" checked>
                     <label class="form-check-label" for="latest_backup">
                         <strong>Latest Backup</strong> (Recommended)
                     </label>
+                    <div id="latestBackupInfo" class="ms-4 mt-2" style="display: none;">
+                        <div class="card border-info">
+                            <div class="card-body p-2">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div class="spinner-border spinner-border-sm text-primary me-2" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                    <span class="text-muted">Loading latest backup information...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
+                
                 <div class="form-check mt-2">
                     <input class="form-check-input" type="radio" name="backup_type" id="specific_backup" value="specific">
                     <label class="form-check-label" for="specific_backup">
-                        <strong>Specific Backup</strong> (Choose from available backups)
+                        <strong>6 Latest Backups</strong> (Choose from last 6 available backups)
                     </label>
                 </div>
             </div>
@@ -60,6 +82,26 @@
                     <option value="" selected disabled>Select database first</option>
                 </select>
                 <div class="form-text">Hourly backup options will be displayed when available</div>
+            </div>
+            
+            <div class="mb-3" id="pointInTimeSelection" style="display: none;">
+                <label for="recovery_date" class="form-label">Recovery Target Date & Time</label>
+                <div class="row">
+                    <div class="col-md-6">
+                        <label for="recovery_date" class="form-label">Select Date (Last 15 Days)</label>
+                        <select class="form-select" id="recovery_date" name="recovery_date">
+                            <option value="" selected disabled>Select a date</option>
+                        </select>
+                        <div class="form-text">Choose from the last 15 days</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="recovery_time" class="form-label">Available Time Points</label>
+                        <select class="form-select" id="recovery_time" name="recovery_time">
+                            <option value="" selected disabled>Select date first</option>
+                        </select>
+                        <div class="form-text">Available backup points for selected date</div>
+                    </div>
+                </div>
             </div>
             
             <!-- Target Options -->
@@ -74,31 +116,26 @@
             </div>
             
             <div class="mb-3" id="targetDatabaseDiv" style="display: none;">
-                <label for="target_database_id" class="form-label">Target Database</label>
-                <select class="form-select" id="target_database_id" name="target_database_id">
-                    <option value="" selected disabled>Select a target database</option>
-                    {% for db in databases %}
-                    <option value="{{ db.id }}">{{ db.name }} on {{ db.server.name }}</option>
-                    {% endfor %}
-                </select>
-                <div class="form-text">The database to restore to</div>
-            </div>
-            
-            <div class="mb-3">
-                <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" id="recovery_target_time" name="use_recovery_time" value="true">
-                    <label class="form-check-label" for="recovery_target_time">Restore to a specific point in time</label>
+                <div class="row">
+                    <div class="col-md-6">
+                        <label for="target_database_name" class="form-label">New Database Name</label>
+                        <input type="text" class="form-control" id="target_database_name" name="target_database_name" placeholder="Enter new database name">
+                        <div class="form-text">Name for the restored database</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="target_database_id" class="form-label">Target Server</label>
+                        <select class="form-select" id="target_database_id" name="target_database_id">
+                            <option value="" selected disabled>Select a target server</option>
+                            {% for db in databases %}
+                            <option value="{{ db.id }}" data-server-name="{{ db.server.name }}">{{ db.server.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Server to restore the database to</div>
+                    </div>
                 </div>
-                <div class="form-text">When checked, you can specify a point in time to restore to (for point-in-time recovery)</div>
             </div>
             
-            <div class="mb-3" id="recoveryTimeDiv" style="display: none;">
-                <label for="recovery_time" class="form-label">Recovery Target Time</label>
-                <select class="form-select" id="recovery_time" name="recovery_time">
-                    <option value="" selected disabled>Select backup job first</option>
-                </select>
-                <div class="form-text">Available recovery points for selected backup job</div>
-            </div>
+
             
             <!-- Warning -->
             <div class="alert alert-warning mt-4">
@@ -122,14 +159,12 @@
     document.addEventListener('DOMContentLoaded', function() {
         const restoreToSameCheckbox = document.getElementById('restore_to_same');
         const targetDatabaseDiv = document.getElementById('targetDatabaseDiv');
-        const recoveryTargetTimeCheckbox = document.getElementById('recovery_target_time');
-        const recoveryTimeDiv = document.getElementById('recoveryTimeDiv');
         
         // Handle database selection change
         const databaseSelect = document.getElementById('database_id');
-        const specificBackupRadio = document.getElementById('specific_backup');
         const specificBackupSelection = document.getElementById('specificBackupSelection');
-        const latestBackupRadio = document.getElementById('latest_backup');
+        const pointInTimeSelection = document.getElementById('pointInTimeSelection');
+        const latestBackupInfo = document.getElementById('latestBackupInfo');
         
         // Handle database selection change
         databaseSelect.addEventListener('change', function() {
@@ -139,40 +174,53 @@
             // Get the backup job ID from the selected database option
             const backupJobId = this.options[this.selectedIndex].getAttribute('data-backup-job-id');
             
-            // Show loading indicator for backup logs
-            backupLogSelection.innerHTML = `
-                <label for="backup_log_id" class="form-label">Backup to Restore</label>
-                <div class="d-flex align-items-center">
-                    <div class="spinner-border spinner-border-sm text-primary me-2" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
-                    <span>Loading backup logs...</span>
-                </div>
-            `;
+            // Update content based on selected backup type
+            const selectedBackupType = document.querySelector('input[name="backup_type"]:checked')?.value;
             
-            // If specific backup is selected, fetch backup logs
-            if (specificBackupRadio.checked) {
+            if (selectedBackupType === 'specific') {
                 loadBackupLogs(backupJobId);
+            } else if (selectedBackupType === 'point_in_time') {
+                loadRecoveryPoints(databaseId);
+            } else if (selectedBackupType === 'latest') {
+                loadLatestBackupInfo(backupJobId);
             }
         });
         
         // Handle backup type radio button changes
         document.querySelectorAll('input[name="backup_type"]').forEach(radio => {
             radio.addEventListener('change', function() {
+                // Hide all sections first
+                specificBackupSelection.style.display = 'none';
+                pointInTimeSelection.style.display = 'none';
+                latestBackupInfo.style.display = 'none';
+                
+                const databaseSelect = document.getElementById('database_id');
+                const databaseId = databaseSelect.value;
+                const backupJobId = databaseSelect.options[databaseSelect.selectedIndex]?.getAttribute('data-backup-job-id');
+                
                 if (this.value === 'specific') {
                     specificBackupSelection.style.display = 'block';
-                    const databaseSelect = document.getElementById('database_id');
-                    const backupJobId = databaseSelect.options[databaseSelect.selectedIndex]?.getAttribute('data-backup-job-id');
                     if (backupJobId) {
                         loadBackupLogs(backupJobId);
                     }
-                } else {
-                    specificBackupSelection.style.display = 'none';
+                } else if (this.value === 'point_in_time') {
+                    pointInTimeSelection.style.display = 'block';
+                    if (databaseId) {
+                        loadRecoveryPoints(databaseId);
+                    } else {
+                        // Initialize date selector even without database selection
+                        populateRecoveryDates();
+                    }
+                } else if (this.value === 'latest') {
+                    latestBackupInfo.style.display = 'block';
+                    if (backupJobId) {
+                        loadLatestBackupInfo(backupJobId);
+                    }
                 }
             });
         });
         
-        // Function to load backup logs
+        // Function to load backup logs (last 6 only)
         function loadBackupLogs(jobId) {
             const backupLogSelect = document.getElementById('backup_log_id');
             
@@ -181,18 +229,17 @@
                 <option value="" selected disabled>Loading backup logs...</option>
             `;
             
-            // Fetch backup logs for selected job
-            fetch(`/api/logs/${jobId}`)
+            // Fetch backup logs for selected job with limit
+            fetch(`/api/logs/${jobId}?limit=6`)
                 .then(response => response.json())
                 .then(data => {
                     let options = '<option value="" selected disabled>Select a backup to restore</option>';
                     let hasBackups = false;
                     
                     if (data.logs && data.logs.length > 0) {
-                        // Add an option for latest backup
-                        options = '<option value="latest" selected>Latest backup</option>';
-                        
-                        data.logs.forEach(log => {
+                        // Take only the first 6 backups (most recent) without default selection
+                        const recentLogs = data.logs.slice(0, 6);
+                        recentLogs.forEach(log => {
                             options += `<option value="${log.id}">${log.start_time} - ${log.size_mb ? log.size_mb + ' MB' : 'Size unknown'}</option>`;
                         });
                         hasBackups = true;
@@ -225,53 +272,165 @@
                     errorDiv.textContent = `Failed to load backup logs: ${error.message}`;
                     specificBackupSelection.appendChild(errorDiv);
                 });
+        }
+        
+        // Function to load latest backup info
+        function loadLatestBackupInfo(backupJobId) {
+            const latestBackupInfo = document.getElementById('latestBackupInfo');
+            
+            // Show loading state
+            latestBackupInfo.innerHTML = `
+                <div class="card border-info">
+                    <div class="card-body p-2">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="spinner-border spinner-border-sm text-primary me-2" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <span class="text-muted">Loading latest backup information...</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            fetch(`/api/logs/${backupJobId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.logs && data.logs.length > 0) {
+                        const latestLog = data.logs[0]; // Assuming logs are sorted by date desc
+                        latestBackupInfo.innerHTML = `
+                            <div class="card border-success">
+                                <div class="card-body p-3">
+                                    <h6 class="card-title mb-2"><i class="fas fa-database me-2"></i>Latest Backup Details</h6>
+                                    <div class="row">
+                                        <div class="col-md-4">
+                                            <strong>Date:</strong><br>
+                                            <span class="text-muted">${new Date(latestLog.start_time).toLocaleDateString()}</span>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <strong>Time:</strong><br>
+                                            <span class="text-muted">${new Date(latestLog.start_time).toLocaleTimeString()}</span>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <strong>Size:</strong><br>
+                                            <span class="text-muted">${latestLog.size_mb ? latestLog.size_mb + ' MB' : 'Unknown'}</span>
+                                        </div>
+                                    </div>
+                                    <div class="mt-2">
+                                        <strong>Status:</strong> <span class="badge bg-success">Completed</span>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        latestBackupInfo.innerHTML = `
+                            <div class="card border-warning">
+                                <div class="card-body p-3">
+                                    <div class="d-flex align-items-center">
+                                        <i class="fas fa-exclamation-triangle text-warning me-2"></i>
+                                        <span>No successful backups found for this database.</span>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching latest backup info:', error);
+                    latestBackupInfo.innerHTML = `
+                        <div class="card border-danger">
+                            <div class="card-body p-3">
+                                <div class="d-flex align-items-center">
+                                    <i class="fas fa-exclamation-circle text-danger me-2"></i>
+                                    <span>Error loading backup information.</span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+        }
+        
+        // Function to populate last 15 days in date selector
+        function populateRecoveryDates() {
+            const recoveryDateSelect = document.getElementById('recovery_date');
+            const today = new Date();
+            
+            recoveryDateSelect.innerHTML = '<option value="" selected disabled>Select a date</option>';
+            
+            for (let i = 0; i < 15; i++) {
+                const date = new Date(today);
+                date.setDate(today.getDate() - i);
                 
-            // Load recovery points when recovery_target_time is checked
-                if (recoveryTargetTimeCheckbox.checked) {
-                    loadRecoveryPoints(backupJobId);
-                }
-            });
+                const option = document.createElement('option');
+                option.value = date.toISOString().split('T')[0]; // YYYY-MM-DD format
+                
+                // Format with full month name
+                const monthNames = [
+                    'January', 'February', 'March', 'April', 'May', 'June',
+                    'July', 'August', 'September', 'October', 'November', 'December'
+                ];
+                
+                const day = date.getDate();
+                const month = monthNames[date.getMonth()];
+                const year = date.getFullYear();
+                
+                option.textContent = `${day} ${month} ${year}`;
+                recoveryDateSelect.appendChild(option);
+            }
+        }
+        
+        // Function to load recovery times for selected date
+        function loadRecoveryTimesForDate(selectedDate, backupJobId) {
+            const recoveryTimeSelect = document.getElementById('recovery_time');
+            recoveryTimeSelect.innerHTML = '<option value="" selected disabled>Loading...</option>';
+            
+            fetch(`/api/backups/${backupJobId}/recovery-points?date=${selectedDate}`)
+                .then(response => response.json())
+                .then(data => {
+                    recoveryTimeSelect.innerHTML = '<option value="" selected disabled>Select time point</option>';
+                    if (data.recovery_points && data.recovery_points.length > 0) {
+                        data.recovery_points.forEach(point => {
+                            const option = document.createElement('option');
+                            option.value = point.timestamp;
+                            option.textContent = `${point.time} (${point.size})`;
+                            recoveryTimeSelect.appendChild(option);
+                        });
+                    } else {
+                        recoveryTimeSelect.innerHTML = '<option value="" selected disabled>No recovery points available for this date</option>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading recovery points:', error);
+                    recoveryTimeSelect.innerHTML = '<option value="" selected disabled>Error loading recovery points</option>';
+                });
         }
         
         // Function to load recovery points
-        function loadRecoveryPoints(jobId) {
-            const recoveryTimeSelect = document.getElementById('recovery_time');
-            recoveryTimeSelect.innerHTML = `
-                <option value="" selected disabled>Loading recovery points...</option>
-            `;
-            
-            // Get database ID from the selected database
+        function loadRecoveryPoints(databaseId) {
             const databaseSelect = document.getElementById('database_id');
-            const databaseId = databaseSelect.value;
+            const backupJobId = databaseSelect.options[databaseSelect.selectedIndex]?.getAttribute('data-backup-job-id');
             
-            if (!databaseId) {
-                recoveryTimeSelect.innerHTML = `
-                    <option value="" selected disabled>Error: No database selected</option>
-                `;
-                return;
-            }
+            // Populate the date selector
+            populateRecoveryDates();
             
-            fetch(`/api/recovery_points/${databaseId}`)
-                .then(response => response.json())
-                .then(data => {
-                    let options = '<option value="" selected disabled>Select a recovery point</option>';
-                    
-                    if (data.recovery_points && data.recovery_points.length > 0) {
-                        data.recovery_points.forEach(point => {
-                            options += `<option value="${point.datetime}">${point.formatted} (${point.backup_name})</option>`;
-                        });
-                    } else {
-                        options = '<option value="" selected disabled>No recovery points available</option>';
-                    }
-                    
-                    recoveryTimeSelect.innerHTML = options;
-                })
-                .catch(error => {
-                    console.error('Error fetching recovery points:', error);
-                    recoveryTimeSelect.innerHTML = `
-                        <option value="" selected disabled>Error loading recovery points</option>
-                    `;
-                });
+            // Remove any existing event listeners and add new one
+            const recoveryDateSelect = document.getElementById('recovery_date');
+            const newDateSelect = recoveryDateSelect.cloneNode(true);
+            recoveryDateSelect.parentNode.replaceChild(newDateSelect, recoveryDateSelect);
+            
+            // Add event listener to the new element
+            newDateSelect.addEventListener('change', function() {
+                const selectedDate = this.value;
+                const currentDatabaseSelect = document.getElementById('database_id');
+                const currentBackupJobId = currentDatabaseSelect.options[currentDatabaseSelect.selectedIndex]?.getAttribute('data-backup-job-id');
+                
+                if (selectedDate && currentBackupJobId) {
+                    loadRecoveryTimesForDate(selectedDate, currentBackupJobId);
+                } else {
+                    console.error('Missing date or backup job ID:', { selectedDate, currentBackupJobId });
+                    const recoveryTimeSelect = document.getElementById('recovery_time');
+                    recoveryTimeSelect.innerHTML = '<option value="" selected disabled>Please select a database first</option>';
+                }
+            });
         }
         
         // Handle restore to same checkbox
@@ -279,58 +438,26 @@
             if (this.checked) {
                 targetDatabaseDiv.style.display = 'none';
                 document.getElementById('target_database_id').required = false;
+                document.getElementById('target_database_name').required = false;
             } else {
                 targetDatabaseDiv.style.display = 'block';
                 document.getElementById('target_database_id').required = true;
+                document.getElementById('target_database_name').required = true;
             }
         });
         
-        // Handle recovery target time checkbox
-        recoveryTargetTimeCheckbox.addEventListener('change', function() {
-            const recoveryTimeSelect = document.getElementById('recovery_time');
-            if (this.checked) {
-                recoveryTimeDiv.style.display = 'block';
-                recoveryTimeSelect.required = true;
-                
-                // Make backup log selection not required when using point-in-time recovery
-                const backupLogSelect = document.getElementById('backup_log_id');
-                if (backupLogSelect) {
-                    backupLogSelect.required = false;
-                }
-                
-                // Load recovery points if database is already selected
-                const databaseSelect = document.getElementById('database_id');
-                const selectedDatabaseId = databaseSelect.value;
-                if (selectedDatabaseId) {
-                    const backupJobId = databaseSelect.options[databaseSelect.selectedIndex].getAttribute('data-backup-job-id');
-                    loadRecoveryPoints(backupJobId);
-                }
-            } else {
-                recoveryTimeDiv.style.display = 'none';
-                recoveryTimeSelect.required = false;
-                
-                // Make backup log selection required again
-                const backupLogSelect = document.getElementById('backup_log_id');
-                if (backupLogSelect) {
-                    backupLogSelect.required = true;
-                }
-            }
-        });
+
         
         // Form submission validation
         document.getElementById('restoreForm').addEventListener('submit', function(e) {
             const databaseSelect = document.getElementById('database_id');
             const backupLogSelect = document.getElementById('backup_log_id');
-            const useRecoveryTime = recoveryTargetTimeCheckbox.checked;
             const recoveryTimeSelect = document.getElementById('recovery_time');
-            const recoveryTimeValue = recoveryTimeSelect.value;
+            const recoveryDatetimeInput = document.getElementById('recovery_datetime');
             const backupTypeRadios = document.querySelectorAll('input[name="backup_type"]');
             const selectedBackupType = Array.from(backupTypeRadios).find(radio => radio.checked)?.value;
-            
-            // Check if there are real recovery points available (not just placeholder options)
-            const recoveryPointsAvailable = Array.from(recoveryTimeSelect.options).some(option => 
-                !option.disabled && !option.textContent.includes('No recovery points available')
-            );
+            const targetDatabaseName = document.getElementById('target_database_name');
+            const restoreToSame = document.getElementById('restore_to_same').checked;
             
             // Validate database selection
             if (!databaseSelect.value) {
@@ -340,37 +467,51 @@
                 return false;
             }
             
+            // Validate backup type selection
+            if (!selectedBackupType) {
+                e.preventDefault();
+                alert('Please select a backup type');
+                return false;
+            }
+            
             // Validate specific backup selection if chosen
-            if (selectedBackupType === 'specific' && (!backupLogSelect || !backupLogSelect.value)) {
-                const noBackupsAvailable = backupLogSelect && 
-                    (!backupLogSelect.options.length || 
-                    (backupLogSelect.options.length === 1 && backupLogSelect.options[0].disabled));
+            if (selectedBackupType === 'specific') {
+                if (!backupLogSelect || !backupLogSelect.value) {
+                    const noBackupsAvailable = backupLogSelect && 
+                        (!backupLogSelect.options.length || 
+                        (backupLogSelect.options.length === 1 && backupLogSelect.options[0].disabled));
+                    
+                    if (noBackupsAvailable) {
+                        e.preventDefault();
+                        alert('No specific backups available for this database. Please use "Latest Backup" option instead.');
+                        return false;
+                    } else {
+                        e.preventDefault();
+                        alert('Please select a specific backup.');
+                        backupLogSelect.focus();
+                        return false;
+                    }
+                }
+            }
+            
+            // Validate point-in-time recovery selection
+            if (selectedBackupType === 'point_in_time') {
+                const hasRecoveryTime = recoveryTimeSelect && recoveryTimeSelect.value;
+                const hasRecoveryDatetime = recoveryDatetimeInput && recoveryDatetimeInput.value;
                 
-                if (noBackupsAvailable) {
+                if (!hasRecoveryTime && !hasRecoveryDatetime) {
                     e.preventDefault();
-                    alert('No specific backups available for this database. Please use "Latest Backup" option instead.');
-                    return false;
-                } else {
-                    e.preventDefault();
-                    alert('Please select a specific backup or choose "Latest Backup" option.');
+                    alert('Please select a recovery point or specify a recovery date/time.');
                     return false;
                 }
             }
             
-            // Only validate recovery point selection if:
-            // 1. Point-in-time recovery is enabled AND
-            // 2. There are recovery points available AND
-            // 3. No recovery point is selected
-            if (useRecoveryTime && recoveryPointsAvailable && !recoveryTimeValue) {
+            // Validate target database name when not restoring to same database
+            if (!restoreToSame && (!targetDatabaseName.value || targetDatabaseName.value.trim() === '')) {
                 e.preventDefault();
-                alert('Please select a recovery point');
+                alert('Please enter a name for the new database.');
+                targetDatabaseName.focus();
                 return false;
-            }
-            
-            // If point-in-time recovery is enabled but no recovery points are available,
-            // allow the form to submit if a database is selected
-            if (useRecoveryTime && !recoveryPointsAvailable) {
-                console.log('No recovery points available, using latest backup instead');
             }
             
             return true;
@@ -381,8 +522,13 @@
             targetDatabaseDiv.style.display = 'block';
         }
         
-        if (recoveryTargetTimeCheckbox.checked) {
-            recoveryTimeDiv.style.display = 'block';
+        // Initialize backup type display based on default selection
+        const defaultBackupType = document.querySelector('input[name="backup_type"]:checked')?.value;
+        if (defaultBackupType === 'latest') {
+            latestBackupInfo.style.display = 'block';
+        } else if (defaultBackupType === 'point_in_time') {
+            pointInTimeSelection.style.display = 'block';
+            populateRecoveryDates();
         }
     });
 </script>

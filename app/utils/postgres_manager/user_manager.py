@@ -8,9 +8,14 @@ class PostgresUserManager:
     """Manages PostgreSQL users and permissions."""
     
     def __init__(self, ssh_manager, system_utils: SystemUtils, logger=None):
-        self.ssh = ssh_manager
+        self.ssh_manager = ssh_manager
         self.system_utils = system_utils
         self.logger = logger or logging.getLogger(__name__)
+    
+    def _quote_identifier(self, identifier: str) -> str:
+        """Quote PostgreSQL identifier to prevent SQL injection."""
+        # Replace any double quotes with double-double quotes and wrap in quotes
+        return f'"{identifier.replace('"', '""')}"'
     
     def user_exists(self, username: str) -> bool:
         """Check if a PostgreSQL user exists.
@@ -160,15 +165,17 @@ class PostgresUserManager:
         
         # Grant CONNECT permission if requested
         if permissions.get('connect', False):
-
-            commands.append(f"GRANT CONNECT ON DATABASE {db_name} TO {username};")
-            db_commands.append(f"GRANT USAGE ON SCHEMA public TO {username};")
+            quoted_db_name = self._quote_identifier(db_name)
+            quoted_username = self._quote_identifier(username)
+            commands.append(f"GRANT CONNECT ON DATABASE {quoted_db_name} TO {quoted_username};")
+            db_commands.append(f"GRANT USAGE ON SCHEMA public TO {quoted_username};")
         
         # Grant CREATE permission if requested
         if permissions.get('create', False):
-
-            commands.append(f"GRANT CREATE ON DATABASE {db_name} TO {username};")
-            db_commands.append(f"GRANT CREATE ON SCHEMA public TO {username};")
+            quoted_db_name = self._quote_identifier(db_name)
+            quoted_username = self._quote_identifier(username)
+            commands.append(f"GRANT CREATE ON DATABASE {quoted_db_name} TO {quoted_username};")
+            db_commands.append(f"GRANT CREATE ON SCHEMA public TO {quoted_username};")
         
         # Grant table-level permissions
         table_permissions = []
@@ -184,19 +191,40 @@ class PostgresUserManager:
 
         
         if table_permissions:
+            quoted_username = self._quote_identifier(username)
             perm_str = ', '.join(table_permissions)
             db_commands.extend([
-                f"GRANT {perm_str} ON ALL TABLES IN SCHEMA public TO {username};",
-                f"GRANT {perm_str} ON ALL SEQUENCES IN SCHEMA public TO {username};",
-                f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT {perm_str} ON TABLES TO {username};",
-                f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT {perm_str} ON SEQUENCES TO {username};"
+                f"GRANT {perm_str} ON ALL TABLES IN SCHEMA public TO {quoted_username};",
+                f"GRANT {perm_str} ON ALL SEQUENCES IN SCHEMA public TO {quoted_username};",
+                f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT {perm_str} ON TABLES TO {quoted_username};",
+                f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT {perm_str} ON SEQUENCES TO {quoted_username};"
             ])
         
         # Execute general commands
         for cmd in commands:
             result = self.system_utils.execute_postgres_sql(cmd)
             if result['exit_code'] != 0:
-                return False, f"Failed to execute: {cmd}"
+                error_details = result.get('stderr', 'Unknown error')
+                
+                # Check for common PostgreSQL errors that can be handled gracefully
+                if 'GRANT CONNECT' in cmd:
+                    # Handle cases where user already has permission or permission doesn't exist
+                    if any(phrase in error_details.lower() for phrase in ['already', 'duplicate', 'exists']):
+                        self.logger.warning(f"User already has CONNECT permission: {cmd}")
+                        continue
+                    # Handle case where database doesn't exist
+                    elif 'does not exist' in error_details.lower() and db_name in error_details:
+                        self.logger.error(f"Database '{db_name}' does not exist")
+                        return False, f"Database '{db_name}' does not exist. Please ensure the database is created first."
+                    # Handle case where user doesn't exist
+                    elif 'role' in error_details.lower() and 'does not exist' in error_details.lower():
+                        self.logger.error(f"User '{username}' does not exist")
+                        return False, f"User '{username}' does not exist. Please ensure the user is created first."
+                
+                # Log the full error details for debugging
+                self.logger.error(f"Failed to execute command: {cmd}")
+                self.logger.error(f"Error details: {error_details}")
+                return False, f"Failed to execute: {cmd}. Error: {error_details}"
         
         # Execute database-specific commands
         for cmd in db_commands:
@@ -213,46 +241,53 @@ class PostgresUserManager:
     
     def _revoke_all_permissions(self, username: str, db_name: str) -> Tuple[bool, str]:
         """Revoke all permissions from a user on a database."""
+        quoted_db_name = self._quote_identifier(db_name)
+        quoted_username = self._quote_identifier(username)
         commands = [
-            f"REVOKE ALL PRIVILEGES ON DATABASE {db_name} FROM {username};",
-            f"REVOKE CONNECT ON DATABASE {db_name} FROM {username};"
+            f"REVOKE ALL PRIVILEGES ON DATABASE {quoted_db_name} FROM {quoted_username};",
+            f"REVOKE CONNECT ON DATABASE {quoted_db_name} FROM {quoted_username};"
         ]
         
         # Execute commands on the specific database
         db_commands = [
-            f"REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM {username};",
-            f"REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM {username};",
-            f"REVOKE ALL PRIVILEGES ON SCHEMA public FROM {username};"
+            f"REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM {quoted_username};",
+            f"REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM {quoted_username};",
+            f"REVOKE ALL PRIVILEGES ON SCHEMA public FROM {quoted_username};"
         ]
         
         # Execute general commands
         for cmd in commands:
             result = self.system_utils.execute_postgres_sql(cmd)
             if result['exit_code'] != 0:
-                self.logger.warning(f"Command failed (continuing): {cmd}")
+                error_details = result.get('stderr', 'Unknown error')
+                self.logger.warning(f"Command failed (continuing): {cmd} - Error: {error_details}")
         
         # Execute database-specific commands
         for cmd in db_commands:
             result = self.system_utils.execute_postgres_sql(cmd, db_name)
             if result['exit_code'] != 0:
-                self.logger.warning(f"Command failed (continuing): {cmd}")
+                error_details = result.get('stderr', 'Unknown error')
+                self.logger.warning(f"Command failed (continuing): {cmd} - Error: {error_details}")
         
         return True, f"Revoked all permissions for user '{username}' on database '{db_name}'"
     
     def _grant_read_only_permissions(self, username: str, db_name: str) -> Tuple[bool, str]:
         """Grant read-only permissions to a user on a database."""
+        quoted_db_name = self._quote_identifier(db_name)
+        quoted_username = self._quote_identifier(username)
+        
         commands = [
-            f"REVOKE ALL ON DATABASE {db_name} FROM {username};",
-            f"GRANT CONNECT ON DATABASE {db_name} TO {username};"
+            f"REVOKE ALL ON DATABASE {quoted_db_name} FROM {quoted_username};",
+            f"GRANT CONNECT ON DATABASE {quoted_db_name} TO {quoted_username};"
         ]
         
         db_commands = [
-            f"REVOKE ALL ON SCHEMA public FROM {username};",
-            f"GRANT USAGE ON SCHEMA public TO {username};",
-            f"GRANT SELECT ON ALL TABLES IN SCHEMA public TO {username};",
-            f"GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO {username};",
-            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {username};",
-            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO {username};"
+            f"REVOKE ALL ON SCHEMA public FROM {quoted_username};",
+            f"GRANT USAGE ON SCHEMA public TO {quoted_username};",
+            f"GRANT SELECT ON ALL TABLES IN SCHEMA public TO {quoted_username};",
+            f"GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO {quoted_username};",
+            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {quoted_username};",
+            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO {quoted_username};"
         ]
         
         # Execute general commands
@@ -271,18 +306,21 @@ class PostgresUserManager:
     
     def _grant_read_write_permissions(self, username: str, db_name: str) -> Tuple[bool, str]:
         """Grant read-write permissions to a user on a database."""
+        quoted_db_name = self._quote_identifier(db_name)
+        quoted_username = self._quote_identifier(username)
+        
         commands = [
-            f"REVOKE ALL ON DATABASE {db_name} FROM {username};",
-            f"GRANT CONNECT ON DATABASE {db_name} TO {username};"
+            f"REVOKE ALL ON DATABASE {quoted_db_name} FROM {quoted_username};",
+            f"GRANT CONNECT ON DATABASE {quoted_db_name} TO {quoted_username};"
         ]
         
         db_commands = [
-            f"REVOKE ALL ON SCHEMA public FROM {username};",
-            f"GRANT USAGE ON SCHEMA public TO {username};",
-            f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {username};",
-            f"GRANT SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {username};",
-            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {username};",
-            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, UPDATE ON SEQUENCES TO {username};"
+            f"REVOKE ALL ON SCHEMA public FROM {quoted_username};",
+            f"GRANT USAGE ON SCHEMA public TO {quoted_username};",
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {quoted_username};",
+            f"GRANT SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {quoted_username};",
+            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {quoted_username};",
+            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, UPDATE ON SEQUENCES TO {quoted_username};"
         ]
         
         # Execute general commands
@@ -301,19 +339,22 @@ class PostgresUserManager:
 
     def _grant_all_permissions(self, username: str, db_name: str) -> Tuple[bool, str]:
         """Grant all permissions to a user on a database."""
+        quoted_db_name = self._quote_identifier(db_name)
+        quoted_username = self._quote_identifier(username)
+        
         commands = [
-            f"REVOKE ALL ON DATABASE {db_name} FROM {username};",
-            f"GRANT CONNECT ON DATABASE {db_name} TO {username};",
-            f"GRANT CREATE ON DATABASE {db_name} TO {username};"
+            f"REVOKE ALL ON DATABASE {quoted_db_name} FROM {quoted_username};",
+            f"GRANT CONNECT ON DATABASE {quoted_db_name} TO {quoted_username};",
+            f"GRANT CREATE ON DATABASE {quoted_db_name} TO {quoted_username};"
         ]
         
         db_commands = [
-            f"REVOKE ALL ON SCHEMA public FROM {username};",
-            f"GRANT ALL PRIVILEGES ON SCHEMA public TO {username};",
-            f"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO {username};",
-            f"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO {username};",
-            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO {username};",
-            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO {username};"
+            f"REVOKE ALL ON SCHEMA public FROM {quoted_username};",
+            f"GRANT ALL PRIVILEGES ON SCHEMA public TO {quoted_username};",
+            f"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO {quoted_username};",
+            f"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO {quoted_username};",
+            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO {quoted_username};",
+            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO {quoted_username};"
         ]
         
         # Execute general commands
@@ -472,15 +513,21 @@ class PostgresUserManager:
         create_perm = False
         
         if db_result['exit_code'] == 0 and db_result['stdout'].strip():
-
             lines = db_result['stdout'].strip().split('\n')
+            # Debug output removed for performance
+            # print(f"DEBUG: Database permission query output for {username}:")
+            # for i, line in enumerate(lines):
+            #     print(f"DEBUG: Line {i}: '{line}'")
+            
             for line in lines:
                 line = line.strip()
-                if '|' in line and ('t' in line or 'f' in line) and not line.startswith('-') and 'priv' not in line:
+                # Skip header lines and separator lines, but process data lines
+                if '|' in line and ('t' in line or 'f' in line) and not line.startswith('-') and not line.startswith('connect_priv'):
                     parts = line.split('|')
                     if len(parts) >= 2:
                         connect_perm = parts[0].strip().lower() == 't'
                         create_perm = parts[1].strip().lower() == 't'
+                        # print(f"DEBUG: Found database permissions - connect: {connect_perm}, create: {create_perm}")
                         break
         
         # Check table-level permissions using a more accurate approach
@@ -556,11 +603,16 @@ class PostgresUserManager:
         table_result = self.system_utils.execute_postgres_sql(table_perms_query, db_name)
         
         if table_result['exit_code'] == 0 and table_result['stdout'].strip():
-
             lines = table_result['stdout'].strip().split('\n')
+            # Debug output removed for performance
+            # print(f"DEBUG: Table permission query output for {username}:")
+            # for i, line in enumerate(lines):
+            #     print(f"DEBUG: Line {i}: '{line}'")
+            
             for line in lines:
                 line = line.strip()
-                if '|' in line and ('t' in line or 'f' in line) and not line.startswith('-') and 'priv' not in line:
+                # Skip header lines and separator lines, but process data lines
+                if '|' in line and ('t' in line or 'f' in line) and not line.startswith('-') and not line.startswith('select_priv'):
                     parts = line.split('|')
                     if len(parts) >= 4:
                         select_perm = parts[0].strip().lower() == 't'

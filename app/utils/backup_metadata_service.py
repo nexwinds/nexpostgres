@@ -14,20 +14,19 @@ class BackupMetadataService:
     
     @staticmethod
     def get_backup_logs_for_job(backup_job_id: int, status: Optional[str] = None, days: Optional[int] = None) -> List[Dict]:
-        """Get backup logs for a specific backup job from WAL-G.
+        """Get backup logs for a specific backup job directly from WAL-G/server.
         
         Args:
             backup_job_id: Backup job ID
-            status: Filter by status (success, failed, in_progress)
-            days: Filter by number of days
+            status: Filter by status (optional)
+            days: Filter by number of days (optional)
             
         Returns:
             List of backup log dictionaries
         """
-        from app.models.database import BackupJob
-        
         backup_job = BackupJob.query.get(backup_job_id)
         if not backup_job:
+            logger.error(f"Backup job {backup_job_id} not found")
             return []
             
         ssh = None
@@ -45,9 +44,15 @@ class BackupMetadataService:
                 return []
                 
             pg_manager = PostgresManager(ssh)
+            logger.info(f"Attempting to list backups for database: {backup_job.database.name}")
             backups = pg_manager.list_backups(backup_job.database.name)
             
+            logger.info(f"Found {len(backups) if backups else 0} backups from WAL-G")
+            if backups:
+                logger.debug(f"First backup data: {backups[0] if backups else 'None'}")
+            
             if not backups:
+                logger.warning(f"No backups found for database {backup_job.database.name}")
                 return []
                 
             # Convert WAL-G backup list to backup log format
@@ -424,50 +429,117 @@ class BackupMetadataService:
         """
         from app.models.database import BackupJob
         
-        # Get backup job name
+        # Get backup job with relationships
         backup_job = BackupJob.query.get(backup_job_id)
         backup_job_name = backup_job.name if backup_job else f'Job {backup_job_id}'
+        
+        # Get database and server information through relationships
+        database_name = backup_job.database.name if backup_job and backup_job.database else 'Unknown'
+        server_name = backup_job.server.name if backup_job and backup_job.server else 'Unknown'
+        
+        # Get S3 storage information
+        s3_bucket = backup_job.s3_storage.bucket if backup_job and backup_job.s3_storage else None
+        s3_region = backup_job.s3_storage.region if backup_job and backup_job.s3_storage else None
         
         # Get backup name
         backup_name = backup.get('name', '')
         
-        # Use timestamp from backup data if available, otherwise parse from name
+        # Use timestamp from backup data with improved field mapping
         start_time = None
-        if 'timestamp' in backup:
+        
+        # Try start_time field first (from WAL-G detailed output)
+        if 'start_time' in backup and backup['start_time']:
+            try:
+                start_time = datetime.fromisoformat(backup['start_time'].replace('Z', '+00:00'))
+            except (ValueError, TypeError):
+                pass
+        
+        # Fallback to timestamp field
+        if not start_time and 'timestamp' in backup:
             try:
                 start_time = datetime.fromisoformat(backup['timestamp'].replace('Z', '+00:00'))
             except (ValueError, TypeError):
                 pass
         
+        # Last resort: parse from backup name
         if not start_time:
             start_time = BackupMetadataService._parse_backup_name_timestamp(backup_name)
         
-        # Estimate end time and calculate duration
-        end_time = start_time
+        # Calculate end time and duration using actual WAL-G timing data
+        end_time = None
         duration = None
-        if 'duration' in backup:
+        
+        # Helper function to parse datetime with timezone handling
+        def parse_datetime(dt_str):
+            if not dt_str:
+                return None
             try:
-                duration = int(backup['duration'])
-                if start_time:
-                    end_time = start_time + timedelta(seconds=duration)
+                return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
             except (ValueError, TypeError):
-                pass
+                return None
+        
+        # Try finish_time field first (from WAL-G detailed output)
+        end_time = parse_datetime(backup.get('finish_time'))
+        
+        # Fallback to end_time field
+        if not end_time:
+            end_time = parse_datetime(backup.get('end_time'))
+        
+        # Calculate actual duration from start and end times
+        if start_time and end_time:
+            duration = int((end_time - start_time).total_seconds())
+        elif start_time:
+            # If we only have start_time, try to derive end_time from duration field
+            if 'duration' in backup:
+                try:
+                    duration = int(backup['duration'])
+                    end_time = start_time + timedelta(seconds=duration)
+                except (ValueError, TypeError):
+                    pass
+            
+            # If still no duration, set to None instead of estimating
+            # This will show as unknown rather than a fake value
+            if not duration:
+                duration = None
+                end_time = None
+        
+        # Construct backup path in S3
+        backup_path = f"postgres/{database_name}/{backup_name}" if database_name != 'Unknown' else backup.get('path', '')
+        
+        # Get size in bytes and convert to MB using improved field mapping
+        size_bytes = backup.get('size', 0)  # This is uncompressed_size from WAL-G
+        compressed_size_bytes = backup.get('compressed_size', 0)  # Additional compressed size info
+        size_mb = round(size_bytes / (1024 * 1024), 2) if size_bytes > 0 else 0
+        compressed_size_mb = round(compressed_size_bytes / (1024 * 1024), 2) if compressed_size_bytes > 0 else 0
         
         return {
             'id': f"{backup_job_id}_{backup_name}",  # Synthetic ID
             'backup_job_id': backup_job_id,
             'backup_job_name': backup_job_name,
+            'database_name': database_name,
+            'server_name': server_name,
             'backup_name': backup_name,
             'start_time': start_time.isoformat() if start_time else None,
             'end_time': end_time.isoformat() if end_time else None,
             'duration': duration,
             'status': 'success',  # WAL-G only lists successful backups
             'backup_type': backup.get('type', 'full'),
-            'size_bytes': backup.get('size', 0),
-            'size_mb': round(backup.get('size', 0) / (1024 * 1024), 2) if backup.get('size') else None,
+            'size_bytes': size_bytes,  # Uncompressed size from WAL-G
+            'size_mb': size_mb,  # Convert bytes to MB for display
+            'compressed_size_bytes': compressed_size_bytes,  # Compressed size from WAL-G
+            'compressed_size_mb': compressed_size_mb,  # Compressed size in MB
+            'is_permanent': backup.get('is_permanent', False),  # WAL-G permanent backup flag
+            'wal_file_name': backup.get('wal_file_name', ''),  # WAL file reference
+            'hostname': backup.get('hostname', ''),  # Server hostname from backup
+            'data_dir': backup.get('data_dir', ''),  # PostgreSQL data directory
+            'pg_version': backup.get('pg_version', ''),  # PostgreSQL version
+            'start_lsn': backup.get('start_lsn', ''),  # Log Sequence Number start
+            'finish_lsn': backup.get('finish_lsn', ''),  # Log Sequence Number finish
             'log_output': f"Backup {backup_name} completed successfully",
             'manual': False,  # Cannot determine from WAL-G data
-            'backup_path': backup.get('path', ''),
+            'backup_path': backup_path,
+            's3_bucket': s3_bucket,
+            's3_region': s3_region,
             'error_message': None
         }
     

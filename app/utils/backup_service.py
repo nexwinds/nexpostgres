@@ -561,36 +561,55 @@ class BackupRestoreService:
             tuple: (success, recovery_points_list)
         """
         ssh = None
+        import logging
+        logger = logging.getLogger(__name__)
+        
         try:
+            logger.info(f"Getting recovery points for database: {database.name}")
             ssh = BackupService.create_ssh_connection(database.server)
             if not ssh:
+                logger.error("Failed to create SSH connection")
                 return False, []
             
             pg_manager = BackupService.create_postgres_manager(ssh)
+            logger.info("Created postgres manager, calling list_backups")
             backups = pg_manager.list_backups(database.name)
             
+            logger.info(f"list_backups returned: {len(backups) if backups else 0} backups")
+            if backups:
+                logger.info(f"First backup: {backups[0] if backups else 'None'}")
+            
             if not backups:
+                logger.warning("No backups returned from list_backups")
                 return True, []
             
             recovery_points = []
             for backup in backups:
-                backup_info = backup.get('info', {})
-                backup_name = backup.get('name', '')
-                timestamp_str = backup_info.get('timestamp', '')
+                # WALGBackupManager maps WAL-G fields to standardized names
+                backup_name = backup.get('name', '')  # WALGBackupManager uses 'name'
+                timestamp_str = backup.get('timestamp', '')  # WALGBackupManager uses 'timestamp'
+                
+                logger.info(f"Processing backup: name='{backup_name}', timestamp='{timestamp_str}'")
                 
                 if timestamp_str and backup_name:
                     try:
-                        # Parse the timestamp
-                        backup_time = BackupRestoreService._parse_backup_timestamp(timestamp_str)
+                        # Parse the timestamp (WAL-G format: 2025-08-24T14:47:59Z)
+                        backup_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                         if backup_time:
-                            recovery_points.append({
+                            recovery_point = {
                                 'datetime': backup_time.isoformat(),
                                 'formatted': backup_time.strftime('%Y-%m-%d %H:%M:%S'),
                                 'backup_name': backup_name,
-                                'type': backup_info.get('type', 'unknown')
-                            })
-                    except Exception:
+                                'type': 'backup',
+                                'size': backup.get('size', 0)  # WALGBackupManager uses 'size'
+                            }
+                            recovery_points.append(recovery_point)
+                            logger.info(f"Added recovery point: {recovery_point}")
+                    except Exception as e:
+                        logger.warning(f"Failed to parse backup timestamp '{timestamp_str}': {e}")
                         continue
+                else:
+                    logger.warning(f"Skipping backup with missing data: name='{backup_name}', timestamp='{timestamp_str}'")
             
             # Sort by datetime descending (newest first)
             recovery_points.sort(key=lambda x: x['datetime'], reverse=True)
