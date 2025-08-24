@@ -169,8 +169,12 @@
                         <i class="fas fa-download me-1"></i> Update Server
                     </button>
                     
-                    <button id="configure-postgres-btn" class="btn btn-info btn-sm" data-bs-toggle="modal" data-bs-target="#postgresConfigModal">
-                        <i class="fas fa-cog me-1"></i> Configure PostgreSQL Access
+                    <button id="configure-ip-rules-btn" class="btn btn-info btn-sm" data-bs-toggle="modal" data-bs-target="#ipRulesConfigModal">
+                        <i class="fas fa-network-wired me-1"></i> Configure IP Rules
+                    </button>
+                    
+                    <button id="configure-ssl-btn" class="btn btn-info btn-sm" data-bs-toggle="modal" data-bs-target="#sslConfigModal">
+                        <i class="fas fa-lock me-1"></i> Configure SSL/TLS
                     </button>
                 </div>
                 
@@ -182,21 +186,21 @@
     </div>
 </div>
 
-<!-- PostgreSQL Configuration Modal -->
-<div class="modal fade" id="postgresConfigModal" tabindex="-1" aria-labelledby="postgresConfigModalLabel" aria-hidden="true">
+<!-- IP Rules Configuration Modal -->
+<div class="modal fade" id="ipRulesConfigModal" tabindex="-1" aria-labelledby="ipRulesConfigModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="postgresConfigModalLabel">
-                    <i class="fas fa-database me-2"></i>PostgreSQL Access Configuration
+                <h5 class="modal-title" id="ipRulesConfigModalLabel">
+                    <i class="fas fa-network-wired me-2"></i>IP Rules Configuration
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <form id="postgresConfigForm">
+                <form id="ipRulesConfigForm">
                     <div class="alert alert-info">
                         <i class="fas fa-info-circle me-2"></i>
-                        <strong>Configure PostgreSQL for remote access.</strong> These settings control how external clients can connect to your PostgreSQL server.
+                        <strong>Configure IP access rules for PostgreSQL.</strong> These settings control which IP addresses can connect to your PostgreSQL server.
                     </div>
                     
                     <!-- IP Access Configuration -->
@@ -208,24 +212,24 @@
                             <div class="mb-3">
                                 <label class="form-label">Access Type</label>
                                 <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="accessType" id="accessAll" value="all" checked>
-                                    <label class="form-check-label" for="accessAll">
+                                    <input class="form-check-input" type="radio" name="ipAccessType" id="ipAccessAll" value="all" checked>
+                                    <label class="form-check-label" for="ipAccessAll">
                                         <strong>Allow All IPs (0.0.0.0/0)</strong>
                                         <small class="text-muted d-block">Allows connections from any IP address</small>
                                     </label>
                                 </div>
                                 <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="accessType" id="accessSpecific" value="specific">
-                                    <label class="form-check-label" for="accessSpecific">
+                                    <input class="form-check-input" type="radio" name="ipAccessType" id="ipAccessSpecific" value="specific">
+                                    <label class="form-check-label" for="ipAccessSpecific">
                                         <strong>Specific IP Addresses</strong>
                                         <small class="text-muted d-block">Only allow connections from specified IPs</small>
                                     </label>
                                 </div>
                             </div>
                             
-                            <div id="specificIpsContainer" class="d-none">
-                                <label for="allowedIps" class="form-label">Allowed IP Addresses</label>
-                                <textarea class="form-control" id="allowedIps" rows="3" placeholder="Enter IP addresses or CIDR blocks, one per line:\n192.168.1.100\n10.0.0.0/24\n203.0.113.5"></textarea>
+                            <div id="ipSpecificIpsContainer" class="d-none">
+                                <label for="ipAllowedIps" class="form-label">Allowed IP Addresses</label>
+                                <textarea class="form-control" id="ipAllowedIps" rows="3" placeholder="Enter IP addresses or CIDR blocks, one per line:\n192.168.1.100\n10.0.0.0/24\n203.0.113.5"></textarea>
                                 <div class="form-text">Enter IP addresses or CIDR blocks, one per line. Examples: 192.168.1.100, 10.0.0.0/24</div>
                             </div>
                         </div>
@@ -247,55 +251,6 @@
                         </div>
                     </div>
                     
-                    <!-- SSL/TLS Configuration -->
-                    <div class="card mb-4">
-                        <div class="card-header">
-                            <h6 class="mb-0"><i class="fas fa-lock me-2"></i>SSL/TLS Configuration</h6>
-                        </div>
-                        <div class="card-body">
-                            <div class="form-check mb-3">
-                                <input class="form-check-input" type="checkbox" id="enableSsl" checked>
-                                <label class="form-check-label" for="enableSsl">
-                                    <strong>Enable SSL/TLS</strong>
-                                    <small class="text-muted d-block">Encrypt connections to PostgreSQL</small>
-                                </label>
-                            </div>
-                            
-                            <div id="sslOptionsContainer">
-                                <div class="mb-3">
-                                    <label class="form-label">Certificate Management</label>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="certType" id="autoGenerate" value="auto" checked>
-                                        <label class="form-check-label" for="autoGenerate">
-                                            <strong>Auto-generate certificates</strong>
-                                            <small class="text-muted d-block">Automatically create self-signed certificates</small>
-                                        </label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="certType" id="customCerts" value="custom">
-                                        <label class="form-check-label" for="customCerts">
-                                            <strong>Use custom certificates</strong>
-                                            <small class="text-muted d-block">Provide paths to existing certificate files</small>
-                                        </label>
-                                    </div>
-                                </div>
-                                
-                                <div id="customCertContainer" class="d-none">
-                                    <div class="mb-3">
-                                        <label for="certPath" class="form-label">Certificate Path</label>
-                                        <input type="text" class="form-control" id="certPath" placeholder="/path/to/server.crt">
-                                        <div class="form-text">Path to the SSL certificate file</div>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label for="keyPath" class="form-label">Private Key Path</label>
-                                        <input type="text" class="form-control" id="keyPath" placeholder="/path/to/server.key">
-                                        <div class="form-text">Path to the SSL private key file</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
                     <!-- Configuration Preview -->
                     <div class="card mb-4">
                         <div class="card-header">
@@ -304,11 +259,11 @@
                         <div class="card-body">
                             <div class="mb-3">
                                 <label class="form-label">postgresql.conf changes:</label>
-                                <pre class="bg-light p-2 rounded"><code id="postgresqlConfPreview">listen_addresses = '*'</code></pre>
+                                <pre class="bg-light p-2 rounded"><code id="ipPostgresqlConfPreview">listen_addresses = '*'</code></pre>
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">pg_hba.conf entries:</label>
-                                <pre class="bg-light p-2 rounded"><code id="pgHbaConfPreview">host    all    all    0.0.0.0/0    scram-sha-256\nhost    all    all    ::/0         scram-sha-256</code></pre>
+                                <pre class="bg-light p-2 rounded"><code id="ipPgHbaConfPreview">host    all    all    0.0.0.0/0    scram-sha-256\nhost    all    all    ::/0         scram-sha-256</code></pre>
                             </div>
                         </div>
                     </div>
@@ -320,8 +275,8 @@
                         </div>
                         <div class="card-body">
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="validateConfig" checked disabled>
-                                <label class="form-check-label" for="validateConfig">
+                                <input class="form-check-input" type="checkbox" id="ipValidateConfig" checked disabled>
+                                <label class="form-check-label" for="ipValidateConfig">
                                     <strong>Validate configuration before applying</strong>
                                     <small class="text-muted d-block">Test configuration syntax before restarting PostgreSQL (Always enabled)</small>
                                 </label>
@@ -334,8 +289,103 @@
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
                     <i class="fas fa-times me-1"></i>Cancel
                 </button>
-                <button type="button" class="btn btn-primary" id="applyConfigBtn">
-                    <i class="fas fa-cog me-1"></i>Apply Configuration
+                <button type="button" class="btn btn-primary" id="applyIpRulesBtn">
+                    <i class="fas fa-network-wired me-1"></i>Apply IP Rules
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SSL/TLS Configuration Modal -->
+<div class="modal fade" id="sslConfigModal" tabindex="-1" aria-labelledby="sslConfigModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="sslConfigModalLabel">
+                    <i class="fas fa-lock me-2"></i>SSL/TLS Configuration
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="sslConfigForm">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Configure SSL/TLS encryption for PostgreSQL.</strong> These settings control how connections to your PostgreSQL server are encrypted.
+                    </div>
+                    
+                    <!-- SSL/TLS Configuration -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h6 class="mb-0"><i class="fas fa-lock me-2"></i>SSL/TLS Configuration</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="sslEnableSsl" checked>
+                                <label class="form-check-label" for="sslEnableSsl">
+                                    <strong>Enable SSL/TLS</strong>
+                                    <small class="text-muted d-block">Encrypt connections to PostgreSQL</small>
+                                </label>
+                            </div>
+                            
+                            <div id="sslOptionsContainer">
+                                <div class="mb-3">
+                                    <label class="form-label">Certificate Management</label>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="sslCertType" id="sslAutoGenerate" value="auto" checked>
+                                        <label class="form-check-label" for="sslAutoGenerate">
+                                            <strong>Auto-generate certificates</strong>
+                                            <small class="text-muted d-block">Automatically create self-signed certificates</small>
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="sslCertType" id="sslCustomCerts" value="custom">
+                                        <label class="form-check-label" for="sslCustomCerts">
+                                            <strong>Use custom certificates</strong>
+                                            <small class="text-muted d-block">Provide paths to existing certificate files</small>
+                                        </label>
+                                    </div>
+                                </div>
+                                
+                                <div id="sslCustomCertContainer" class="d-none">
+                                    <div class="mb-3">
+                                        <label for="sslCertPath" class="form-label">Certificate Path</label>
+                                        <input type="text" class="form-control" id="sslCertPath" placeholder="/path/to/server.crt">
+                                        <div class="form-text">Path to the SSL certificate file</div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="sslKeyPath" class="form-label">Private Key Path</label>
+                                        <input type="text" class="form-control" id="sslKeyPath" placeholder="/path/to/server.key">
+                                        <div class="form-text">Path to the SSL private key file</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Validation Options -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h6 class="mb-0"><i class="fas fa-check-circle me-2"></i>Safety Options</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="sslValidateConfig" checked disabled>
+                                <label class="form-check-label" for="sslValidateConfig">
+                                    <strong>Validate configuration before applying</strong>
+                                    <small class="text-muted d-block">Test configuration syntax before restarting PostgreSQL (Always enabled)</small>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="fas fa-times me-1"></i>Cancel
+                </button>
+                <button type="button" class="btn btn-primary" id="applySslBtn">
+                    <i class="fas fa-lock me-1"></i>Apply SSL/TLS
                 </button>
             </div>
         </div>
@@ -522,14 +572,14 @@
             });
         });
         
-        // PostgreSQL Configuration Modal functionality
-        function updateConfigPreview() {
-            const accessType = document.querySelector('input[name="accessType"]:checked').value;
+        // IP Rules Configuration Modal functionality
+        function updateIpConfigPreview() {
+            const accessType = document.querySelector('input[name="ipAccessType"]:checked').value;
             const authMethod = 'scram-sha-256'; // Fixed to most secure option
-            const allowedIps = document.getElementById('allowedIps').value;
+            const allowedIps = document.getElementById('ipAllowedIps').value;
             
             // Update postgresql.conf preview
-            document.getElementById('postgresqlConfPreview').textContent = "listen_addresses = '*'";
+            document.getElementById('ipPostgresqlConfPreview').textContent = "listen_addresses = '*'";
             
             // Update pg_hba.conf preview
             let pgHbaEntries = [];
@@ -547,11 +597,11 @@
                 });
             }
             
-            document.getElementById('pgHbaConfPreview').textContent = pgHbaEntries.join('\n');
+            document.getElementById('ipPgHbaConfPreview').textContent = pgHbaEntries.join('\n');
         }
         
-        // Load current PostgreSQL configuration
-        function loadCurrentConfig() {
+        // Load current IP Rules configuration
+        function loadCurrentIpConfig() {
             fetch(`{{ url_for('servers.get_postgres_config', id=server.id) }}`)
             .then(response => response.json())
             .then(data => {
@@ -560,34 +610,36 @@
                     
                     // Set access type
                     if (config.access_type === 'all') {
-                        document.getElementById('accessAll').checked = true;
-                        document.getElementById('specificIpsContainer').classList.add('d-none');
+                        document.getElementById('ipAccessAll').checked = true;
+                        document.getElementById('ipSpecificIpsContainer').classList.add('d-none');
                     } else if (config.access_type === 'specific') {
-                        document.getElementById('accessSpecific').checked = true;
-                        document.getElementById('specificIpsContainer').classList.remove('d-none');
+                        document.getElementById('ipAccessSpecific').checked = true;
+                        document.getElementById('ipSpecificIpsContainer').classList.remove('d-none');
                         
                         // Set allowed IPs
                         const allowedIpsText = config.allowed_ips.join('\n');
-                        document.getElementById('allowedIps').value = allowedIpsText;
+                        document.getElementById('ipAllowedIps').value = allowedIpsText;
                     } else {
                         // Default to 'all' if no configuration found
-                        document.getElementById('accessAll').checked = true;
-                        document.getElementById('specificIpsContainer').classList.add('d-none');
+                        document.getElementById('ipAccessAll').checked = true;
+                        document.getElementById('ipSpecificIpsContainer').classList.add('d-none');
                     }
                     
                     // Update preview with loaded configuration
-                    updateConfigPreview();
+                    updateIpConfigPreview();
                 }
             })
             .catch(error => {
                 console.error('Error loading current configuration:', error);
                 // Set defaults on error
-                document.getElementById('accessAll').checked = true;
-                document.getElementById('specificIpsContainer').classList.add('d-none');
-                updateConfigPreview();
+                document.getElementById('ipAccessAll').checked = true;
+                document.getElementById('ipSpecificIpsContainer').classList.add('d-none');
+                updateIpConfigPreview();
             });
-            
-            // Load current SSL configuration
+        }
+        
+        // Load current SSL/TLS configuration
+        function loadCurrentSslConfig() {
             fetch(`{{ url_for('servers.get_ssl_status', id=server.id) }}`)
             .then(response => response.json())
             .then(data => {
@@ -595,29 +647,29 @@
                     const sslStatus = data.ssl_status;
                     
                     // Update SSL enable checkbox
-                    document.getElementById('enableSsl').checked = sslStatus.ssl_enabled || false;
+                    document.getElementById('sslEnableSsl').checked = sslStatus.ssl_enabled || false;
                     
                     // Update certificate paths if available
                     if (sslStatus.cert_file) {
-                        document.getElementById('certPath').value = sslStatus.cert_file;
+                        document.getElementById('sslCertPath').value = sslStatus.cert_file;
                     }
                     if (sslStatus.key_file) {
-                        document.getElementById('keyPath').value = sslStatus.key_file;
+                        document.getElementById('sslKeyPath').value = sslStatus.key_file;
                     }
                     
                     // Determine certificate type based on paths
                     if (sslStatus.cert_file && sslStatus.cert_file.includes('server.crt')) {
-                        document.getElementById('autoGenerate').checked = true;
+                        document.getElementById('sslAutoGenerate').checked = true;
                     } else if (sslStatus.cert_file) {
-                        document.getElementById('customCerts').checked = true;
+                        document.getElementById('sslCustomCerts').checked = true;
                     }
                     
                     // Trigger change events to show/hide fields
                     const enableSslEvent = new Event('change');
-                    document.getElementById('enableSsl').dispatchEvent(enableSslEvent);
-                    if (document.getElementById('customCerts').checked) {
+                    document.getElementById('sslEnableSsl').dispatchEvent(enableSslEvent);
+                    if (document.getElementById('sslCustomCerts').checked) {
                         const customCertsEvent = new Event('change');
-                        document.getElementById('customCerts').dispatchEvent(customCertsEvent);
+                        document.getElementById('sslCustomCerts').dispatchEvent(customCertsEvent);
                     }
                 }
             })
@@ -626,60 +678,69 @@
             });
         }
         
-        // Handle access type radio button changes
-        document.querySelectorAll('input[name="accessType"]').forEach(radio => {
+        // Handle IP access type radio button changes
+        document.querySelectorAll('input[name="ipAccessType"]').forEach(radio => {
             radio.addEventListener('change', function() {
-                const specificContainer = document.getElementById('specificIpsContainer');
-                if (this.value === 'specific') {
-                    specificContainer.classList.remove('d-none');
-                } else {
-                    specificContainer.classList.add('d-none');
+                const specificContainer = document.getElementById('ipSpecificIpsContainer');
+                if (specificContainer) {
+                    if (this.value === 'specific') {
+                        specificContainer.classList.remove('d-none');
+                    } else {
+                        specificContainer.classList.add('d-none');
+                    }
                 }
-                updateConfigPreview();
+                updateIpConfigPreview();
             });
         });
         
         // Handle SSL/TLS configuration changes
-        document.getElementById('enableSsl').addEventListener('change', function() {
-            const sslContainer = document.getElementById('sslOptionsContainer');
-            if (this.checked) {
-                sslContainer.classList.remove('d-none');
-            } else {
-                sslContainer.classList.add('d-none');
-            }
-        });
+        const sslEnableElement = document.getElementById('sslEnableSsl');
+        if (sslEnableElement) {
+            sslEnableElement.addEventListener('change', function() {
+                const sslContainer = document.getElementById('sslOptionsContainer');
+                if (sslContainer) {
+                    if (this.checked) {
+                        sslContainer.classList.remove('d-none');
+                    } else {
+                        sslContainer.classList.add('d-none');
+                    }
+                }
+            });
+        }
         
         // Handle certificate type radio button changes
-        document.querySelectorAll('input[name="certType"]').forEach(radio => {
+        document.querySelectorAll('input[name="sslCertType"]').forEach(radio => {
             radio.addEventListener('change', function() {
-                const customContainer = document.getElementById('customCertContainer');
-                if (this.value === 'custom') {
-                    customContainer.classList.remove('d-none');
-                } else {
-                    customContainer.classList.add('d-none');
+                const customContainer = document.getElementById('sslCustomCertContainer');
+                if (customContainer) {
+                    if (this.value === 'custom') {
+                        customContainer.classList.remove('d-none');
+                    } else {
+                        customContainer.classList.add('d-none');
+                    }
                 }
             });
         });
         
         // Handle allowed IPs textarea changes
-        document.getElementById('allowedIps').addEventListener('input', updateConfigPreview);
+        const ipAllowedIpsElement = document.getElementById('ipAllowedIps');
+        if (ipAllowedIpsElement) {
+            ipAllowedIpsElement.addEventListener('input', updateIpConfigPreview);
+        }
         
-        // Handle apply configuration button
-        document.getElementById('applyConfigBtn').addEventListener('click', function() {
+        // Handle IP Rules apply configuration button
+        const ipApplyBtn = document.getElementById('ipApplyConfigBtn');
+        if (ipApplyBtn) {
+            ipApplyBtn.addEventListener('click', function() {
             const actionStatus = document.getElementById('action-status');
-            const modal = bootstrap.Modal.getInstance(document.getElementById('postgresConfigModal'));
+            const modal = bootstrap.Modal.getInstance(document.getElementById('ipRulesConfigModal'));
             
             // Collect form data
             const formData = {
-                access_type: document.querySelector('input[name="accessType"]:checked').value,
+                access_type: document.querySelector('input[name="ipAccessType"]:checked').value,
                 auth_method: 'scram-sha-256', // Fixed to most secure option
-                allowed_ips: document.getElementById('allowedIps').value,
-                validate_config: true, // Always validate configuration
-                // SSL/TLS configuration
-                enable_ssl: document.getElementById('enableSsl').checked,
-                cert_type: document.querySelector('input[name="certType"]:checked').value,
-                cert_path: document.getElementById('certPath').value,
-                key_path: document.getElementById('keyPath').value
+                allowed_ips: document.getElementById('ipAllowedIps').value,
+                validate_config: true // Always validate configuration
             };
             
             // Close modal
@@ -688,7 +749,7 @@
             // Show loading status
             actionStatus.innerHTML = `
                 <div class="alert alert-info">
-                    <i class="fas fa-spinner fa-spin me-1"></i> Configuring PostgreSQL access...
+                    <i class="fas fa-spinner fa-spin me-1"></i> Configuring PostgreSQL IP access rules...
                 </div>
             `;
             
@@ -699,29 +760,10 @@
             })
             .then(response => response.json())
             .then(data => {
-                if (data.success && formData.enable_ssl) {
-                    // If PostgreSQL access was configured successfully and SSL is enabled, configure SSL
-                    const sslData = {
-                        enable_ssl: formData.enable_ssl,
-                        auto_generate: formData.cert_type === 'auto',
-                        cert_path: formData.cert_path,
-                        key_path: formData.key_path
-                    };
-                    
-                    return csrfFetch(`{{ url_for('servers.configure_ssl', id=server.id) }}`, {
-                        method: 'POST',
-                        body: JSON.stringify(sslData)
-                    });
-                } else {
-                    return Promise.resolve({ json: () => Promise.resolve(data) });
-                }
+                return Promise.resolve({ json: () => Promise.resolve(data) });
             })
             .then(response => {
-                if (response.json) {
-                    return response.json();
-                } else {
-                    return response.json();
-                }
+                return response.json();
             })
             .then(data => {
                 if (data.success) {
@@ -739,11 +781,11 @@
                         }
                         
                         if (data.changes.pg_hba) {
-                            const accessType = document.querySelector('input[name="accessType"]:checked').value;
+                            const accessType = document.querySelector('input[name="ipAccessType"]:checked').value;
                             if (accessType === 'all') {
                                 changeDetails += "<li>Updated pg_hba.conf to allow access from all IPs (0.0.0.0/0)</li>";
                             } else {
-                                const allowedIps = document.getElementById('allowedIps').value;
+                                const allowedIps = document.getElementById('ipAllowedIps').value;
                                 const ipCount = allowedIps.split('\n').filter(ip => ip.trim() !== '').length;
                                 changeDetails += `<li>Updated pg_hba.conf to allow access from ${ipCount} specific IP${ipCount > 1 ? 's' : ''}</li>`;
                             }
@@ -779,14 +821,82 @@
                 `;
             });
         });
+        }
         
-        // Handle modal show event to load current configuration
-        document.getElementById('postgresConfigModal').addEventListener('show.bs.modal', function() {
-            loadCurrentConfig();
+        // Handle SSL/TLS apply configuration button
+        const sslApplyBtn = document.getElementById('sslApplyConfigBtn');
+        if (sslApplyBtn) {
+            sslApplyBtn.addEventListener('click', function() {
+            const actionStatus = document.getElementById('action-status');
+            const modal = bootstrap.Modal.getInstance(document.getElementById('sslConfigModal'));
+            
+            // Collect form data
+            const formData = {
+                enable_ssl: document.getElementById('sslEnableSsl').checked,
+                auto_generate: document.querySelector('input[name="sslCertType"]:checked').value === 'auto',
+                cert_path: document.getElementById('sslCertPath').value,
+                key_path: document.getElementById('sslKeyPath').value
+            };
+            
+            // Close modal
+            modal.hide();
+            
+            // Show loading status
+            actionStatus.innerHTML = `
+                <div class="alert alert-info">
+                    <i class="fas fa-spinner fa-spin me-1"></i> Configuring SSL/TLS settings...
+                </div>
+            `;
+            
+            // Send SSL configuration request
+            csrfFetch(`{{ url_for('servers.configure_ssl', id=server.id) }}`, {
+                method: 'POST',
+                body: JSON.stringify(formData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    actionStatus.innerHTML = `
+                        <div class="alert alert-success">
+                            <i class="fas fa-check-circle me-1"></i> ${data.message}
+                        </div>
+                    `;
+                } else {
+                    actionStatus.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-times-circle me-1"></i> <strong>Error:</strong><br>
+                            ${data.message}
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                actionStatus.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-times-circle me-1"></i> Error: ${error.message}
+                    </div>
+                `;
+            });
         });
+        }
+        
+        // Handle modal show events to load current configuration
+        const ipRulesModal = document.getElementById('ipRulesConfigModal');
+        if (ipRulesModal) {
+            ipRulesModal.addEventListener('show.bs.modal', function() {
+                loadCurrentIpConfig();
+            });
+        }
+        
+        const sslModal = document.getElementById('sslConfigModal');
+        if (sslModal) {
+            sslModal.addEventListener('show.bs.modal', function() {
+                loadCurrentSslConfig();
+            });
+        }
         
         // Initialize preview on page load
-        updateConfigPreview();
+        updateIpConfigPreview();
         
         // Handle manual refresh
         document.getElementById('refresh-btn').addEventListener('click', function() {

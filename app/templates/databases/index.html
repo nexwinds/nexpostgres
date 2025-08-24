@@ -25,7 +25,6 @@
                         <th>Name</th>
                         <th>Server</th>
                         <th>PG Port</th>
-                        <th>Status</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -35,11 +34,6 @@
                         <td>{{ database.name }}</td>
                         <td>{{ database.server.name }}</td>
                         <td>{{ database.server.postgres_port }}</td>
-                        <td>
-                            <span class="status-indicator" data-database-id="{{ database.id }}" data-server-id="{{ database.server.id }}">
-                                <span class="badge bg-secondary">Unknown</span>
-                            </span>
-                        </td>
                         <td>
                             <div class="btn-group" role="group">
                                 <a href="{{ url_for('databases.database_users', database_id=database.id) }}" class="btn btn-sm btn-outline-success">
@@ -54,6 +48,11 @@
                                 <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteDatabaseModal{{ database.id }}">
                                     <i class="fas fa-trash"></i> Delete
                                 </button>
+                            </div>
+                            <div class="mt-2">
+                                <span class="status-indicator" data-database-id="{{ database.id }}" data-server-id="{{ database.server.id }}">
+                                    <span class="badge bg-secondary">Unknown</span>
+                                </span>
                             </div>
                             
                             {{ confirmation_modal('deleteDatabaseModal' + database.id|string, 'Confirm Deletion', 'Are you sure you want to delete the database <strong>' + database.name + '</strong> on server <strong>' + database.server.name + '</strong>?<div class="alert alert-warning mt-3"><i class="fas fa-exclamation-triangle me-1"></i> This will also delete all backup jobs associated with this database.</div>', url_for('databases.delete_database', database_id=database.id)) }}
@@ -74,9 +73,12 @@
     document.addEventListener('DOMContentLoaded', function() {
         // Function to check database status
         function checkDatabaseStatus(databaseId, serverId, statusIndicator, button = null) {
+            // Store original button content
+            let originalContent = null;
+            
             // Show loading state
             if (button) {
-                const originalContent = button.innerHTML;
+                originalContent = button.innerHTML;
                 button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
                 button.disabled = true;
             }
@@ -87,7 +89,7 @@
                 .then(response => response.json())
                 .then(data => {
                     // Reset button if provided
-                    if (button) {
+                    if (button && originalContent) {
                         button.innerHTML = originalContent;
                         button.disabled = false;
                     }
@@ -98,20 +100,20 @@
                             <span class="badge bg-success">
                                 <i class="fas fa-check-circle me-1"></i> Online
                             </span>
-                            <small class="d-block mt-1">PostgreSQL ${data.postgres_version}</small>
+                            <small class="d-block mt-1" style="white-space: nowrap;">PostgreSQL ${data.postgres_version}</small>
                         `;
                     } else {
                         statusIndicator.innerHTML = `
                             <span class="badge bg-danger">
                                 <i class="fas fa-times-circle me-1"></i> Offline
                             </span>
-                            <small class="d-block text-danger mt-1">${data.message}</small>
+                            <small class="d-block text-danger mt-1" style="white-space: nowrap;">${data.message}</small>
                         `;
                     }
                 })
                 .catch(error => {
                     // Reset button if provided
-                    if (button) {
+                    if (button && originalContent) {
                         button.innerHTML = originalContent;
                         button.disabled = false;
                     }
@@ -125,16 +127,7 @@
                 });
         }
         
-        // Auto-check all database statuses on page load
-        document.querySelectorAll('.status-indicator').forEach(function(statusIndicator) {
-            const databaseId = statusIndicator.getAttribute('data-database-id');
-            const serverId = statusIndicator.getAttribute('data-server-id');
-            
-            // Add a small delay to avoid overwhelming the server
-            setTimeout(() => {
-                checkDatabaseStatus(databaseId, serverId, statusIndicator);
-            }, Math.random() * 2000); // Random delay up to 2 seconds
-        });
+        // Removed auto-check functionality - status will only be checked when clicking 'Check' button
         
         // Setup manual check buttons
         document.querySelectorAll('.check-database').forEach(function(button) {
