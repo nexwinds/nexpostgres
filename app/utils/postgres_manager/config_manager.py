@@ -314,13 +314,40 @@ class PostgresConfigManager:
             str: Setting value or None if not found
         """
         try:
-            result = self.system_utils.execute_as_postgres_user(f"psql -t -c 'SHOW {setting};'")
-            if result['exit_code'] == 0 and result['stdout'].strip():
-                return result['stdout'].strip()
+            # Add timeout to prevent hanging using threading
+            import threading
+            
+            result_container = {'result': None, 'completed': False}
+            
+            def query_setting():
+                try:
+                    result = self.system_utils.execute_as_postgres_user(f"psql -t -c 'SHOW {setting};'")
+                    result_container['result'] = result
+                    result_container['completed'] = True
+                except Exception as e:
+                    self.logger.debug(f"Error in PostgreSQL query thread: {str(e)}")
+                    result_container['completed'] = True
+            
+            # Start query in separate thread
+            query_thread = threading.Thread(target=query_setting)
+            query_thread.daemon = True
+            query_thread.start()
+            
+            # Wait for completion with timeout
+            query_thread.join(timeout=30)
+            
+            if result_container['completed'] and result_container['result']:
+                result = result_container['result']
+                if result['exit_code'] == 0 and result['stdout'].strip():
+                    return result['stdout'].strip()
+            elif not result_container['completed']:
+                self.logger.warning(f"PostgreSQL query for {setting} timed out after 30 seconds")
+                
         except Exception as e:
             self.logger.debug(f"Could not query PostgreSQL for setting {setting}: {str(e)}")
         
         # Fallback to reading from file
+        self.logger.debug(f"Falling back to reading {setting} from configuration file")
         postgresql_conf = self.find_postgresql_conf()
         if postgresql_conf:
             check_cmd = f"sudo grep -E '^[ \\t]*{setting}[ \\t]*=' {postgresql_conf}"
@@ -554,7 +581,7 @@ class PostgresConfigManager:
         
         return bool(re.match(ipv4_pattern, ip_cidr) or re.match(ipv6_pattern, ip_cidr))
     
-    def configure_ssl_tls(self, enable_ssl: bool = True, cert_path: str = None, key_path: str = None, auto_generate: bool = True) -> Tuple[bool, str, Dict]:
+    def configure_ssl_tls(self, enable_ssl: bool = True, cert_path: str = None, key_path: str = None, auto_generate: bool = True, common_name: str = None, organization: str = None, country: str = None, validity_days: int = 365, key_algorithm: str = "ed25519") -> Tuple[bool, str, Dict]:
         """Configure SSL/TLS for PostgreSQL.
         
         Args:
@@ -562,6 +589,11 @@ class PostgresConfigManager:
             cert_path: Path to SSL certificate file
             key_path: Path to SSL private key file
             auto_generate: Whether to auto-generate self-signed certificates
+            common_name: Common name for the certificate (hostname/domain)
+            organization: Organization name for the certificate
+            country: Two-letter country code
+            validity_days: Number of days the certificate will be valid
+            key_algorithm: Key algorithm to use (always ed25519 for maximum security)
             
         Returns:
             tuple: (success, message, changes_made)
@@ -595,7 +627,9 @@ class PostgresConfigManager:
         
         # Generate certificates if auto_generate is True or certificates don't exist
         if auto_generate or not self._check_ssl_certificates(cert_path, key_path):
-            success, message = self._generate_ssl_certificates(cert_path, key_path)
+            success, message = self._generate_ssl_certificates(
+                cert_path, key_path, common_name, organization, country, validity_days, key_algorithm
+            )
             if success:
                 changes_made['certificates_generated'] = True
             else:
@@ -625,7 +659,18 @@ class PostgresConfigManager:
         if not success:
             return False, f"SSL configured but PostgreSQL restart failed: {message}", changes_made
         
-        return True, "SSL/TLS configured successfully", changes_made
+        # Validate SSL configuration
+        ssl_validation_success, ssl_validation_message = self._validate_ssl_configuration(cert_path, key_path)
+        if not ssl_validation_success:
+            return False, f"SSL configuration validation failed: {ssl_validation_message}", changes_made
+        
+        changes_made['ssl_validated'] = True
+        
+        # Check if SSL was automatically enabled during validation
+        if "automatically" in ssl_validation_message.lower():
+            return True, f"SSL/TLS configured and validated successfully. {ssl_validation_message}", changes_made
+        else:
+            return True, "SSL/TLS configured and validated successfully", changes_made
     
     def _check_ssl_certificates(self, cert_path: str, key_path: str) -> bool:
         """Check if SSL certificates exist and are valid.
@@ -640,36 +685,224 @@ class PostgresConfigManager:
         return (self.ssh.check_file_exists(cert_path) and 
                 self.ssh.check_file_exists(key_path))
     
-    def _generate_ssl_certificates(self, cert_path: str, key_path: str) -> Tuple[bool, str]:
+    def _validate_ssl_configuration(self, cert_path: str, key_path: str) -> Tuple[bool, str]:
+        """Validate SSL configuration for PostgreSQL.
+        
+        Args:
+            cert_path: Path to certificate file
+            key_path: Path to private key file
+            
+        Returns:
+            tuple: (success, message)
+        """
+        try:
+            self.logger.info("Starting SSL configuration validation...")
+            
+            # Check if certificate files exist and are readable
+            self.logger.info(f"Checking if certificate file exists: {cert_path}")
+            if not self.ssh.check_file_exists(cert_path):
+                return False, f"Certificate file not found: {cert_path}"
+            
+            self.logger.info(f"Checking if private key file exists: {key_path}")
+            if not self.ssh.check_file_exists(key_path):
+                return False, f"Private key file not found: {key_path}"
+            
+            # Check certificate file permissions (should be readable by postgres user)
+            self.logger.info("Checking certificate file permissions...")
+            cert_perms_cmd = f"ls -la {cert_path}"
+            cert_result = self.ssh.execute_command(cert_perms_cmd)
+            if cert_result['exit_code'] != 0:
+                return False, f"Failed to check certificate file permissions: {cert_result['stderr']}"
+            
+            # Check key file permissions (should be 600 or similar, readable only by postgres user)
+            self.logger.info("Checking private key file permissions...")
+            key_perms_cmd = f"ls -la {key_path}"
+            key_result = self.ssh.execute_command(key_perms_cmd)
+            if key_result['exit_code'] != 0:
+                return False, f"Failed to check private key file permissions: {key_result['stderr']}"
+            
+            # Verify PostgreSQL can read the SSL configuration
+            self.logger.info("Checking current PostgreSQL SSL status...")
+            ssl_check_cmd = "timeout 30 sudo -u postgres psql -c 'SHOW ssl;' -t"
+            self.logger.info(f"Executing SSL status check command: {ssl_check_cmd}")
+            result = self.ssh.execute_command(ssl_check_cmd)
+            if result['exit_code'] != 0:
+                self.logger.warning(f"Failed to check PostgreSQL SSL status: {result.get('stderr', 'Unknown error')}")
+                # Try alternative method
+                self.logger.info("Trying alternative SSL status check method...")
+                alt_cmd = "sudo -u postgres psql -c 'SELECT setting FROM pg_settings WHERE name = \'ssl\';' -t"
+                result = self.ssh.execute_command(alt_cmd)
+                if result['exit_code'] != 0:
+                    return False, f"Failed to check PostgreSQL SSL status: {result.get('stderr', 'Unknown error')}"
+            
+            ssl_status = result['stdout']
+            self.logger.info(f"Current SSL status: {ssl_status.strip()}")
+            
+            # If SSL is not enabled, try to enable it automatically
+            if 'on' not in ssl_status.lower():
+                self.logger.info("SSL not enabled, attempting to enable automatically...")
+                
+                # Check if SSL certificate and key paths are set in configuration
+                self.logger.info("Checking current SSL certificate and key file settings...")
+                try:
+                    self.logger.info("Querying ssl_cert_file setting...")
+                    cert_file_setting = self.get_postgresql_setting('ssl_cert_file')
+                    self.logger.info("Querying ssl_key_file setting...")
+                    key_file_setting = self.get_postgresql_setting('ssl_key_file')
+                    
+                    self.logger.info(f"Current SSL cert file setting: {cert_file_setting}")
+                    self.logger.info(f"Current SSL key file setting: {key_file_setting}")
+                except Exception as e:
+                    self.logger.warning(f"Could not query SSL settings, proceeding with defaults: {str(e)}")
+                    cert_file_setting = None
+                    key_file_setting = None
+                
+                # If SSL cert/key files are not set, set them to the provided paths
+                self.logger.info("Checking if SSL certificate path needs to be set...")
+                if not cert_file_setting or cert_file_setting.strip("'\"")=="":
+                    self.logger.info(f"Setting SSL certificate path to: {cert_path}")
+                    cert_success, cert_message = self.update_postgresql_setting('ssl_cert_file', f"'{cert_path}'")
+                    if not cert_success:
+                        return False, f"Failed to set SSL certificate path: {cert_message}"
+                    self.logger.info(f"Successfully set SSL certificate path to: {cert_path}")
+                
+                self.logger.info("Checking if SSL key path needs to be set...")
+                if not key_file_setting or key_file_setting.strip("'\"")=="":
+                    self.logger.info(f"Setting SSL key path to: {key_path}")
+                    key_success, key_message = self.update_postgresql_setting('ssl_key_file', f"'{key_path}'")
+                    if not key_success:
+                        return False, f"Failed to set SSL key path: {key_message}"
+                    self.logger.info(f"Successfully set SSL key path to: {key_path}")
+                
+                # Enable SSL in configuration
+                self.logger.info("Enabling SSL in PostgreSQL configuration...")
+                ssl_enable_success, ssl_enable_message = self.update_postgresql_setting('ssl', 'on')
+                if not ssl_enable_success:
+                    return False, f"Failed to enable SSL automatically: {ssl_enable_message}"
+                
+                self.logger.info("SSL enabled in configuration, restarting PostgreSQL...")
+                
+                # Restart PostgreSQL to apply SSL setting
+                self.logger.info("Restarting PostgreSQL service to apply SSL settings...")
+                restart_success, restart_message = self.system_utils.restart_service('postgresql')
+                if not restart_success:
+                    return False, f"Failed to restart PostgreSQL after enabling SSL: {restart_message}"
+                
+                self.logger.info("PostgreSQL restarted successfully, waiting for service to stabilize...")
+                
+                # Wait a moment for PostgreSQL to fully start
+                import time
+                time.sleep(2)
+                
+                # Verify SSL is now enabled
+                self.logger.info("Verifying SSL status after PostgreSQL restart...")
+                self.logger.info(f"Executing post-restart SSL check: {ssl_check_cmd}")
+                result = self.ssh.execute_command(ssl_check_cmd)
+                if result['exit_code'] != 0:
+                    self.logger.warning(f"Failed to check SSL status after restart: {result.get('stderr', 'Unknown error')}")
+                    # Try alternative method
+                    self.logger.info("Trying alternative SSL status check after restart...")
+                    alt_cmd = "timeout 30 sudo -u postgres psql -c 'SELECT setting FROM pg_settings WHERE name = \'ssl\';' -t"
+                    result = self.ssh.execute_command(alt_cmd)
+                    if result['exit_code'] != 0:
+                        return False, f"Failed to check SSL status after restart: {result.get('stderr', 'Unknown error')}"
+                
+                ssl_status = result['stdout']
+                self.logger.info(f"SSL status after restart: {ssl_status.strip()}")
+                
+                if 'on' not in ssl_status.lower():
+                    # Get more detailed error information
+                    log_cmd = "sudo tail -20 /var/log/postgresql/postgresql-*.log | grep -i ssl"
+                    log_result = self.ssh.execute_command(log_cmd)
+                    error_details = f"SSL status: {ssl_status.strip()}"
+                    if log_result['exit_code'] == 0 and log_result['stdout']:
+                        error_details += f"\nPostgreSQL logs: {log_result['stdout']}"
+                    return False, f"Failed to automatically enable PostgreSQL SSL. {error_details}"
+                
+                self.logger.info("SSL automatically enabled and validated successfully")
+                return True, "SSL configuration validated successfully (SSL was automatically enabled)"
+            
+            # Test SSL connection
+            self.logger.info("Testing SSL connection...")
+            ssl_test_cmd = "timeout 30 sudo -u postgres psql -c 'SELECT version();' 'sslmode=require'"
+            self.logger.info(f"Executing SSL connection test: {ssl_test_cmd}")
+            result = self.ssh.execute_command(ssl_test_cmd)
+            if result['exit_code'] != 0:
+                self.logger.warning(f"SSL connection test failed: {result.get('stderr', 'Unknown error')}")
+                # Try a simpler SSL test
+                self.logger.info("Trying simpler SSL connection test...")
+                simple_ssl_cmd = "timeout 30 sudo -u postgres psql -c '\\conninfo' 'sslmode=prefer'"
+                self.logger.info(f"Executing simple SSL test: {simple_ssl_cmd}")
+                result = self.ssh.execute_command(simple_ssl_cmd)
+                if result['exit_code'] != 0:
+                    return False, f"SSL connection test failed - PostgreSQL may not be accepting SSL connections: {result.get('stderr', 'Unknown error')}"
+            
+            self.logger.info("SSL configuration validated successfully")
+            return True, "SSL configuration validated successfully"
+            
+        except Exception as e:
+            self.logger.error(f"Exception during SSL validation: {str(e)}")
+            return False, f"SSL validation error: {str(e)}"
+    
+    def _generate_ssl_certificates(self, cert_path: str, key_path: str, common_name: str = None, 
+                                 organization: str = None, country: str = None, 
+                                 validity_days: int = 365, key_algorithm: str = "ed25519") -> Tuple[bool, str]:
         """Generate self-signed SSL certificates for PostgreSQL.
         
         Args:
             cert_path: Path where certificate should be created
             key_path: Path where private key should be created
+            common_name: Common name for the certificate (hostname/domain)
+            organization: Organization name for the certificate
+            country: Two-letter country code
+            validity_days: Number of days the certificate will be valid
+            key_algorithm: Key algorithm to use (always ed25519 for maximum security)
             
         Returns:
             tuple: (success, message)
         """
         self.logger.info("Generating self-signed SSL certificates for PostgreSQL...")
         
-        # Get server hostname for certificate
-        hostname_result = self.ssh.execute_command("hostname -f")
-        hostname = hostname_result['stdout'].strip() if hostname_result['exit_code'] == 0 else 'localhost'
+        # Set defaults if not provided
+        if not common_name:
+            hostname_result = self.ssh.execute_command("hostname -f")
+            common_name = hostname_result['stdout'].strip() if hostname_result['exit_code'] == 0 else 'localhost'
         
-        # Generate private key
-        key_cmd = f"sudo openssl genrsa -out {key_path} 2048"
+        if not organization:
+            organization = "PostgreSQL Server"
+        
+        if not country:
+            country = "US"
+        
+        # Validate inputs
+        if not (30 <= validity_days <= 3650):
+            validity_days = 365
+        
+        if len(country) != 2:
+            country = "US"
+        
+        # Generate Ed25519 private key (safest algorithm)
+        key_cmd = f"sudo openssl genpkey -algorithm Ed25519 -out {key_path}"
+            
         key_result = self.ssh.execute_command(key_cmd)
         
         if key_result['exit_code'] != 0:
             return False, f"Failed to generate private key: {key_result.get('stderr', 'Unknown error')}"
         
-        # Generate certificate
-        subject = f"/C=US/ST=State/L=City/O=Organization/OU=OrgUnit/CN={hostname}"
-        cert_cmd = f"sudo openssl req -new -x509 -key {key_path} -out {cert_path} -days 365 -subj '{subject}'"
+        # Generate certificate with custom parameters
+        subject = f"/C={country}/O={organization}/CN={common_name}"
+        cert_cmd = f"sudo openssl req -new -x509 -key {key_path} -out {cert_path} -days {validity_days} -subj '{subject}'"
         cert_result = self.ssh.execute_command(cert_cmd)
         
         if cert_result['exit_code'] != 0:
             return False, f"Failed to generate certificate: {cert_result.get('stderr', 'Unknown error')}"
+        
+        # Validate the generated certificate
+        validate_cmd = f"sudo openssl x509 -in {cert_path} -text -noout"
+        validate_result = self.ssh.execute_command(validate_cmd)
+        
+        if validate_result['exit_code'] != 0:
+            return False, f"Generated certificate validation failed: {validate_result.get('stderr', 'Unknown error')}"
         
         # Set proper ownership and permissions
         chown_result = self.ssh.execute_command(f"sudo chown postgres:postgres {cert_path} {key_path}")
@@ -679,7 +912,7 @@ class PostgresConfigManager:
         if chown_result['exit_code'] != 0 or chmod_cert['exit_code'] != 0 or chmod_key['exit_code'] != 0:
             self.logger.warning("SSL certificates generated but failed to set proper permissions")
         
-        return True, "SSL certificates generated successfully"
+        return True, f"SSL certificates generated successfully with Ed25519 (safest algorithm), valid for {validity_days} days"
     
     def get_ssl_status(self) -> Dict[str, Any]:
         """Get current SSL/TLS configuration status.

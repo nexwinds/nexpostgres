@@ -138,7 +138,6 @@
                 </div>
                 
                 <div class="text-center mt-4">
-                    <p><small>Auto-refreshing every 30 seconds</small></p>
                     <button id="refresh-btn" class="btn btn-sm btn-outline-primary">
                         <i class="fas fa-sync-alt me-1"></i> Refresh Now
                     </button>
@@ -341,22 +340,39 @@
                                     <div class="form-check">
                                         <input class="form-check-input" type="radio" name="sslCertType" id="sslCustomCerts" value="custom">
                                         <label class="form-check-label" for="sslCustomCerts">
-                                            <strong>Use custom certificates</strong>
-                                            <small class="text-muted d-block">Provide paths to existing certificate files</small>
+                                            <strong>Configure custom certificate</strong>
+                                            <small class="text-muted d-block">Define certificate parameters for generation</small>
                                         </label>
                                     </div>
                                 </div>
                                 
                                 <div id="sslCustomCertContainer" class="d-none">
                                     <div class="mb-3">
-                                        <label for="sslCertPath" class="form-label">Certificate Path</label>
-                                        <input type="text" class="form-control" id="sslCertPath" placeholder="/path/to/server.crt">
-                                        <div class="form-text">Path to the SSL certificate file</div>
+                                        <label for="sslCommonName" class="form-label">Common Name (CN)</label>
+                                        <input type="text" class="form-control" id="sslCommonName" placeholder="localhost or your-domain.com">
+                                        <div class="form-text">The hostname or domain name for the certificate</div>
                                     </div>
                                     <div class="mb-3">
-                                        <label for="sslKeyPath" class="form-label">Private Key Path</label>
-                                        <input type="text" class="form-control" id="sslKeyPath" placeholder="/path/to/server.key">
-                                        <div class="form-text">Path to the SSL private key file</div>
+                                        <label for="sslOrganization" class="form-label">Organization (O)</label>
+                                        <input type="text" class="form-control" id="sslOrganization" placeholder="Your Organization Name">
+                                        <div class="form-text">Organization name for the certificate</div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="sslCountry" class="form-label">Country Code (C)</label>
+                                        <input type="text" class="form-control" id="sslCountry" placeholder="US" maxlength="2">
+                                        <div class="form-text">Two-letter country code (e.g., US, GB, DE)</div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="sslValidityDays" class="form-label">Certificate Validity (Days)</label>
+                                        <input type="number" class="form-control" id="sslValidityDays" value="365" min="30" max="3650">
+                                        <div class="form-text">Number of days the certificate will be valid (30-3650 days)</div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="sslKeyAlgorithm" class="form-label">Key Algorithm</label>
+                                        <select class="form-select" id="sslKeyAlgorithm">
+                                            <option value="ed25519" selected>Ed25519 (Most Secure)</option>
+                                        </select>
+                                        <div class="form-text">Ed25519 provides the highest security with optimal performance</div>
                                     </div>
                                 </div>
                             </div>
@@ -397,7 +413,6 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const serverId = {{ server.id }};
-        let refreshInterval;
         
         // Function to fetch server status data
         function fetchServerStatus() {
@@ -503,16 +518,9 @@
                             <i class="fas fa-check-circle me-1"></i> ${data.message}
                         </div>
                     `;
-                    // Clear interval and show reconnecting message
-                    clearInterval(refreshInterval);
                     setTimeout(() => {
                         document.getElementById('connection-status').innerHTML = 
-                            '<span class="status-indicator status-loading"></span> Server restarting, will try to reconnect...';
-                        // Try to reconnect after 1 minute
-                        setTimeout(() => {
-                            fetchServerStatus();
-                            startAutoRefresh();
-                        }, 60000);
+                            '<span class="status-indicator status-loading"></span> Server restarting, reconnect manually when ready.';
                     }, 2000);
                 } else {
                     actionStatus.innerHTML = `
@@ -729,7 +737,7 @@
         }
         
         // Handle IP Rules apply configuration button
-        const ipApplyBtn = document.getElementById('ipApplyConfigBtn');
+        const ipApplyBtn = document.getElementById('applyIpRulesBtn');
         if (ipApplyBtn) {
             ipApplyBtn.addEventListener('click', function() {
             const actionStatus = document.getElementById('action-status');
@@ -824,7 +832,7 @@
         }
         
         // Handle SSL/TLS apply configuration button
-        const sslApplyBtn = document.getElementById('sslApplyConfigBtn');
+        const sslApplyBtn = document.getElementById('applySslBtn');
         if (sslApplyBtn) {
             sslApplyBtn.addEventListener('click', function() {
             const actionStatus = document.getElementById('action-status');
@@ -834,8 +842,11 @@
             const formData = {
                 enable_ssl: document.getElementById('sslEnableSsl').checked,
                 auto_generate: document.querySelector('input[name="sslCertType"]:checked').value === 'auto',
-                cert_path: document.getElementById('sslCertPath').value,
-                key_path: document.getElementById('sslKeyPath').value
+                common_name: document.getElementById('sslCommonName').value,
+                organization: document.getElementById('sslOrganization').value,
+                country: document.getElementById('sslCountry').value,
+                validity_days: document.getElementById('sslValidityDays').value,
+                key_algorithm: document.getElementById('sslKeyAlgorithm').value
             };
             
             // Close modal
@@ -855,12 +866,9 @@
             })
             .then(response => response.json())
             .then(data => {
-                if (data.success) {
-                    actionStatus.innerHTML = `
-                        <div class="alert alert-success">
-                            <i class="fas fa-check-circle me-1"></i> ${data.message}
-                        </div>
-                    `;
+                if (data.success && data.queue_key) {
+                    // Start progress tracking
+                    trackSslProgress(data.queue_key);
                 } else {
                     actionStatus.innerHTML = `
                         <div class="alert alert-danger">
@@ -877,6 +885,61 @@
                     </div>
                 `;
             });
+            
+            function trackSslProgress(queueKey) {
+                const eventSource = new EventSource(`{{ url_for('servers.ssl_progress', id=server.id) }}?queue_key=${queueKey}`);
+                
+                eventSource.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        updateSslProgress(data);
+                        
+                        // Close EventSource when completed or error
+                        if (data.step === 'completed' || data.step === 'error') {
+                            eventSource.close();
+                        }
+                    } catch (e) {
+                        console.error('Error parsing SSL progress data:', e);
+                    }
+                };
+                
+                eventSource.onerror = function(event) {
+                    console.error('SSL progress EventSource error:', event);
+                    eventSource.close();
+                    actionStatus.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-times-circle me-1"></i> Connection lost during SSL configuration
+                        </div>
+                    `;
+                };
+            }
+            
+            function updateSslProgress(data) {
+                let alertClass = 'alert-info';
+                let icon = 'fas fa-spinner fa-spin';
+                
+                if (data.step === 'completed') {
+                    alertClass = 'alert-success';
+                    icon = 'fas fa-check-circle';
+                } else if (data.step === 'error') {
+                    alertClass = 'alert-danger';
+                    icon = 'fas fa-times-circle';
+                }
+                
+                actionStatus.innerHTML = `
+                    <div class="alert ${alertClass}">
+                        <i class="${icon} me-1"></i> ${data.message}
+                        ${data.progress ? `<div class="progress mt-2" style="height: 5px;"><div class="progress-bar" style="width: ${data.progress}%"></div></div>` : ''}
+                    </div>
+                `;
+                
+                // Refresh server status after successful SSL configuration
+                if (data.step === 'completed') {
+                    setTimeout(() => {
+                        fetchServerStatus();
+                    }, 2000);
+                }
+            }
         });
         }
         
@@ -908,14 +971,8 @@
             console.error(message);
         }
         
-        // Auto-refresh every 30 seconds
-        function startAutoRefresh() {
-            refreshInterval = setInterval(fetchServerStatus, 30000);
-        }
-        
-        // Initial fetch and start auto-refresh
+        // Initial fetch only
         fetchServerStatus();
-        startAutoRefresh();
     });
 </script>
 {% endblock %}

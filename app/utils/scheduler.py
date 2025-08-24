@@ -98,8 +98,8 @@ def execute_backup(job_id, manual=False):
         backup_type = "manual" if manual else "scheduled"
         logger.info(f"Executing {backup_type} backup job {job.id}...")
                 
-        # Execute the backup (always incremental)
-        success, log_output = pg_manager.perform_backup(job.database.name)
+        # Execute the backup (always incremental) with partial restore metadata collection enabled
+        success, log_output = pg_manager.perform_backup(job.database.name, enable_partial_restore=True)
         message = "Backup completed successfully" if success else f"Backup failed: {log_output}"
         logger.info(f"Backup job {job.name} (ID: {job.id}): {message}")
         

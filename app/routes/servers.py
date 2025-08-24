@@ -11,8 +11,9 @@ from queue import Queue
 
 servers_bp = Blueprint('servers', __name__, url_prefix='/servers')
 
-# Global dictionary to store progress queues for each server initialization
+# Global dictionary to store progress queues for each server initialization and SSL configuration
 progress_queues = {}
+ssl_progress_queues = {}
 
 @servers_bp.route('/')
 @login_required
@@ -336,6 +337,46 @@ def initialize_progress(id):
     
     return Response(generate_progress(), mimetype='text/event-stream')
 
+@servers_bp.route('/ssl-progress/<int:id>')
+@login_required
+@first_login_required
+def ssl_progress(id):
+    """Server-Sent Events endpoint for real-time SSL configuration progress"""
+    # Validate server exists
+    VpsServer.query.filter_by(id=id).first_or_404()
+    
+    queue_key = request.args.get('queue_key')
+    if not queue_key or queue_key not in ssl_progress_queues:
+        return jsonify({'error': 'Invalid or expired queue key'}), 400
+    
+    def generate_ssl_progress():
+        try:
+            # Wait for progress updates from the SSL configuration thread
+            while True:
+                try:
+                    # Wait for progress update with timeout
+                    progress_data = ssl_progress_queues[queue_key].get(timeout=60)
+                    
+                    if progress_data is None:  # Sentinel value to end stream
+                        break
+                        
+                    yield f"data: {json.dumps(progress_data)}\n\n"
+                    
+                    # If this is the final step, break
+                    if progress_data.get('step') == 'completed' or progress_data.get('step') == 'error':
+                        break
+                        
+                except Exception:
+                    # Timeout or error - send keep-alive
+                    yield f"data: {json.dumps({'step': 'keep-alive', 'message': 'Processing...'})}"
+                    yield "\n\n"
+        finally:
+            # Clean up the queue
+            if queue_key in ssl_progress_queues:
+                del ssl_progress_queues[queue_key]
+    
+    return Response(generate_ssl_progress(), mimetype='text/event-stream')
+
 @servers_bp.route('/add-progress/<int:server_id>')
 @login_required
 @first_login_required
@@ -555,60 +596,170 @@ def get_ssl_status(id):
 @login_required
 @first_login_required
 def configure_ssl(id):
-    """Configure SSL/TLS for PostgreSQL."""
+    """Start SSL/TLS configuration for PostgreSQL server asynchronously."""
     server = VpsServer.query.filter_by(id=id).first_or_404()
     
     try:
-        # Get form data
+        # Get JSON data
         data = request.get_json()
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'No data provided'
+            })
+        
         enable_ssl = data.get('enable_ssl', True)
         cert_path = data.get('cert_path')
         key_path = data.get('key_path')
         auto_generate = data.get('auto_generate', True)
         
-        # Connect to server via SSH
-        ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_content=server.ssh_key_content
+        # Get new certificate parameters
+        common_name = data.get('common_name')
+        organization = data.get('organization')
+        country = data.get('country')
+        validity_days = int(data.get('validity_days', 365))
+        key_algorithm = data.get('key_algorithm', 'ed25519')
+        
+        # Create unique queue key for this SSL configuration
+        queue_key = f"ssl_{id}_{int(time.time())}"
+        ssl_progress_queues[queue_key] = Queue()
+        
+        def configure_ssl_async(app, server_id, queue_key, ssl_config):
+            """Background thread function for SSL configuration with progress tracking."""
+            with app.app_context():
+                try:
+                    # Initial status
+                    if queue_key in ssl_progress_queues:
+                        ssl_progress_queues[queue_key].put({
+                            'step': 'connecting',
+                            'message': 'Establishing SSH connection...',
+                            'progress': 10,
+                            'queue_key': queue_key
+                        })
+                    
+                    # Create SSH connection
+                    ssh = SSHManager(
+                        host=server.host,
+                        port=server.port,
+                        username=server.username,
+                        ssh_key_content=server.ssh_key_content
+                    )
+                    
+                    if not ssh.connect():
+                        if queue_key in ssl_progress_queues:
+                            ssl_progress_queues[queue_key].put({
+                                'step': 'error',
+                                'message': 'Failed to establish SSH connection',
+                                'progress': 10
+                            })
+                        return
+                    
+                    if queue_key in ssl_progress_queues:
+                        ssl_progress_queues[queue_key].put({
+                            'step': 'connected',
+                            'message': 'SSH connection established successfully',
+                            'progress': 20
+                        })
+                    
+                    # Create PostgreSQL manager
+                    pg_manager = PostgresManager(ssh)
+                    
+                    if queue_key in ssl_progress_queues:
+                        ssl_progress_queues[queue_key].put({
+                            'step': 'configuring',
+                            'message': 'Configuring SSL/TLS settings...',
+                            'progress': 30
+                        })
+                    
+                    # Configure SSL/TLS with progress updates
+                    if queue_key in ssl_progress_queues:
+                        ssl_progress_queues[queue_key].put({
+                            'step': 'generating',
+                            'message': 'Generating SSL certificates...',
+                            'progress': 40
+                        })
+                    
+                    success, message, changes_made = pg_manager.configure_ssl_tls(
+                        enable_ssl=ssl_config['enable_ssl'],
+                        cert_path=ssl_config['cert_path'],
+                        key_path=ssl_config['key_path'],
+                        auto_generate=ssl_config['auto_generate'],
+                        common_name=ssl_config['common_name'],
+                        organization=ssl_config['organization'],
+                        country=ssl_config['country'],
+                        validity_days=ssl_config['validity_days'],
+                        key_algorithm=ssl_config['key_algorithm']
+                    )
+                    
+                    if queue_key in ssl_progress_queues:
+                        ssl_progress_queues[queue_key].put({
+                            'step': 'validating',
+                            'message': 'Validating SSL configuration...',
+                            'progress': 80
+                        })
+                    
+                    ssh.disconnect()
+                    
+                    if success:
+                        if queue_key in ssl_progress_queues:
+                            ssl_progress_queues[queue_key].put({
+                                'step': 'completed',
+                                'message': message,
+                                'progress': 100,
+                                'changes': changes_made
+                            })
+                    else:
+                        if queue_key in ssl_progress_queues:
+                            ssl_progress_queues[queue_key].put({
+                                'step': 'error',
+                                'message': message,
+                                'progress': 50
+                            })
+                        
+                except Exception as e:
+                    if queue_key in ssl_progress_queues:
+                        ssl_progress_queues[queue_key].put({
+                            'step': 'error',
+                            'message': f'Error configuring SSL: {str(e)}',
+                            'progress': 50
+                        })
+                finally:
+                    # Send sentinel value to end the stream
+                    if queue_key in ssl_progress_queues:
+                        ssl_progress_queues[queue_key].put(None)
+        
+        # Prepare SSL configuration data
+        ssl_config = {
+            'enable_ssl': enable_ssl,
+            'cert_path': cert_path,
+            'key_path': key_path,
+            'auto_generate': auto_generate,
+            'common_name': common_name,
+            'organization': organization,
+            'country': country,
+            'validity_days': validity_days,
+            'key_algorithm': key_algorithm
+        }
+        
+        # Start the background thread
+        from flask import current_app
+        thread = threading.Thread(
+            target=configure_ssl_async,
+            args=(current_app._get_current_object(), server.id, queue_key, ssl_config)
         )
+        thread.daemon = True
+        thread.start()
         
-        if not ssh.connect():
-            return jsonify({
-                'success': False,
-                'message': 'Failed to connect to server via SSH'
-            })
-        
-        # Configure SSL/TLS
-        pg_manager = PostgresManager(ssh)
-        success, message, changes_made = pg_manager.configure_ssl_tls(
-            enable_ssl=enable_ssl,
-            cert_path=cert_path,
-            key_path=key_path,
-            auto_generate=auto_generate
-        )
-        
-        # Disconnect
-        ssh.disconnect()
-        
-        if success:
-            return jsonify({
-                'success': True,
-                'message': message,
-                'changes': changes_made
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': message,
-                'changes': changes_made
-            })
+        return jsonify({
+            'success': True,
+            'message': 'SSL configuration started',
+            'queue_key': queue_key
+        })
         
     except Exception as e:
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': f'Error starting SSL configuration: {str(e)}'
         })
 
 

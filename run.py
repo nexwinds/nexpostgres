@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file BEFORE importing app modules
 load_dotenv()
 
-from app.app import create_app
+from app.app import create_app # noqa
 
 # Add the project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

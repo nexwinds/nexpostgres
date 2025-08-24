@@ -72,24 +72,73 @@ class DatabaseService:
     @staticmethod
     def create_database_operation(pg_manager: PostgresManager, name: str, 
                                 username: str, password: str) -> Tuple[bool, str]:
-        """Create database operation."""
-        # First attempt to create database
-        success, message = pg_manager.create_database(name)
+        """Create database operation following WAL-G best practices with comprehensive error handling.
         
-        # If creation failed due to configuration issues, try to fix and retry
-        if not success and ('invalid line' in message.lower() or 'listen_addresses' in message.lower()):
-            fix_success, fix_message = pg_manager.fix_postgresql_config()
-            if fix_success:
-                # Retry database creation after fixing config
-                success, message = pg_manager.create_database(name)
-                if success:
-                    message = "Database created successfully (after fixing PostgreSQL configuration)"
+        Following WAL-G documentation recommendations, this method:
+        1. Creates the database with postgres superuser as owner (default)
+        2. Creates the application user with appropriate permissions
+        3. Includes rollback mechanisms for failed operations
+        4. This approach ensures maximum compatibility during both creation and restoration
+        
+        This matches the WAL-G approach where databases are owned by postgres superuser
+        and application users are granted specific permissions as needed.
+        """
+        database_created = False
+        
+        try:
+            # Step 1: Create database with postgres superuser as owner (WAL-G best practice)
+            db_success, db_message = pg_manager.create_database(name)
+            
+            # If creation failed due to configuration issues, try to fix and retry
+            if not db_success and ('invalid line' in db_message.lower() or 'listen_addresses' in db_message.lower()):
+                fix_success, fix_message = pg_manager.fix_postgresql_config()
+                if fix_success:
+                    # Retry database creation after fixing config
+                    db_success, db_message = pg_manager.create_database(name)
+                    if db_success:
+                        db_message = "Database created successfully with postgres superuser ownership (after fixing PostgreSQL configuration)"
+                    else:
+                        db_message = f"Configuration fixed but database creation still failed: {db_message}"
                 else:
-                    message = f"Configuration fixed but database creation still failed: {message}"
-            else:
-                message = f"Database creation failed due to configuration error. Fix attempt failed: {fix_message}"
-        
-        return success, message
+                    db_message = f"Database creation failed due to configuration error. Fix attempt failed: {fix_message}"
+            
+            if not db_success:
+                return False, db_message
+            
+            database_created = True
+            
+            # Step 2: Create the application user using unified interface
+            user_success, user_message = DatabaseService.create_unified_database_user(
+                pg_manager=pg_manager,
+                username=username,
+                password=password,
+                db_name=name,
+                permission_level='all_permissions',  # Primary user gets full access
+                is_primary=True
+            )
+            
+            if not user_success:
+                # Rollback: Delete the database since user creation failed
+                try:
+                    rollback_success, rollback_message = pg_manager.delete_database(name)
+                    if rollback_success:
+                        return False, f"Database creation rolled back due to user creation failure: {user_message}"
+                    else:
+                        return False, f"User creation failed and database rollback also failed. Manual cleanup required for database '{name}'. User error: {user_message}. Rollback error: {rollback_message}"
+                except Exception as rollback_error:
+                    return False, f"User creation failed and database rollback encountered an exception. Manual cleanup required for database '{name}'. User error: {user_message}. Rollback exception: {str(rollback_error)}"
+            
+            return True, f"Database '{name}' created successfully with postgres superuser ownership and application user '{username}' configured"
+            
+        except Exception as e:
+            # If any unexpected error occurs, attempt to clean up the database if it was created
+            if database_created:
+                try:
+                    pg_manager.delete_database(name)
+                except Exception:
+                    pass  # Ignore cleanup errors in exception handler
+            
+            return False, f"Database creation operation failed with exception: {str(e)}"
     
     @staticmethod
     def update_user_password_operation(pg_manager: PostgresManager, 
@@ -101,12 +150,95 @@ class DatabaseService:
     def create_user_operation(pg_manager: PostgresManager, username: str, 
                             password: str, db_name: str, permission_level: str) -> Tuple[bool, str]:
         """Create user operation."""
-        return pg_manager.create_database_user(
+        return pg_manager.user_manager.create_database_user(
             username=username,
             password=password,
             db_name=db_name,
             permission_level=permission_level
         )
+    
+    @staticmethod
+    def create_unified_database_user(pg_manager: PostgresManager, username: str, 
+                                   password: str, db_name: str, permission_level: str = 'all_permissions',
+                                   is_primary: bool = True, individual_permissions: Dict[str, bool] = None) -> Tuple[bool, str]:
+        """Unified user creation interface for both new and restored databases.
+        
+        This method provides a consistent interface for creating database users that works
+        with the postgres superuser ownership model. It handles:
+        1. Creating application users with appropriate permissions
+        2. Proper permission assignment without ownership conflicts
+        3. Consistent behavior for both new database creation and restoration scenarios
+        4. Support for individual permission assignment
+        
+        Following WAL-G best practices, this assumes databases are owned by postgres superuser
+        and application users are granted specific permissions as needed.
+        
+        Args:
+            pg_manager: PostgresManager instance
+            username: Username for the new user
+            password: Password for the new user
+            db_name: Database name to grant permissions on
+            permission_level: Permission level ('read_only', 'read_write', 'all_permissions', 'individual')
+            is_primary: Whether this is the primary user for the database
+            individual_permissions: Dict of individual permissions (for 'individual' mode)
+            
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        try:
+            if permission_level == 'individual' and individual_permissions:
+                # Handle individual permissions
+                # First create user with no access
+                success, message = pg_manager.user_manager.create_database_user(
+                    username=username,
+                    password=password,
+                    db_name=db_name,
+                    permission_level='no_access'
+                )
+                
+                if not success:
+                    return False, f"Failed to create database user: {message}"
+                
+                # Then apply individual permissions
+                success, message = pg_manager.user_manager.grant_individual_permissions(
+                    username=username,
+                    password=password,
+                    db_name=db_name,
+                    permissions=individual_permissions
+                )
+                
+                if not success:
+                    return False, f"User created but failed to assign individual permissions: {message}"
+                
+                user_type = "Primary" if is_primary else "Application"
+                return True, f"{user_type} user '{username}' created successfully with individual permissions on database '{db_name}'"
+            else:
+                # Handle preset permission levels
+                success, message = pg_manager.user_manager.create_database_user(
+                    username=username,
+                    password=password,
+                    db_name=db_name,
+                    permission_level=permission_level
+                )
+                
+                if not success:
+                    return False, f"Failed to create database user: {message}"
+                
+                # For primary users, ensure they have comprehensive access
+                if is_primary and permission_level == 'all_permissions':
+                    # Verify the user has the expected permissions
+                    users = pg_manager.user_manager.list_database_users(db_name)
+                    user_found = any(user['username'] == username for user in users)
+                    
+                    if not user_found:
+                        return False, f"User '{username}' was created but not found in database user list"
+                    
+                    return True, f"Primary user '{username}' created successfully with {permission_level} on database '{db_name}'"
+                else:
+                    return True, f"User '{username}' created successfully with {permission_level} on database '{db_name}'"
+                
+        except Exception as e:
+            return False, f"Error creating unified database user: {str(e)}"
     
     @staticmethod
     def delete_user_operation(pg_manager: PostgresManager, username: str) -> Tuple[bool, str]:
@@ -207,6 +339,29 @@ class DatabaseService:
                 ssh.disconnect()
         
         return user_individual_permissions
+    
+    @staticmethod
+    def refresh_user_permissions_operation(pg_manager: PostgresManager, username: str, 
+                                         db_name: str, permission_level: str = 'read_write') -> Tuple[bool, str]:
+        """Refresh user permissions operation.
+        
+        This operation re-grants permissions to a user, which is useful after
+        database recovery when tables are restored after user creation.
+        
+        Args:
+            pg_manager: PostgresManager instance
+            username: Username to refresh permissions for
+            db_name: Database name
+            permission_level: Permission level ('read_only', 'read_write', 'all_permissions')
+            
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        return pg_manager.user_manager.refresh_table_permissions(
+            username=username,
+            db_name=db_name,
+            permission_level=permission_level
+        )
     
     @staticmethod
     def apply_permission_combination(server: VpsServer, database_name: str, username: str, combination: str) -> Dict[str, Any]:

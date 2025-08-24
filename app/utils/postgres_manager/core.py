@@ -86,9 +86,21 @@ class PostgresManager:
     
     # ===== DATABASE OPERATIONS =====
     
-    def create_database(self, database_name: str) -> Tuple[bool, str]:
-        """Create a database."""
-        self.logger.info(f"Creating database '{database_name}'")
+    def create_database(self, database_name: str, owner: str = None) -> Tuple[bool, str]:
+        """Create a database with optional owner.
+        
+        Following WAL-G best practices, if no owner is specified, the database
+        defaults to the postgres superuser for maximum compatibility and functionality.
+        This approach ensures all features work correctly during both creation and restoration.
+        
+        Args:
+            database_name: Name of the database to create
+            owner: Optional owner username. If None, defaults to postgres superuser
+            
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        self.logger.info(f"Creating database '{database_name}' with owner '{owner or 'postgres (default)'}'") 
         
         # Check if database exists
         if self._check_database_exists(database_name):
@@ -96,12 +108,21 @@ class PostgresManager:
         
         # Use quoted identifier to prevent SQL injection
         quoted_name = self._quote_identifier(database_name)
-        sql = f"CREATE DATABASE {quoted_name}"
+        
+        # Build SQL with optional owner - defaults to postgres superuser if not specified
+        if owner:
+            quoted_owner = self._quote_identifier(owner)
+            sql = f"CREATE DATABASE {quoted_name} OWNER {quoted_owner}"
+        else:
+            # Default to postgres superuser for maximum compatibility (WAL-G best practice)
+            sql = f"CREATE DATABASE {quoted_name}"
+        
         result = self.system_utils.execute_postgres_sql(sql)
         
         if result['exit_code'] == 0:
-            self.logger.info(f"Database '{database_name}' created successfully")
-            return True, f"Database '{database_name}' created successfully"
+            owner_msg = f" with owner '{owner}'" if owner else " (owned by postgres superuser)"
+            self.logger.info(f"Database '{database_name}' created successfully{owner_msg}")
+            return True, f"Database '{database_name}' created successfully{owner_msg}"
         else:
             error_msg = result.get('stderr', 'Unknown error')
             self.logger.error(f"Failed to create database '{database_name}': {error_msg}")
@@ -409,7 +430,7 @@ class PostgresManager:
         
         return self.reload_config()
     
-    def configure_ssl_tls(self, enable_ssl: bool = True, cert_path: str = None, key_path: str = None, auto_generate: bool = True) -> Tuple[bool, str, Dict]:
+    def configure_ssl_tls(self, enable_ssl: bool = True, cert_path: str = None, key_path: str = None, auto_generate: bool = True, common_name: str = None, organization: str = None, country: str = None, validity_days: int = 365, key_algorithm: str = "ed25519") -> Tuple[bool, str, Dict]:
         """Configure SSL/TLS for PostgreSQL.
         
         Args:
@@ -417,11 +438,16 @@ class PostgresManager:
             cert_path: Path to SSL certificate file
             key_path: Path to SSL private key file
             auto_generate: Whether to auto-generate self-signed certificates
+            common_name: Common name for the certificate (hostname/domain)
+            organization: Organization name for the certificate
+            country: Two-letter country code
+            validity_days: Number of days the certificate will be valid
+            key_algorithm: Key algorithm to use (ed25519, rsa, ecdsa)
             
         Returns:
             tuple: (success, message, changes_made)
         """
-        return self.config_manager.configure_ssl_tls(enable_ssl, cert_path, key_path, auto_generate)
+        return self.config_manager.configure_ssl_tls(enable_ssl, cert_path, key_path, auto_generate, common_name, organization, country, validity_days, key_algorithm)
     
     def update_setting(self, setting_name: str, value: str) -> Tuple[bool, str]:
         """Update a PostgreSQL setting."""

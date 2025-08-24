@@ -5,6 +5,7 @@ from app.utils.database_service import DatabaseService, DatabaseImportService
 from app.utils.unified_validation_service import UnifiedValidationService
 from app.utils.permission_manager import PermissionManager
 from datetime import datetime
+import logging
 
 databases_bp = Blueprint('databases', __name__)
 
@@ -77,18 +78,6 @@ def add_database():
         'Database creation',
         DatabaseService.create_database_operation,
         data['name'], username, password
-    )
-    
-    if not success:
-        flash(message, 'error')
-        return redirect(url_for('databases.add_database'))
-    
-    # Create primary user on server
-    success, message = DatabaseService.execute_with_postgres(
-        server,
-        'Primary user creation',
-        DatabaseService.create_user_operation,
-        username, password, data['name'], 'read_write'
     )
     
     if not success:
@@ -279,24 +268,11 @@ def add_database_user(database_id):
         flash(password_error, 'error')
         return redirect(url_for('databases.add_database_user', database_id=database_id))
     
-    # First create the user
-    success, message = DatabaseService.execute_with_postgres(
-        database.server,
-        'User creation',
-        DatabaseService.create_user_operation,
-        data['username'], password, database.name, 'no_access'  # Create with no permissions initially
-    )
-    
-    if not success:
-        flash(message, 'error')
-        return redirect(url_for('databases.add_database_user', database_id=database_id))
-    
-    # Handle permissions based on mode
+    # Determine permission level based on mode
     if permission_mode == 'preset':
-        # Use preset permission combination
-        permissions = PermissionManager.get_permissions_for_combination(data['permission_combination'])
+        permission_level = data['permission_combination']
     else:
-        # Use individual permissions
+        # Handle individual permissions
         individual_permissions = {}
         for key in data:
             if key.startswith('individual_'):
@@ -309,20 +285,32 @@ def add_database_user(database_id):
             flash(validation_result['message'], 'error')
             return redirect(url_for('databases.add_database_user', database_id=database_id))
         
-        # Apply individual permissions
-        permissions = PermissionManager.apply_individual_permissions(individual_permissions)
+        # Convert to permission level for unified interface
+        permission_level = 'individual'
     
-    # Grant the permissions
+    # Create user with unified interface
+    logger = logging.getLogger('nexdb.user_creation')
+    logger.info(f"Creating user '{data['username']}' for database '{database.name}' on server '{database.server.name}' (ID: {database.server.id})")
+    logger.info(f"Permission mode: {permission_mode}, Permission level: {permission_level}")
+    if permission_mode == 'individual':
+        logger.info(f"Individual permissions: {individual_permissions}")
+    
     success, message = DatabaseService.execute_with_postgres(
         database.server,
-        'Permission assignment',
-        DatabaseService.grant_individual_permissions_operation,
-        data['username'], password, database.name, permissions
+        'User creation and permission assignment',
+        DatabaseService.create_unified_database_user,
+        data['username'], password, database.name, permission_level,
+        False,  # is_primary
+        individual_permissions if permission_mode == 'individual' else None
     )
     
     if not success:
+        logger.error(f"Failed to create user '{data['username']}' for database '{database.name}': {message}")
+        logger.error(f"Server details - Name: '{database.server.name}', Host: '{database.server.host}', Initialized: {database.server.initialized}")
         flash(message, 'error')
         return redirect(url_for('databases.add_database_user', database_id=database_id))
+    else:
+        logger.info(f"Successfully created user '{data['username']}' for database '{database.name}' with {permission_level} permissions")
     
     # Save to database
     try:
@@ -448,7 +436,12 @@ def edit_database_user(database_id, user_id):
         database_id=database_id
     ).first_or_404()
     
+    logger = logging.getLogger('nexdb.user_edit')
+    
     if request.method == 'GET':
+        logger.info(f"Loading edit page for user '{user.username}' in database '{database.name}' on server '{database.server.name}' (ID: {database.server.id})")
+        logger.info(f"Server initialized: {database.server.initialized}")
+        
         current_permission = DatabaseService.get_current_user_permission(
             database.server, database.name, user.username
         )
@@ -457,15 +450,14 @@ def edit_database_user(database_id, user_id):
         )
         user_individual_perms = individual_permissions.get(user.username, {})
         
-        # Debug: Print actual permission values
-        print(f"DEBUG: user_individual_perms for {user.username}: {user_individual_perms}")
+        logger.info(f"Current permissions for user '{user.username}': {user_individual_perms}")
         
         # Get permission combinations and current combination
         permission_combinations = PermissionManager.get_permission_combinations(include_custom=False)
         individual_permissions = PermissionManager.get_individual_permissions()
         current_combination, is_exact_match, _ = PermissionManager.detect_combination_from_permissions_enhanced(user_individual_perms)
         
-        print(f"DEBUG: detected combination: {current_combination}, exact_match: {is_exact_match}")
+        logger.info(f"Detected combination: {current_combination}, exact_match: {is_exact_match}")
         
         return render_template('databases/edit_user.html', 
                              database=database, 
@@ -483,6 +475,16 @@ def edit_database_user(database_id, user_id):
     permission_combination = data.get('permission_combination')
     regenerate_password = data.get('regenerate_password') == 'on'
     
+    logger.info(f"Updating user '{user.username}' in database '{database.name}' on server '{database.server.name}'")
+    logger.info(f"Permission mode: {permission_mode}, Combination: {permission_combination}, Regenerate password: {regenerate_password}")
+    logger.info(f"Server initialized: {database.server.initialized}")
+    logger.info(f"Database recovery status - Is recovered database: {getattr(database, 'is_recovered', 'Unknown')}")
+    
+    # Check current permissions before update
+    current_perms_before = DatabaseService.get_user_individual_permissions(database.server, database.name)
+    user_perms_before = current_perms_before.get(user.username, {})
+    logger.info(f"Current permissions before update for user '{user.username}': {user_perms_before}")
+    
     # Validate permission combination if provided
     if permission_mode == 'preset' and permission_combination:
         valid_combinations = [combo['value'] for combo in PermissionManager.get_permission_combinations(include_custom=False)]
@@ -499,14 +501,30 @@ def edit_database_user(database_id, user_id):
     # Apply permissions based on mode
     permissions_updated = False
     if permission_mode == 'preset' and permission_combination:
+        logger.info(f"Applying preset permission combination '{permission_combination}' to user '{user.username}'")
         result = DatabaseService.apply_permission_combination(
             database.server, database.name, user.username, permission_combination
         )
         
         if not result['success']:
+            logger.error(f"Failed to apply preset permissions '{permission_combination}' to user '{user.username}': {result['message']}")
+            logger.error(f"Server details - Name: '{database.server.name}', Host: '{database.server.host}', Initialized: {database.server.initialized}")
             flash(result['message'], 'error')
             return redirect(url_for('databases.edit_database_user', 
                                   database_id=database_id, user_id=user_id))
+        logger.info(f"Successfully applied preset permissions '{permission_combination}' to user '{user.username}'")
+        
+        # Check permissions after preset update
+        current_perms_after = DatabaseService.get_user_individual_permissions(database.server, database.name)
+        user_perms_after = current_perms_after.get(user.username, {})
+        logger.info(f"Permissions after preset update for user '{user.username}': {user_perms_after}")
+        
+        # Compare before and after
+        if user_perms_before != user_perms_after:
+            logger.info(f"Preset permission update successful - permissions changed from {user_perms_before} to {user_perms_after}")
+        else:
+            logger.warning(f"Preset permission update may have failed - permissions unchanged: {user_perms_after}")
+        
         permissions_updated = True
     elif permission_mode == 'individual':
         # Handle individual permissions
@@ -516,15 +534,19 @@ def edit_database_user(database_id, user_id):
                 perm_name = key.replace('individual_', '')
                 individual_permissions[perm_name] = data[key] == 'true'
         
+        logger.info(f"Applying individual permissions to user '{user.username}': {individual_permissions}")
+        
         # Validate individual permissions
         validation_result = PermissionManager.validate_individual_permissions(individual_permissions)
         if not validation_result['valid']:
+            logger.error(f"Individual permissions validation failed for user '{user.username}': {validation_result['message']}")
             flash(validation_result['message'], 'error')
             return redirect(url_for('databases.edit_database_user', 
                                   database_id=database_id, user_id=user_id))
         
         # Apply individual permissions
         permissions = PermissionManager.apply_individual_permissions(individual_permissions)
+        logger.info(f"Processed individual permissions for user '{user.username}': {permissions}")
         
         # Grant the permissions
         success, message = DatabaseService.execute_with_postgres(
@@ -535,13 +557,29 @@ def edit_database_user(database_id, user_id):
         )
         
         if not success:
+            logger.error(f"Failed to apply individual permissions to user '{user.username}': {message}")
+            logger.error(f"Server details - Name: '{database.server.name}', Host: '{database.server.host}', Initialized: {database.server.initialized}")
             flash(f'Failed to update permissions: {message}', 'error')
             return redirect(url_for('databases.edit_database_user', 
                                   database_id=database_id, user_id=user_id))
+        logger.info(f"Successfully applied individual permissions to user '{user.username}'")
+        
+        # Check permissions after update to verify the change
+        current_perms_after = DatabaseService.get_user_individual_permissions(database.server, database.name)
+        user_perms_after = current_perms_after.get(user.username, {})
+        logger.info(f"Permissions after update for user '{user.username}': {user_perms_after}")
+        
+        # Compare before and after
+        if user_perms_before != user_perms_after:
+            logger.info(f"Permission update successful - permissions changed from {user_perms_before} to {user_perms_after}")
+        else:
+            logger.warning(f"Permission update may have failed - permissions unchanged: {user_perms_after}")
+        
         permissions_updated = True
     
     # Update password if regenerated
     if regenerate_password:
+        logger.info(f"Updating password for user '{user.username}' in database '{database.name}'")
         success, message = DatabaseService.execute_with_postgres(
             database.server,
             'Password update',
@@ -550,9 +588,12 @@ def edit_database_user(database_id, user_id):
         )
         
         if not success:
+            logger.error(f"Failed to update password for user '{user.username}': {message}")
+            logger.error(f"Server details - Name: '{database.server.name}', Host: '{database.server.host}', Initialized: {database.server.initialized}")
             flash(f'Failed to update password: {message}', 'error')
             return redirect(url_for('databases.edit_database_user', 
                                   database_id=database_id, user_id=user_id))
+        logger.info(f"Successfully updated password for user '{user.username}'")
     
     # Update in database
     try:

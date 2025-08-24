@@ -257,7 +257,10 @@ class SystemUtils:
         Returns:
             dict: Command result
         """
-        escaped_sql = sql.replace('"', '\\"')
+        # Escape characters that are special in the surrounding shell double-quoted argument.
+        # - Double quotes to keep the psql -c "..." intact
+        # - Dollar signs to prevent shell from expanding $$ (PID) inside DO $$ blocks
+        escaped_sql = sql.replace('"', '\\"').replace('$', '\\$')
         command = f'psql -d {database} -c "{escaped_sql}"'
         return self.execute_as_postgres_user(command)
     

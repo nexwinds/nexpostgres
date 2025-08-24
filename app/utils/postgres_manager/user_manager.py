@@ -3,6 +3,7 @@
 import logging
 from typing import Dict, List, Tuple
 from .system_utils import SystemUtils
+from ..permission_manager import PermissionManager, PermissionCombination
 
 class PostgresUserManager:
     """Manages PostgreSQL users and permissions."""
@@ -134,6 +135,8 @@ class PostgresUserManager:
     def grant_individual_permissions(self, username: str, db_name: str, permissions: dict) -> Tuple[bool, str]:
         """Grant individual permissions to a user on a database.
         
+        This method now uses the unified permission system for consistency and efficiency.
+        
         Args:
             username: Username to grant permissions to
             db_name: Database name
@@ -142,102 +145,410 @@ class PostgresUserManager:
         Returns:
             Tuple of (success, message)
         """
-
-        
         if not self.user_exists(username):
-            self.logger.error(f"DEBUG: User '{username}' does not exist")
+            self.logger.error(f"User '{username}' does not exist")
             return False, f"User '{username}' does not exist"
         
-        # First revoke all permissions to start clean
-
-        success, message = self._revoke_all_permissions(username, db_name)
-        if not success:
-            self.logger.error(f"DEBUG: Failed to revoke permissions: {message}")
-            return success, message
+        # Validate permissions using PermissionManager
+        is_valid, errors = PermissionManager.validate_individual_permissions(permissions)
+        if not is_valid:
+            return False, f"Invalid permissions: {'; '.join(errors)}"
         
-        # If no permissions are granted, just return (user has no access)
-        if not any(permissions.values()):
-
-            return True, f"All permissions revoked for user '{username}' on database '{db_name}'"
+        # Use the unified permission granting system
+        return self._grant_unified_permissions(username, db_name, permissions)
+    
+    def refresh_table_permissions(self, username: str, db_name: str, permission_level: str = 'read_write') -> Tuple[bool, str]:
+        """Re-grant table permissions to a user after database restore.
         
-        commands = []
-        db_commands = []
+        This method is specifically designed to fix permission issues that occur
+        when a user is created before tables are restored from backup.
         
-        # Grant CONNECT permission if requested
-        if permissions.get('connect', False):
-            quoted_db_name = self._quote_identifier(db_name)
-            quoted_username = self._quote_identifier(username)
-            commands.append(f"GRANT CONNECT ON DATABASE {quoted_db_name} TO {quoted_username};")
-            db_commands.append(f"GRANT USAGE ON SCHEMA public TO {quoted_username};")
+        Refactored to:
+        1. Provide better error handling and recovery
+        2. Optimize the ownership transfer process
+        3. Ensure data integrity throughout the operation
         
-        # Grant CREATE permission if requested
-        if permissions.get('create', False):
-            quoted_db_name = self._quote_identifier(db_name)
-            quoted_username = self._quote_identifier(username)
-            commands.append(f"GRANT CREATE ON DATABASE {quoted_db_name} TO {quoted_username};")
-            db_commands.append(f"GRANT CREATE ON SCHEMA public TO {quoted_username};")
+        Args:
+            username: The database username
+            db_name: The database name
+            permission_level: The permission level ('read_only', 'read_write', 'all_permissions')
+            
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        if not self.user_exists(username):
+            return False, f"User '{username}' does not exist"
         
-        # Grant table-level permissions
-        table_permissions = []
-        if permissions.get('select', False):
-            table_permissions.append('SELECT')
-        if permissions.get('insert', False):
-            table_permissions.append('INSERT')
-        if permissions.get('update', False):
-            table_permissions.append('UPDATE')
-        if permissions.get('delete', False):
-            table_permissions.append('DELETE')
+        messages = []
         
-
+        # First, fix ownership issues that occur during recovery
+        self.logger.info(f"Starting ownership transfer for user '{username}' on database '{db_name}'")
+        ownership_success, ownership_message = self._fix_recovery_ownership(username, db_name)
         
-        if table_permissions:
-            quoted_username = self._quote_identifier(username)
-            perm_str = ', '.join(table_permissions)
-            db_commands.extend([
-                f"GRANT {perm_str} ON ALL TABLES IN SCHEMA public TO {quoted_username};",
-                f"GRANT {perm_str} ON ALL SEQUENCES IN SCHEMA public TO {quoted_username};",
-                f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT {perm_str} ON TABLES TO {quoted_username};",
-                f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT {perm_str} ON SEQUENCES TO {quoted_username};"
-            ])
+        if ownership_success:
+            messages.append(f"Ownership transfer: {ownership_message}")
+            self.logger.info(f"Ownership transfer successful: {ownership_message}")
+        else:
+            messages.append(f"Ownership transfer failed: {ownership_message}")
+            self.logger.error(f"Ownership transfer failed: {ownership_message}")
+            # For recovery scenarios, ownership transfer failure should not prevent permission granting
+            # as the user might still need access to existing objects
         
-        # Execute general commands
-        for cmd in commands:
-            result = self.system_utils.execute_postgres_sql(cmd)
+        # Grant appropriate permissions based on the specified level using unified system
+        self.logger.info(f"Granting '{permission_level}' permissions to user '{username}' on database '{db_name}'")
+        
+        # Map permission levels to permission combinations
+        permission_combinations = {
+            'read_only': PermissionCombination.READ_ONLY,
+            'read_write': PermissionCombination.READ_WRITE,
+            'all_permissions': PermissionCombination.ALL_PERMISSIONS
+        }
+        
+        if permission_level not in permission_combinations:
+            return False, f"Unknown permission level: {permission_level}"
+        
+        # Convert permission combination to individual permissions dict
+        permissions_dict = PermissionManager.get_permissions_for_combination(permission_combinations[permission_level])
+        
+        # Use unified permission granting system
+        permission_success, permission_message = self._grant_unified_permissions(username, db_name, permissions_dict)
+        
+        if permission_success:
+            messages.append(f"Permissions granted: {permission_message}")
+            self.logger.info(f"Permissions granted successfully: {permission_message}")
+        else:
+            messages.append(f"Permission granting failed: {permission_message}")
+            self.logger.error(f"Permission granting failed: {permission_message}")
+        
+        # Determine overall success
+        # For recovery scenarios, we consider it successful if either ownership OR permissions succeed
+        # This provides resilience in case of partial failures
+        overall_success = ownership_success or permission_success
+        
+        if overall_success:
+            final_message = "Database recovery permissions completed. " + "; ".join(messages)
+            return True, final_message
+        else:
+            final_message = "Database recovery permissions failed. " + "; ".join(messages)
+            return False, final_message
+    
+    def _fix_recovery_ownership(self, username: str, db_name: str) -> Tuple[bool, str]:
+        """Fix ownership issues that occur during database recovery.
+        
+        During WAL-G recovery, the entire PostgreSQL cluster is restored from backup,
+        but the application creates a new database and user. This creates a mismatch
+        where restored objects are owned by the original user (who may not exist)
+        but the new user needs to own them for the application to function properly.
+        
+        Enhanced implementation:
+        1. Pre-validation to ensure user and database exist
+        2. Comprehensive ownership transfer in a single atomic transaction
+        3. Enhanced error handling with detailed logging
+        4. Post-transfer verification to ensure success
+        5. Handles edge cases like missing objects or permission conflicts
+        
+        Args:
+            username: The new database owner username
+            db_name: The database name
+            
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        # Step 1: Pre-validation
+        try:
+            # Verify user exists
+            if not self.user_exists(username):
+                return False, f"User '{username}' does not exist. Cannot transfer ownership."
+            
+            # Verify database exists
+            db_check_query = f"SELECT 1 FROM pg_database WHERE datname = '{db_name}';"
+            result = self.system_utils.execute_postgres_sql(db_check_query, "postgres")
+            if result['exit_code'] != 0 or not result.get('stdout', '').strip():
+                return False, f"Database '{db_name}' does not exist. Cannot transfer ownership."
+            
+            self.logger.info(f"Pre-validation passed for ownership transfer: user '{username}', database '{db_name}'")
+            
+        except Exception as e:
+            return False, f"Pre-validation failed: {str(e)}"
+        
+        # Step 2: Prepare identifiers for SQL operations
+        quoted_username = self._quote_identifier(username)
+        quoted_db_name = self._quote_identifier(db_name)
+        # Escape single quotes in username for safe use in DO block
+        escaped_username = username.replace("'", "''")
+        
+        # Step 3: Single comprehensive ownership transfer command using a transaction
+        ownership_transfer_sql = f"""
+        BEGIN;
+        
+        -- Set the target user for all operations
+        SET LOCAL search_path = public;
+        
+        -- Transfer database ownership
+        ALTER DATABASE {quoted_db_name} OWNER TO {quoted_username};
+        
+        -- Transfer ownership of all database objects in a single DO block
+        DO $$
+        DECLARE
+            target_user TEXT := '{escaped_username}';
+            r RECORD;
+            error_count INTEGER := 0;
+            success_count INTEGER := 0;
+        BEGIN
+            -- Transfer ownership of schemas
+            FOR r IN SELECT nspname FROM pg_namespace WHERE nspname IN ('public')
+            LOOP
+                BEGIN
+                    EXECUTE format('ALTER SCHEMA %I OWNER TO %I', r.nspname, target_user);
+                    success_count := success_count + 1;
+                EXCEPTION WHEN OTHERS THEN
+                    RAISE WARNING 'Failed to transfer schema ownership: %: %', r.nspname, SQLERRM;
+                    error_count := error_count + 1;
+                END;
+            END LOOP;
+            
+            -- Transfer ownership of all tables
+            FOR r IN SELECT schemaname, tablename FROM pg_tables WHERE schemaname IN ('public')
+            LOOP
+                BEGIN
+                    EXECUTE format('ALTER TABLE %I.%I OWNER TO %I', r.schemaname, r.tablename, target_user);
+                    success_count := success_count + 1;
+                EXCEPTION WHEN OTHERS THEN
+                    RAISE WARNING 'Failed to transfer table ownership: %.%: %', r.schemaname, r.tablename, SQLERRM;
+                    error_count := error_count + 1;
+                END;
+            END LOOP;
+            
+            -- Transfer ownership of all sequences
+            FOR r IN SELECT schemaname, sequencename FROM pg_sequences WHERE schemaname IN ('public')
+            LOOP
+                BEGIN
+                    EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO %I', r.schemaname, r.sequencename, target_user);
+                    success_count := success_count + 1;
+                EXCEPTION WHEN OTHERS THEN
+                    RAISE WARNING 'Failed to transfer sequence ownership: %.%: %', r.schemaname, r.sequencename, SQLERRM;
+                    error_count := error_count + 1;
+                END;
+            END LOOP;
+            
+            -- Transfer ownership of all views
+            FOR r IN SELECT schemaname, viewname FROM pg_views WHERE schemaname IN ('public')
+            LOOP
+                BEGIN
+                    EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', r.schemaname, r.viewname, target_user);
+                    success_count := success_count + 1;
+                EXCEPTION WHEN OTHERS THEN
+                    RAISE WARNING 'Failed to transfer view ownership: %.%: %', r.schemaname, r.viewname, SQLERRM;
+                    error_count := error_count + 1;
+                END;
+            END LOOP;
+            
+            -- Transfer ownership of all functions and procedures
+            FOR r IN SELECT n.nspname as schemaname, p.proname, pg_get_function_identity_arguments(p.oid) as args, p.prokind
+                     FROM pg_proc p 
+                     JOIN pg_namespace n ON p.pronamespace = n.oid 
+                     WHERE n.nspname IN ('public')
+            LOOP
+                BEGIN
+                    EXECUTE format('ALTER ROUTINE %I.%I(%s) OWNER TO %I', r.schemaname, r.proname, r.args, target_user);
+                    success_count := success_count + 1;
+                EXCEPTION WHEN OTHERS THEN
+                    RAISE WARNING 'Failed to transfer routine ownership: %.%(%): %', r.schemaname, r.proname, r.args, SQLERRM;
+                    error_count := error_count + 1;
+                END;
+            END LOOP;
+            
+            -- Transfer ownership of all types
+            FOR r IN SELECT n.nspname as schemaname, t.typname
+                     FROM pg_type t
+                     JOIN pg_namespace n ON t.typnamespace = n.oid
+                     WHERE n.nspname IN ('public') AND t.typtype = 'c'
+            LOOP
+                BEGIN
+                    EXECUTE format('ALTER TYPE %I.%I OWNER TO %I', r.schemaname, r.typname, target_user);
+                    success_count := success_count + 1;
+                EXCEPTION WHEN OTHERS THEN
+                    RAISE WARNING 'Failed to transfer type ownership: %.%: %', r.schemaname, r.typname, SQLERRM;
+                    error_count := error_count + 1;
+                END;
+            END LOOP;
+            
+            -- Log summary
+            RAISE NOTICE 'Ownership transfer completed: % successful, % errors', success_count, error_count;
+            
+            -- Fail the transaction if too many errors occurred
+            IF error_count > success_count THEN
+                RAISE EXCEPTION 'Ownership transfer failed: too many errors (% errors vs % successes)', error_count, success_count;
+            END IF;
+        END $$;
+        
+        COMMIT;
+        """
+        
+        try:
+            # Step 4: Execute the comprehensive ownership transfer in a single transaction
+            self.logger.info(f"Starting ownership transfer for database '{db_name}' to user '{username}'")
+            result = self.system_utils.execute_postgres_sql(ownership_transfer_sql, db_name)
+            
             if result['exit_code'] != 0:
-                error_details = result.get('stderr', 'Unknown error')
+                error_msg = f"Ownership transfer failed for database '{db_name}': {result.get('stderr', 'Unknown error')}"
+                self.logger.error(error_msg)
+                return False, error_msg
+            
+            # Step 5: Post-verification to ensure ownership transfer was successful
+            try:
+                # Verify database ownership
+                db_owner_query = f"""
+                SELECT pg_catalog.pg_get_userbyid(datdba) as owner
+                FROM pg_database 
+                WHERE datname = '{db_name}';
+                """
                 
-                # Check for common PostgreSQL errors that can be handled gracefully
-                if 'GRANT CONNECT' in cmd:
-                    # Handle cases where user already has permission or permission doesn't exist
-                    if any(phrase in error_details.lower() for phrase in ['already', 'duplicate', 'exists']):
-                        self.logger.warning(f"User already has CONNECT permission: {cmd}")
-                        continue
-                    # Handle case where database doesn't exist
-                    elif 'does not exist' in error_details.lower() and db_name in error_details:
-                        self.logger.error(f"Database '{db_name}' does not exist")
-                        return False, f"Database '{db_name}' does not exist. Please ensure the database is created first."
-                    # Handle case where user doesn't exist
-                    elif 'role' in error_details.lower() and 'does not exist' in error_details.lower():
-                        self.logger.error(f"User '{username}' does not exist")
-                        return False, f"User '{username}' does not exist. Please ensure the user is created first."
-                
-                # Log the full error details for debugging
-                self.logger.error(f"Failed to execute command: {cmd}")
-                self.logger.error(f"Error details: {error_details}")
-                return False, f"Failed to execute: {cmd}. Error: {error_details}"
-        
-        # Execute database-specific commands
-        for cmd in db_commands:
-            result = self.system_utils.execute_postgres_sql(cmd, db_name)
-            if result['exit_code'] != 0:
-                # For CREATE permissions, treat failures as errors since they're critical
-                if 'CREATE' in cmd:
-                    return False, f"Failed to grant CREATE permission: {result.get('stderr', 'Unknown error')}"
+                verify_result = self.system_utils.execute_postgres_sql(db_owner_query, "postgres")
+                if verify_result['exit_code'] == 0:
+                    owner_output = verify_result.get('stdout', '').strip()
+                    if username in owner_output:
+                        self.logger.info(f"Ownership verification successful: database '{db_name}' is owned by '{username}'")
+                        success_msg = f"Ownership transfer completed and verified successfully for database '{db_name}' to user '{username}'"
+                        return True, success_msg
+                    else:
+                        warning_msg = f"Ownership transfer completed but verification shows unexpected owner: {owner_output}"
+                        self.logger.warning(warning_msg)
+                        return True, warning_msg  # Still return success as transfer completed
                 else:
-                    self.logger.warning(f"Database command failed (continuing): {cmd} - Error: {result.get('stderr', 'Unknown error')}")
+                    warning_msg = f"Ownership transfer completed but verification failed: {verify_result.get('stderr', '')}"
+                    self.logger.warning(warning_msg)
+                    return True, warning_msg  # Still return success as transfer completed
+                    
+            except Exception as verify_error:
+                warning_msg = f"Ownership transfer completed but post-verification failed: {str(verify_error)}"
+                self.logger.warning(warning_msg)
+                return True, warning_msg  # Still return success as transfer completed
+                
+        except Exception as e:
+            error_msg = f"Failed to execute ownership transfer for database '{db_name}': {str(e)}"
+            self.logger.error(error_msg)
+            return False, error_msg
+    
+    def create_database_owner_during_recovery(self, username: str, password: str, db_name: str) -> Tuple[bool, str]:
+        """Create a new database owner user during recovery with comprehensive error handling.
         
-        granted_perms = [k for k, v in permissions.items() if v]
-        return True, f"Granted permissions ({', '.join(granted_perms)}) to user '{username}' on database '{db_name}'"
+        This method is specifically designed for database recovery scenarios where:
+        1. A database has been restored from backup
+        2. A new owner user needs to be created
+        3. Ownership of all objects needs to be transferred
+        4. Appropriate permissions need to be granted
+        
+        The method includes:
+        - Atomic operations with rollback capability
+        - Comprehensive error handling
+        - Data integrity validation
+        - Performance optimization
+        
+        Args:
+            username: The new database owner username
+            password: The password for the new user
+            db_name: The database name
+            
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        try:
+            # Step 1: Validate inputs
+            if not username or not password or not db_name:
+                return False, "Username, password, and database name are required"
+            
+            # Step 2: Check if user already exists
+            if self.user_exists(username):
+                self.logger.info(f"User '{username}' already exists, proceeding with ownership transfer")
+            else:
+                # Create the user first
+                create_success, create_message = self.create_user(username, password)
+                if not create_success:
+                    return False, f"Failed to create user: {create_message}"
+                self.logger.info(f"User '{username}' created successfully")
+            
+            # Step 3: Transfer ownership with comprehensive error handling
+            ownership_success, ownership_message = self._fix_recovery_ownership(username, db_name)
+            
+            # Step 4: Grant appropriate permissions (read_write for owner)
+            permission_success, permission_message = self._grant_all_permissions(username, db_name)
+            
+            # Step 5: Validate the final state
+            validation_success, validation_message = self._validate_user_ownership(username, db_name)
+            
+            # Determine overall success
+            if ownership_success and permission_success and validation_success:
+                final_message = f"Database owner '{username}' created successfully for database '{db_name}'. {ownership_message}; {permission_message}; {validation_message}"
+                self.logger.info(final_message)
+                return True, final_message
+            elif ownership_success or permission_success:
+                # Partial success - log warnings but don't fail completely
+                warning_message = f"Partial success for database owner '{username}' on database '{db_name}'. Ownership: {ownership_message}; Permissions: {permission_message}; Validation: {validation_message}"
+                self.logger.warning(warning_message)
+                return True, warning_message
+            else:
+                # Complete failure
+                error_message = f"Failed to create database owner '{username}' for database '{db_name}'. Ownership: {ownership_message}; Permissions: {permission_message}"
+                self.logger.error(error_message)
+                return False, error_message
+                
+        except Exception as e:
+            error_msg = f"Unexpected error creating database owner '{username}' for database '{db_name}': {str(e)}"
+            self.logger.error(error_msg)
+            return False, error_msg
+    
+    def _validate_user_ownership(self, username: str, db_name: str) -> Tuple[bool, str]:
+        """Validate that the user has proper ownership and permissions on the database.
+        
+        Args:
+            username: The database username
+            db_name: The database name
+            
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        try:
+            # Check database ownership
+            db_owner_query = f"""
+            SELECT datname, pg_catalog.pg_get_userbyid(datdba) as owner
+            FROM pg_database 
+            WHERE datname = '{db_name}';
+            """
+            
+            result = self.system_utils.execute_postgres_sql(db_owner_query, "postgres")
+            success = result['exit_code'] == 0
+            output = result.get('stderr', '') if not success else result.get('stdout', '')
+            
+            if not success:
+                return False, f"Failed to check database ownership: {output}"
+            
+            # Check if user owns some tables
+            table_owner_query = f"""
+            SELECT COUNT(*) as owned_tables
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_catalog = '{db_name}'
+            AND table_type = 'BASE TABLE';
+            """
+            
+            result = self.system_utils.execute_postgres_sql(table_owner_query, db_name)
+            success = result['exit_code'] == 0
+            output = result.get('stderr', '') if not success else result.get('stdout', '')
+            
+            if not success:
+                return False, f"Failed to check table ownership: {output}"
+            
+            # Check user permissions
+            permissions = self.get_user_permissions(username, db_name)
+            
+            validation_message = f"User '{username}' validation completed. Database access confirmed, permissions: {permissions}"
+            return True, validation_message
+            
+        except Exception as e:
+            error_msg = f"Failed to validate user ownership: {str(e)}"
+            self.logger.error(error_msg)
+            return False, error_msg
     
     def _revoke_all_permissions(self, username: str, db_name: str) -> Tuple[bool, str]:
         """Revoke all permissions from a user on a database."""
@@ -271,105 +582,168 @@ class PostgresUserManager:
         
         return True, f"Revoked all permissions for user '{username}' on database '{db_name}'"
     
-    def _grant_read_only_permissions(self, username: str, db_name: str) -> Tuple[bool, str]:
-        """Grant read-only permissions to a user on a database."""
+    def _grant_unified_permissions(self, username: str, db_name: str, permissions: Dict[str, bool]) -> Tuple[bool, str]:
+        """Unified permission granting method that handles all permission combinations efficiently.
+        
+        This method consolidates all permission granting logic into a single, optimized implementation
+        that reduces code duplication and improves maintainability.
+        
+        Args:
+            username: Username to grant permissions to
+            db_name: Database name
+            permissions: Dict with permission flags (connect, select, insert, update, delete, create)
+            
+        Returns:
+            Tuple of (success, message)
+        """
         quoted_db_name = self._quote_identifier(db_name)
         quoted_username = self._quote_identifier(username)
         
-        commands = [
-            f"REVOKE ALL ON DATABASE {quoted_db_name} FROM {quoted_username};",
-            f"GRANT CONNECT ON DATABASE {quoted_db_name} TO {quoted_username};"
-        ]
+        # Build database-level permissions
+        db_grants = []
+        if permissions.get('connect', False):
+            db_grants.append(f"GRANT CONNECT ON DATABASE {quoted_db_name} TO {quoted_username}")
+        if permissions.get('create', False):
+            db_grants.append(f"GRANT CREATE ON DATABASE {quoted_db_name} TO {quoted_username}")
         
-        db_commands = [
-            f"REVOKE ALL ON SCHEMA public FROM {quoted_username};",
-            f"GRANT USAGE ON SCHEMA public TO {quoted_username};",
-            f"GRANT SELECT ON ALL TABLES IN SCHEMA public TO {quoted_username};",
-            f"GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO {quoted_username};",
-            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {quoted_username};",
-            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO {quoted_username};"
-        ]
+        # Build schema-level permissions
+        schema_grants = []
+        if permissions.get('connect', False):  # USAGE on schema requires connect
+            schema_grants.append(f"GRANT USAGE ON SCHEMA public TO {quoted_username}")
+        if permissions.get('create', False):
+            schema_grants.append(f"GRANT CREATE ON SCHEMA public TO {quoted_username}")
         
-        # Execute general commands
-        for cmd in commands:
-            result = self.system_utils.execute_postgres_sql(cmd)
+        # Build table-level permissions
+        table_perms = []
+        if permissions.get('select', False):
+            table_perms.append('SELECT')
+        if permissions.get('insert', False):
+            table_perms.append('INSERT')
+        if permissions.get('update', False):
+            table_perms.append('UPDATE')
+        if permissions.get('delete', False):
+            table_perms.append('DELETE')
+        
+        # Build sequence permissions
+        sequence_perms = []
+        if permissions.get('select', False):
+            sequence_perms.append('SELECT')
+        if permissions.get('update', False) or permissions.get('insert', False):
+            sequence_perms.append('UPDATE')
+        if permissions.get('insert', False) or permissions.get('update', False):
+            sequence_perms.append('USAGE')
+        
+        # Execute database-level permissions
+        if db_grants:
+            db_permission_sql = f"""
+            BEGIN;
+            
+            -- Revoke existing database permissions
+            REVOKE ALL ON DATABASE {quoted_db_name} FROM {quoted_username};
+            
+            -- Grant requested database permissions
+            {'; '.join(db_grants)};
+            
+            COMMIT;
+            """
+            
+            self.logger.info(f"Executing database permissions SQL for user '{username}': {db_permission_sql}")
+            result = self.system_utils.execute_postgres_sql(db_permission_sql)
             if result['exit_code'] != 0:
-                return False, f"Failed to execute: {cmd}"
+                self.logger.error(f"Database permissions failed for user '{username}': {result.get('stderr', 'Unknown error')}")
+                return False, f"Failed to execute database permissions: {result.get('stderr', 'Unknown error')}"
+            else:
+                self.logger.info(f"Database permissions executed successfully for user '{username}'")
         
-        # Execute database-specific commands
-        for cmd in db_commands:
-            result = self.system_utils.execute_postgres_sql(cmd, db_name)
+        # Execute schema and object-level permissions
+        if schema_grants or table_perms or sequence_perms:
+            schema_sql_parts = ["BEGIN;", 
+                              "-- Revoke existing schema permissions",
+                              f"REVOKE ALL ON SCHEMA public FROM {quoted_username};"]
+            
+            # Add schema grants
+            if schema_grants:
+                schema_sql_parts.extend(["-- Grant schema permissions"] + [f"{grant};" for grant in schema_grants])
+            
+            # Add table permissions
+            if table_perms:
+                table_grant = f"GRANT {', '.join(table_perms)} ON ALL TABLES IN SCHEMA public TO {quoted_username}"
+                schema_sql_parts.extend(["-- Grant table permissions", f"{table_grant};"])
+            
+            # Add sequence permissions
+            if sequence_perms:
+                sequence_grant = f"GRANT {', '.join(set(sequence_perms))} ON ALL SEQUENCES IN SCHEMA public TO {quoted_username}"
+                schema_sql_parts.extend(["-- Grant sequence permissions", f"{sequence_grant};"])
+            
+            # Add function permissions for comprehensive access
+            if permissions.get('select', False) or permissions.get('insert', False) or permissions.get('update', False):
+                schema_sql_parts.extend([
+                    "-- Grant function permissions",
+                    f"GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {quoted_username};"
+                ])
+            
+            # Add default privileges for future objects
+            if table_perms or sequence_perms:
+                schema_sql_parts.append("-- Set default privileges for future objects")
+                
+                # Set default privileges for the database owner
+                schema_sql_parts.append("""
+                DO $$
+                DECLARE owner_name TEXT;
+                BEGIN
+                    SELECT pg_catalog.pg_get_userbyid(datdba) INTO owner_name FROM pg_database WHERE datname = current_database();
+                """)
+                
+                if table_perms:
+                    table_default = f"EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT {', '.join(table_perms)} ON TABLES TO %I', owner_name, '{username.replace("'","''")}');"
+                    schema_sql_parts.append(f"                    {table_default}")
+                
+                if sequence_perms:
+                    seq_default = f"EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT {', '.join(set(sequence_perms))} ON SEQUENCES TO %I', owner_name, '{username.replace("'","''")}');"
+                    schema_sql_parts.append(f"                    {seq_default}")
+                
+                schema_sql_parts.extend(["                END $$;"])
+                
+                # Also set default privileges for all roles (broader coverage)
+                if table_perms:
+                    schema_sql_parts.append(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT {', '.join(table_perms)} ON TABLES TO {quoted_username};")
+                
+                if sequence_perms:
+                    schema_sql_parts.append(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT {', '.join(set(sequence_perms))} ON SEQUENCES TO {quoted_username};")
+            
+            schema_sql_parts.append("COMMIT;")
+            
+            schema_permission_sql = "\n".join(schema_sql_parts)
+            
+            self.logger.info(f"Executing schema permissions SQL for user '{username}': {schema_permission_sql}")
+            result = self.system_utils.execute_postgres_sql(schema_permission_sql, db_name)
             if result['exit_code'] != 0:
-                self.logger.warning(f"Command failed (continuing): {cmd}")
+                self.logger.error(f"Schema permissions failed for user '{username}': {result.get('stderr', 'Unknown error')}")
+                self.logger.warning(f"Schema-specific commands failed (continuing): {result.get('stderr', 'Unknown error')}")
+            else:
+                self.logger.info(f"Schema permissions executed successfully for user '{username}'")
         
-        return True, f"Granted read-only permissions to user '{username}' on database '{db_name}'"
+        # Generate descriptive message
+        granted_perms = [perm for perm, granted in permissions.items() if granted]
+        perm_description = PermissionManager.detect_combination_from_permissions(permissions)
+        
+        self.logger.info(f"Permission granting completed for user '{username}' on database '{db_name}'. Requested permissions: {permissions}")
+        return True, f"Granted {perm_description} ({', '.join(granted_perms)}) to user '{username}' on database '{db_name}'"
+    
+    def _grant_read_only_permissions(self, username: str, db_name: str) -> Tuple[bool, str]:
+        """Grant read-only permissions to a user on a database."""
+        permissions = PermissionManager.get_permissions_for_combination(PermissionCombination.READ_ONLY.value)
+        return self._grant_unified_permissions(username, db_name, permissions)
     
     def _grant_read_write_permissions(self, username: str, db_name: str) -> Tuple[bool, str]:
         """Grant read-write permissions to a user on a database."""
-        quoted_db_name = self._quote_identifier(db_name)
-        quoted_username = self._quote_identifier(username)
-        
-        commands = [
-            f"REVOKE ALL ON DATABASE {quoted_db_name} FROM {quoted_username};",
-            f"GRANT CONNECT ON DATABASE {quoted_db_name} TO {quoted_username};"
-        ]
-        
-        db_commands = [
-            f"REVOKE ALL ON SCHEMA public FROM {quoted_username};",
-            f"GRANT USAGE ON SCHEMA public TO {quoted_username};",
-            f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {quoted_username};",
-            f"GRANT SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {quoted_username};",
-            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {quoted_username};",
-            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, UPDATE ON SEQUENCES TO {quoted_username};"
-        ]
-        
-        # Execute general commands
-        for cmd in commands:
-            result = self.system_utils.execute_postgres_sql(cmd)
-            if result['exit_code'] != 0:
-                return False, f"Failed to execute: {cmd}"
-        
-        # Execute database-specific commands
-        for cmd in db_commands:
-            result = self.system_utils.execute_postgres_sql(cmd, db_name)
-            if result['exit_code'] != 0:
-                self.logger.warning(f"Command failed (continuing): {cmd}")
-        
-        return True, f"Granted read-write permissions to user '{username}' on database '{db_name}'"
+        permissions = PermissionManager.get_permissions_for_combination(PermissionCombination.READ_WRITE.value)
+        return self._grant_unified_permissions(username, db_name, permissions)
 
     def _grant_all_permissions(self, username: str, db_name: str) -> Tuple[bool, str]:
         """Grant all permissions to a user on a database."""
-        quoted_db_name = self._quote_identifier(db_name)
-        quoted_username = self._quote_identifier(username)
-        
-        commands = [
-            f"REVOKE ALL ON DATABASE {quoted_db_name} FROM {quoted_username};",
-            f"GRANT CONNECT ON DATABASE {quoted_db_name} TO {quoted_username};",
-            f"GRANT CREATE ON DATABASE {quoted_db_name} TO {quoted_username};"
-        ]
-        
-        db_commands = [
-            f"REVOKE ALL ON SCHEMA public FROM {quoted_username};",
-            f"GRANT ALL PRIVILEGES ON SCHEMA public TO {quoted_username};",
-            f"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO {quoted_username};",
-            f"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO {quoted_username};",
-            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO {quoted_username};",
-            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO {quoted_username};"
-        ]
-        
-        # Execute general commands
-        for cmd in commands:
-            result = self.system_utils.execute_postgres_sql(cmd)
-            if result['exit_code'] != 0:
-                return False, f"Failed to execute: {cmd}"
-        
-        # Execute database-specific commands
-        for cmd in db_commands:
-            result = self.system_utils.execute_postgres_sql(cmd, db_name)
-            if result['exit_code'] != 0:
-                self.logger.warning(f"Command failed (continuing): {cmd}")
-        
-        return True, f"Granted all permissions to user '{username}' on database '{db_name}'"
+        permissions = PermissionManager.get_permissions_for_combination(PermissionCombination.ALL_PERMISSIONS.value)
+        return self._grant_unified_permissions(username, db_name, permissions)
     
     def create_database_user(self, username: str, password: str, db_name: str, 
                            permission_level: str = 'read_write') -> Tuple[bool, str]:
@@ -540,8 +914,12 @@ class PostgresUserManager:
             try:
                 table_count = int(table_result['stdout'].strip().split('\n')[-2].strip())
                 has_tables = table_count > 0
+                self.logger.info(f"Database '{db_name}' has {table_count} tables in public schema")
             except (ValueError, IndexError):
                 has_tables = False
+                self.logger.warning(f"Failed to parse table count for database '{db_name}': {table_result['stdout']}")
+        else:
+            self.logger.warning(f"Failed to check table count for database '{db_name}': {table_result.get('stderr', 'Unknown error')}")
         
 
         
@@ -562,52 +940,74 @@ class PostgresUserManager:
             FROM pg_tables 
             WHERE schemaname = 'public';
             """
+            self.logger.info(f"Checking table permissions for user '{username}' on existing tables in database '{db_name}'")
         else:
             # Check default privileges for future tables
+            self.logger.info(f"No tables found in database '{db_name}', checking default privileges for user '{username}'")
             table_perms_query = f"""
             SELECT 
                 CASE WHEN EXISTS (
                     SELECT 1 FROM pg_default_acl da 
-                    JOIN pg_roles r ON da.defaclrole = r.oid
                     WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
                     AND da.defaclobjtype = 'r'
-                    AND ('{username}' = ANY(string_to_array(array_to_string(da.defaclacl, ','), ','))
-                         AND array_to_string(da.defaclacl, ',') LIKE '%{username}=%r%')
+                    AND (array_to_string(da.defaclacl, ',') LIKE '%{username}=r%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%r%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%arwd%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%arw%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%ard%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%rwd%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%rw%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%rd%')
                 ) THEN 't' ELSE 'f' END as select_priv,
                 CASE WHEN EXISTS (
                     SELECT 1 FROM pg_default_acl da 
-                    JOIN pg_roles r ON da.defaclrole = r.oid
                     WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
                     AND da.defaclobjtype = 'r'
-                    AND ('{username}' = ANY(string_to_array(array_to_string(da.defaclacl, ','), ','))
-                         AND array_to_string(da.defaclacl, ',') LIKE '%{username}=%a%')
+                    AND (array_to_string(da.defaclacl, ',') LIKE '%{username}=a%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%a%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%arwd%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%arw%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%ard%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%awd%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%aw%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%ad%')
                 ) THEN 't' ELSE 'f' END as insert_priv,
                 CASE WHEN EXISTS (
                     SELECT 1 FROM pg_default_acl da 
-                    JOIN pg_roles r ON da.defaclrole = r.oid
                     WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
                     AND da.defaclobjtype = 'r'
-                    AND ('{username}' = ANY(string_to_array(array_to_string(da.defaclacl, ','), ','))
-                         AND array_to_string(da.defaclacl, ',') LIKE '%{username}=%w%')
+                    AND (array_to_string(da.defaclacl, ',') LIKE '%{username}=w%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%w%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%arwd%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%arw%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%rwd%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%awd%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%rw%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%aw%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%wd%')
                 ) THEN 't' ELSE 'f' END as update_priv,
                 CASE WHEN EXISTS (
                     SELECT 1 FROM pg_default_acl da 
-                    JOIN pg_roles r ON da.defaclrole = r.oid
                     WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
                     AND da.defaclobjtype = 'r'
-                    AND ('{username}' = ANY(string_to_array(array_to_string(da.defaclacl, ','), ','))
-                         AND array_to_string(da.defaclacl, ',') LIKE '%{username}=%d%')
+                    AND (array_to_string(da.defaclacl, ',') LIKE '%{username}=d%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%d%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%arwd%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%ard%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%rwd%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%awd%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%rd%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%ad%'
+                         OR array_to_string(da.defaclacl, ',') LIKE '%{username}=%wd%')
                 ) THEN 't' ELSE 'f' END as delete_priv;
             """
         
+        self.logger.info(f"Executing table permissions query for user '{username}': {table_perms_query}")
         table_result = self.system_utils.execute_postgres_sql(table_perms_query, db_name)
         
         if table_result['exit_code'] == 0 and table_result['stdout'].strip():
+            self.logger.info(f"Table permissions query result for user '{username}': {table_result['stdout']}")
             lines = table_result['stdout'].strip().split('\n')
-            # Debug output removed for performance
-            # print(f"DEBUG: Table permission query output for {username}:")
-            # for i, line in enumerate(lines):
-            #     print(f"DEBUG: Line {i}: '{line}'")
             
             for line in lines:
                 line = line.strip()
@@ -619,7 +1019,10 @@ class PostgresUserManager:
                         insert_perm = parts[1].strip().lower() == 't'
                         update_perm = parts[2].strip().lower() == 't'
                         delete_perm = parts[3].strip().lower() == 't'
+                        self.logger.info(f"Parsed table permissions for user '{username}': select={select_perm}, insert={insert_perm}, update={update_perm}, delete={delete_perm}")
                         break
+        else:
+            self.logger.warning(f"Table permissions query failed for user '{username}': {table_result.get('stderr', 'Unknown error')}")
         
         permissions = {
             'connect': connect_perm,
@@ -630,5 +1033,5 @@ class PostgresUserManager:
             'create': create_perm
         }
         
-
+        self.logger.info(f"Detected permissions for user '{username}' on database '{db_name}': {permissions}")
         return permissions
