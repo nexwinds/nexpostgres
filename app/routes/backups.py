@@ -253,6 +253,30 @@ def view_restore_log(log_id):
     return render_template('backups/view_restore_log.html', log=log)
 
 
+@backups_bp.route('/restore_logs/<int:log_id>/status')
+def restore_log_status(log_id):
+    """Get current status of a restore log for polling."""
+    try:
+        log = RestoreLog.query.get_or_404(log_id)
+        
+        return jsonify({
+            'success': True,
+            'log': {
+                'id': log.id,
+                'status': log.status,
+                'start_time': log.start_time.isoformat() if log.start_time else None,
+                'end_time': log.end_time.isoformat() if log.end_time else None,
+                'log_output': log.log_output,
+                'error_message': getattr(log, 'error_message', None)
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @backups_bp.route('/view_log/<backup_id>')
 def view_log(backup_id):
     """View detailed backup log."""

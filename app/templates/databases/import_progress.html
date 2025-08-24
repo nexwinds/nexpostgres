@@ -53,7 +53,7 @@
                 <h6 class="mb-0">Import Log</h6>
             </div>
             <div class="card-body p-0">
-                <div id="logOutput" class="log-container border-0 bg-light p-3" style="height: 300px; overflow-y: auto; font-family: monospace; white-space: pre-wrap;">{{ restore_log.log_output }}</div>
+                <div id="logOutput" class="log-container border-0 p-3" style="height: 300px; overflow-y: auto; font-family: 'Courier New', monospace; white-space: pre-wrap; background-color: #1e1e1e; color: #ffffff;">{{ restore_log.log_output }}</div>
             </div>
         </div>
         
@@ -221,7 +221,9 @@
                     updateProgress(data.log_output);
                     
                     if (data.is_complete) {
-                        completeImport(data.status, data.log_output.split('\n').pop());
+                        // Map backend status to frontend status
+                        const frontendStatus = data.status === 'completed' ? 'success' : 'failed';
+                        completeImport(frontendStatus, data.log_output.split('\n').pop());
                     }
                 }
             })
@@ -257,9 +259,22 @@
 
 <style>
     .log-container {
-        background-color: #f8f9fa;
+        background-color: #1e1e1e;
         border-radius: 0.25rem;
         font-size: 0.875rem;
+        color: #ffffff;
+    }
+    
+    .log-container .text-success {
+        color: #28a745 !important;
+    }
+    
+    .log-container .text-danger {
+        color: #dc3545 !important;
+    }
+    
+    .log-container .text-warning {
+        color: #ffc107 !important;
     }
 </style>
 {% endblock %}

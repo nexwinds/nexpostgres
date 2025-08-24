@@ -135,23 +135,17 @@ def init_db(app):
     with app.app_context():
         db.create_all()
         
-        # Create default admin user if it doesn't exist
-        if not User.query.filter_by(username='admin').first():
-            import os
-            import secrets
-            
-            # Generate a secure random password or use environment variable
-            default_password = os.environ.get('ADMIN_DEFAULT_PASSWORD')
-            if not default_password:
-                default_password = secrets.token_urlsafe(16)
-                print(f"\n*** IMPORTANT: Default admin password generated: {default_password} ***")
-                print("*** Please save this password and change it on first login ***\n")
-            
-            admin = User(username='admin')
-            admin.set_password(default_password)
-            admin.is_first_login = True
-            db.session.add(admin)
+        # Create default nexpostgres user if no users exist
+        if not User.query.first():
+            # Create default user with username and password both as 'nexpostgres'
+            default_user = User(username='nexpostgres')
+            default_user.set_password('nexpostgres')
+            default_user.is_first_login = True
+            db.session.add(default_user)
             db.session.commit()
+            print("\n*** FIRST TIME SETUP ***")
+            print("*** Default credentials created: username='nexpostgres', password='nexpostgres' ***")
+            print("*** You will be prompted to change these on first login ***\n")
             
         # Add encryption_key column to existing BackupJob records if it doesn't exist
         try:

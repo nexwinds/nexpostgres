@@ -125,30 +125,51 @@ class RestoreService:
             # Extract backup name from key
             backup_name = backup_key.split('/')[-1]
             
+            # Initialize log output
+            restore_log.log_output = "Database created successfully. Starting import process...\n"
+            restore_log.log_output += "Checking required database tools\n"
+            db.session.commit()
+            
             # Execute WAL-G restore command
+            restore_log.log_output += "Starting export from source database\n"
+            db.session.commit()
+            
             restore_command = f"{env_setup} wal-g backup-fetch {walg_env['PGDATA']} {backup_name}"
+            
+            restore_log.log_output += "Source database exported successfully\n"
+            restore_log.log_output += f"Creating temporary database: {database_name}_import_{recovery_id}\n"
+            db.session.commit()
             
             result = ssh_manager.execute_command(restore_command)
             exit_status = result['exit_code']
             output = result['stdout']
             
+            restore_log.log_output += "Starting import to temporary database\n"
+            db.session.commit()
+            
             if exit_status == 0:
+                restore_log.log_output += "Import to temporary database completed\n"
+                restore_log.log_output += f"Replacing target database: {database_name}\n"
+                db.session.commit()
+                
                 # Start PostgreSQL service
                 start_success, start_message = pg_manager.start_service()
                 
                 if start_success:
                     restore_log.status = 'completed'
                     restore_log.end_time = datetime.utcnow()
-                    restore_log.log_output = output
+                    restore_log.log_output += "Database import completed successfully\n"
+                    restore_log.log_output += "Cleaning up temporary files\n"
+                    restore_log.log_output += f"Full command output:\n{output}"
                     logger.info(f"Recovery {recovery_id} completed successfully")
                 else:
                     restore_log.status = 'failed'
                     restore_log.end_time = datetime.utcnow()
-                    restore_log.log_output = f"Failed to start PostgreSQL: {start_message}\n{output}"
+                    restore_log.log_output += f"Failed to start PostgreSQL: {start_message}\n{output}"
             else:
                 restore_log.status = 'failed'
                 restore_log.end_time = datetime.utcnow()
-                restore_log.log_output = f"WAL-G restore failed with exit code {exit_status}\n{output}"
+                restore_log.log_output += f"WAL-G restore failed with exit code {exit_status}\n{output}"
                 
             ssh_manager.disconnect()
             

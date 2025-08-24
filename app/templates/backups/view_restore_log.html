@@ -150,4 +150,88 @@
 </div>
 {% endif %}
 
+<script>
+$(document).ready(function() {
+    const logId = {{ log.id }};
+    let pollInterval;
+    
+    // Check if restore is still running
+    {% if log.status in ['running', 'in_progress'] %}
+    startPolling();
+    {% endif %}
+    
+    function startPolling() {
+        pollInterval = setInterval(function() {
+            $.ajax({
+                url: '/backups/restore_logs/' + logId + '/status',
+                method: 'GET',
+                success: function(response) {
+                    if (response.success && response.log) {
+                        updateLogDisplay(response.log);
+                        
+                        // Stop polling if completed
+                        if (response.log.status !== 'running' && response.log.status !== 'in_progress') {
+                            clearInterval(pollInterval);
+                        }
+                    }
+                },
+                error: function() {
+                    console.error('Failed to fetch log status');
+                }
+            });
+        }, 2000); // Poll every 2 seconds
+    }
+    
+    function updateLogDisplay(logData) {
+        // Update status badge
+        const statusCell = $('th:contains("Status")').next('td');
+        let statusBadge = '';
+        if (logData.status === 'completed') {
+            statusBadge = '<span class="badge bg-success">Success</span>';
+        } else if (logData.status === 'failed') {
+            statusBadge = '<span class="badge bg-danger">Failed</span>';
+        } else if (logData.status === 'running' || logData.status === 'in_progress') {
+            statusBadge = '<span class="badge bg-info">Running</span>';
+        } else {
+            statusBadge = '<span class="badge bg-secondary">' + logData.status + '</span>';
+        }
+        statusCell.html(statusBadge);
+        
+        // Update end time
+        const endTimeCell = $('th:contains("End Time")').next('td');
+        if (logData.end_time) {
+            const endTime = new Date(logData.end_time).toLocaleString();
+            endTimeCell.text(endTime);
+        }
+        
+        // Update duration
+        const durationCell = $('th:contains("Duration")').next('td');
+        if (logData.end_time && logData.start_time) {
+            const startTime = new Date(logData.start_time);
+            const endTime = new Date(logData.end_time);
+            const duration = Math.round((endTime - startTime) / 1000);
+            durationCell.text(duration + ' seconds');
+        }
+        
+        // Update log output
+        if (logData.log_output) {
+            const logOutput = $('.bg-dark.text-light code');
+            if (logOutput.length > 0) {
+                logOutput.text(logData.log_output);
+                // Scroll to bottom
+                const container = logOutput.parent();
+                container.scrollTop(container[0].scrollHeight);
+            }
+        }
+    }
+    
+    // Clean up interval on page unload
+    $(window).on('beforeunload', function() {
+        if (pollInterval) {
+            clearInterval(pollInterval);
+        }
+    });
+});
+</script>
+
 {% endblock %}

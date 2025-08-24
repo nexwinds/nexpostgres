@@ -22,7 +22,7 @@ class PermissionManager:
             'create': True
         },
         PermissionCombination.NO_PERMISSIONS: {
-            'connect': False,
+            'connect': True,
             'select': False,
             'insert': False,
             'update': False,
@@ -51,7 +51,7 @@ class PermissionManager:
     # Human-readable labels for UI
     COMBINATION_LABELS = {
         PermissionCombination.ALL_PERMISSIONS: "All Permissions Granted",
-        PermissionCombination.NO_PERMISSIONS: "No Permissions / Deactivate",
+        PermissionCombination.NO_PERMISSIONS: "Deactivate",
         PermissionCombination.READ_ONLY: "Read Only Access",
         PermissionCombination.READ_WRITE: "Read & Write Access",
 
@@ -60,7 +60,7 @@ class PermissionManager:
     # Descriptions for each combination
     COMBINATION_DESCRIPTIONS = {
         PermissionCombination.ALL_PERMISSIONS: "Full database access including creating tables, schemas, and managing database structure",
-        PermissionCombination.NO_PERMISSIONS: "No database access - user is effectively deactivated",
+        PermissionCombination.NO_PERMISSIONS: "Can connect to database but has no other permissions - user is deactivated",
         PermissionCombination.READ_ONLY: "Can connect and read data from existing tables",
         PermissionCombination.READ_WRITE: "Can read, insert, update, and delete data but cannot create new tables",
 
@@ -110,10 +110,17 @@ class PermissionManager:
         Returns:
             Tuple of (combination_key, is_exact_match)
         """
-        import logging
-        logger = logging.getLogger(__name__)
+
         
-        logger.info(f"DEBUG: Detecting combination for permissions: {permissions}")
+        # Normalize permissions to ensure consistent comparison
+        normalized_perms = {
+            'connect': permissions.get('connect', False),
+            'select': permissions.get('select', False),
+            'insert': permissions.get('insert', False),
+            'update': permissions.get('update', False),
+            'delete': permissions.get('delete', False),
+            'create': permissions.get('create', False)
+        }
         
         # Check for exact matches, prioritizing more specific combinations first
         # Order matters: check from most restrictive to most permissive
@@ -126,10 +133,38 @@ class PermissionManager:
         
         for combo in priority_order:
             combo_perms = cls.PERMISSION_COMBINATIONS[combo]
-            if permissions == combo_perms:
+            if normalized_perms == combo_perms:
                 return combo.value, True
         
-        # If no exact match, return closest match or custom
+        # Check for partial matches or common patterns
+        # This helps identify close matches that might be due to minor permission variations
+        
+        # Check if it's close to READ-only (has connect and select, but maybe missing some)
+        if (normalized_perms['connect'] and normalized_perms['select'] and 
+            not any([normalized_perms['insert'], normalized_perms['update'], 
+                    normalized_perms['delete'], normalized_perms['create']])):
+            return PermissionCombination.READ_ONLY.value, False
+        
+        # Check if it's close to read-write (has basic CRUD but not create)
+        if (normalized_perms['connect'] and normalized_perms['select'] and 
+            normalized_perms['insert'] and normalized_perms['update'] and 
+            normalized_perms['delete'] and not normalized_perms['create']):
+            return PermissionCombination.READ_WRITE.value, False
+        
+        # Check if it has all permissions (close to all permissions)
+        if (normalized_perms['connect'] and normalized_perms['select'] and 
+            normalized_perms['insert'] and normalized_perms['update'] and 
+            normalized_perms['delete'] and normalized_perms['create']):
+            return PermissionCombination.ALL_PERMISSIONS.value, False
+        
+        # Check if it's effectively deactivated (only connect permission, no other permissions)
+        if (normalized_perms['connect'] and 
+            not any([normalized_perms['select'], normalized_perms['insert'], 
+                    normalized_perms['update'], normalized_perms['delete'], 
+                    normalized_perms['create']])):
+            return PermissionCombination.NO_PERMISSIONS.value, False
+        
+        # If no pattern matches, return custom
         return "custom", False
     
     @classmethod
