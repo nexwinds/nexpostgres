@@ -321,7 +321,7 @@ class WalgBackupManager:
             return True, "Incremental backup completed successfully"
         
         error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
-        return False, f"{backup_type.capitalize()} backup failed: {error_msg}"
+        return False, f"Incremental backup failed: {error_msg}"
     
     def list_backups(self, db_name: str) -> List[Dict]:
         """List available backups using WAL-G.

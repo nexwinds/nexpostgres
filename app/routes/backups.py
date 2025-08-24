@@ -1,7 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from app.models.database import BackupJob, RestoreLog, PostgresDatabase, S3Storage
 from app.models.database import db
-from app.utils.backup_service import BackupService, BackupRestoreService, S3TestService
+from app.utils.backup_service import BackupService, BackupRestoreService
 from app.utils.unified_validation_service import UnifiedValidationService
 
 backups_bp = Blueprint('backups', __name__)
@@ -32,9 +32,9 @@ def add_backup():
                                  databases=databases, 
                                  s3_storages=s3_storages)
         
-        # Create backup job first
+        # Create and configure backup job
         backup_service = BackupService()
-        backup_job = backup_service.create_backup_job(
+        backup_job, message = backup_service.create_backup_job(
             name=validated_data['name'],
             database_id=validated_data['database_id'],
             cron_expression=validated_data['cron_expression'],
@@ -43,21 +43,10 @@ def add_backup():
         )
         
         if not backup_job:
-            flash('Failed to create backup job', 'danger')
-            databases = PostgresDatabase.query.all()
-            s3_storages = S3Storage.query.all()
-            return render_template('backups/add.html', 
-                                 databases=databases, 
-                                 s3_storages=s3_storages)
-        
-        # Check and configure backup with the created backup job
-        config_result = backup_service.check_and_configure_backup(backup_job)
-        
-        if not config_result['success']:
-            # Delete the backup job if configuration fails
-            backup_service.delete_backup_job(backup_job)
-            flash(config_result['message'], 'danger')
-            databases = PostgresDatabase.query.all()
+            flash(message, 'danger')
+            databases = PostgresDatabase.query.filter(~PostgresDatabase.id.in_(
+                db.session.query(BackupJob.database_id).distinct()
+            )).all()
             s3_storages = S3Storage.query.all()
             return render_template('backups/add.html', 
                                  databases=databases, 
@@ -294,8 +283,13 @@ def test_s3(s3_storage_id):
     if not is_valid:
         return jsonify({'success': False, 'message': error})
     
-    s3_test_service = S3TestService()
-    success, message = s3_test_service.test_s3_connection(s3_storage)
+    # Use BackupService for S3 testing
+    success, message = BackupService.test_s3_connection(
+        s3_storage.bucket_name,
+        s3_storage.region,
+        s3_storage.access_key,
+        s3_storage.secret_key
+    )
     
     return jsonify({'success': success, 'message': message})
 

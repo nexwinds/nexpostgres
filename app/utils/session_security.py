@@ -1,4 +1,4 @@
-from flask import session, request, current_app
+from flask import session, request, current_app, jsonify, render_template, redirect, url_for, flash, abort
 from flask_wtf.csrf import CSRFProtect, validate_csrf
 from flask_login import current_user
 from datetime import datetime, timedelta
@@ -20,13 +20,11 @@ def init_session_security(app):
         logger.warning(f"CSRF validation failed: {reason} for IP {request.remote_addr}")
         
         if request.is_json:
-            from flask import jsonify
             return jsonify({
                 'error': 'CSRF token validation failed',
                 'message': 'Invalid or missing CSRF token. Please refresh the page and try again.'
             }), 400
         
-        from flask import render_template
         return render_template('errors/csrf.html', reason=reason), 400
     
     # Register the CSRF error handler with the app
@@ -50,7 +48,6 @@ def validate_session_security():
         if not validate_session_fingerprint():
             logger.warning(f"Potential session hijacking detected for user {current_user.username} from IP {request.remote_addr}")
             invalidate_session()
-            from flask import redirect, url_for, flash
             flash('Your session has been invalidated for security reasons. Please log in again.', 'warning')
             return redirect(url_for('auth.login'))
         
@@ -58,7 +55,6 @@ def validate_session_security():
         if is_session_expired():
             logger.info(f"Session expired for user {current_user.username}")
             invalidate_session()
-            from flask import redirect, url_for, flash
             flash('Your session has expired. Please log in again.', 'info')
             return redirect(url_for('auth.login'))
 
@@ -156,13 +152,11 @@ def require_csrf_token(f):
                 logger.warning(f"CSRF validation failed: {str(e)} for IP {request.remote_addr}")
                 
                 if request.is_json:
-                    from flask import jsonify
                     return jsonify({
                         'error': 'CSRF token validation failed',
                         'message': 'Invalid or missing CSRF token'
                     }), 400
                 
-                from flask import abort
                 abort(400)
         
         return f(*args, **kwargs)

@@ -99,7 +99,7 @@ class UnifiedValidationService:
     
     @staticmethod
     def validate_password(password: str, min_length: int = 8) -> Tuple[bool, Optional[str]]:
-        """Validate password (simplified - only checks length since passwords are managed by the panel).
+        """Validate password with basic requirements.
         
         Args:
             password: Password to validate
@@ -114,7 +114,13 @@ class UnifiedValidationService:
         if len(password) < min_length:
             return False, f'Password must be at least {min_length} characters long'
         
-        # Simplified validation - passwords are managed by the panel
+        # Basic complexity - at least one letter and one number
+        has_letter = any(c.isalpha() for c in password)
+        has_number = any(c.isdigit() for c in password)
+        
+        if not (has_letter and has_number):
+            return False, 'Password must contain at least one letter and one number'
+        
         return True, None
     
     @staticmethod
@@ -320,7 +326,7 @@ class UnifiedValidationService:
     
     @staticmethod
     def validate_database_exists(database_id: Any) -> Tuple[bool, Optional[str], Optional[PostgresDatabase]]:
-        """Validate that database exists.
+        """Validate that database exists (simplified).
         
         Args:
             database_id: Database ID to check
@@ -331,33 +337,13 @@ class UnifiedValidationService:
         if not database_id:
             return False, "Database ID is required", None
         
-        try:
-            db_id = int(database_id)
-        except (ValueError, TypeError):
-            return False, "Invalid database ID format", None
-        
-        database = PostgresDatabase.query.get(db_id)
+        database = PostgresDatabase.query.get(database_id)
         if not database:
-            return False, "Selected database does not exist", None
+            return False, "Database not found", None
         
         return True, None, database
     
-    @staticmethod
-    def validate_database_exists_by_name(database_name: str, server_id: int) -> bool:
-        """Check if a database with the given name already exists on the specified server.
-        
-        Args:
-            database_name: Name of the database to check
-            server_id: ID of the server to check on
-            
-        Returns:
-            True if database exists, False otherwise
-        """
-        existing_database = PostgresDatabase.query.filter_by(
-            name=database_name,
-            vps_server_id=server_id
-        ).first()
-        return existing_database is not None
+
     
     @staticmethod
     def validate_user_exists(username: str, database_id: int) -> bool:
@@ -379,7 +365,7 @@ class UnifiedValidationService:
     
     @staticmethod
     def validate_s3_storage_exists(s3_storage_id: Any) -> Tuple[bool, Optional[str], Optional[S3Storage]]:
-        """Validate that S3 storage configuration exists.
+        """Validate that S3 storage configuration exists (simplified).
         
         Args:
             s3_storage_id: S3 storage ID to check
@@ -390,20 +376,15 @@ class UnifiedValidationService:
         if not s3_storage_id:
             return False, "S3 storage ID is required", None
         
-        try:
-            storage_id = int(s3_storage_id)
-        except (ValueError, TypeError):
-            return False, "Invalid S3 storage ID format", None
-        
-        s3_storage = S3Storage.query.get(storage_id)
+        s3_storage = S3Storage.query.get(s3_storage_id)
         if not s3_storage:
-            return False, "Selected S3 storage configuration does not exist", None
+            return False, "S3 storage not found", None
         
         return True, None, s3_storage
     
     @staticmethod
     def validate_backup_job_exists(backup_job_id: Any) -> Tuple[bool, Optional[str], Optional[BackupJob]]:
-        """Validate that backup job exists.
+        """Validate that backup job exists (simplified).
         
         Args:
             backup_job_id: Backup job ID to check
@@ -414,14 +395,9 @@ class UnifiedValidationService:
         if not backup_job_id:
             return False, "Backup job ID is required", None
         
-        try:
-            job_id = int(backup_job_id)
-        except (ValueError, TypeError):
-            return False, "Invalid backup job ID format", None
-        
-        backup_job = BackupJob.query.get(job_id)
+        backup_job = BackupJob.query.get(backup_job_id)
         if not backup_job:
-            return False, "Selected backup job does not exist", None
+            return False, "Backup job not found", None
         
         return True, None, backup_job
     

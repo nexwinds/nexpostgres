@@ -126,13 +126,10 @@ class PermissionManager:
         
         for combo in priority_order:
             combo_perms = cls.PERMISSION_COMBINATIONS[combo]
-            logger.info(f"DEBUG: Comparing with {combo.value}: {combo_perms}")
             if permissions == combo_perms:
-                logger.info(f"DEBUG: Exact match found: {combo.value}")
                 return combo.value, True
         
         # If no exact match, return closest match or custom
-        logger.info("DEBUG: No exact match found, returning custom")
         return "custom", False
     
     @classmethod

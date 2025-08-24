@@ -43,7 +43,11 @@ def add_database():
         return redirect(url_for('databases.add_database'))
     
     # Check if database already exists
-    if UnifiedValidationService.validate_database_exists_by_name(data['name'], int(data['vps_server_id'])):
+    existing_db = PostgresDatabase.query.filter_by(
+        name=data['name'],
+        vps_server_id=int(data['vps_server_id'])
+    ).first()
+    if existing_db:
         flash('A database with this name already exists on the selected server', 'error')
         return redirect(url_for('databases.add_database'))
     
@@ -655,7 +659,11 @@ def import_database():
         return redirect(url_for('databases.import_database'))
     
     # Check if database already exists
-    if UnifiedValidationService.validate_database_exists_by_name(data['name'], int(data['vps_server_id'])):
+    existing_db = PostgresDatabase.query.filter_by(
+        name=data['name'],
+        vps_server_id=int(data['vps_server_id'])
+    ).first()
+    if existing_db:
         flash('A database with this name already exists on the selected server', 'error')
         return redirect(url_for('databases.import_database'))
     

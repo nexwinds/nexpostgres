@@ -520,34 +520,27 @@ class PostgresUserManager:
             ) THEN 't' ELSE 'f' END as delete_priv;
         """
         
-        self.logger.info(f"DEBUG: Executing permissions query for user '{username}' on database '{db_name}'")
-        self.logger.info(f"DEBUG: Query: {query}")
         result = self.system_utils.execute_postgres_sql(query, db_name)
-        
-        self.logger.info(f"DEBUG: Query result - exit_code: {result['exit_code']}, stdout: {result.get('stdout', '')}, stderr: {result.get('stderr', '')}")
         
         if result['exit_code'] == 0 and result['stdout'].strip():
             # Parse the result
             lines = result['stdout'].strip().split('\n')
-            self.logger.info(f"DEBUG: Query output lines: {lines}")
             # PostgreSQL output format: header, separator, data, footer
             # Look for the data line (should contain only 't' and 'f' values, not column names)
             data_line = None
-            for i, line in enumerate(lines):
+            for line in lines:
                 line = line.strip()
                 if ('|' in line and not line.startswith('-') and 
                     'priv' not in line and  # Skip header line with column names
                     ('t' in line or 'f' in line) and
                     not line.startswith('(')):  # Skip footer line
                     data_line = line
-                    self.logger.info(f"DEBUG: Found data line at index {i}: {data_line}")
                     break
             
             if data_line:
                 parts = data_line.split('|')
-                self.logger.info(f"DEBUG: Parsed parts: {parts}")
                 if len(parts) >= 6:
-                    permissions_result = {
+                    return {
                         'connect': parts[0].strip() == 't',
                         'create': parts[1].strip() == 't',
                         'select': parts[2].strip() == 't',
@@ -555,11 +548,8 @@ class PostgresUserManager:
                         'update': parts[4].strip() == 't',
                         'delete': parts[5].strip() == 't'
                     }
-                    self.logger.info(f"DEBUG: Detected individual permissions: {permissions_result}")
-                    return permissions_result
         
         # Default to no permissions if query fails
-        self.logger.warning("DEBUG: Failed to parse permissions, returning default (no permissions)")
         return {
             'connect': False,
             'select': False,

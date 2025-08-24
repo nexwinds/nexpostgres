@@ -15,6 +15,7 @@ class PostgresConfigManager:
         self.logger = logger or logging.getLogger(__name__)
         self._postgresql_conf_path = None
         self._pg_hba_conf_path = None
+    
         self._data_directory = None
     
     def find_postgresql_conf(self) -> Optional[str]:
@@ -53,8 +54,7 @@ class PostgresConfigManager:
             result = self.system_utils.execute_as_postgres_user("psql -t -c 'SHOW config_file;'")
             if result['exit_code'] == 0 and result['stdout'].strip():
                 config_file = result['stdout'].strip()
-                check_result = self.ssh.execute_command(f"sudo test -f {config_file} && echo 'exists'")
-                if 'exists' in check_result['stdout']:
+                if self.ssh.check_file_exists(config_file):
                     self._postgresql_conf_path = config_file
                     self.logger.info(f"Found postgresql.conf via PostgreSQL query: {config_file}")
                     return config_file
@@ -71,15 +71,13 @@ class PostgresConfigManager:
                     for expanded_path in expanded_paths:
                         expanded_path = expanded_path.strip()
                         if expanded_path and os.path.basename(expanded_path) == 'postgresql.conf':
-                            check_result = self.ssh.execute_command(f"sudo test -f {expanded_path} && echo 'exists'")
-                            if 'exists' in check_result['stdout']:
+                            if self.ssh.check_file_exists(expanded_path):
                                 self._postgresql_conf_path = expanded_path
                                 self.logger.info(f"Found postgresql.conf: {expanded_path}")
                                 return expanded_path
             else:
                 # Direct path without wildcards
-                check_result = self.ssh.execute_command(f"sudo test -f {path_pattern} && echo 'exists'")
-                if 'exists' in check_result['stdout']:
+                if self.ssh.check_file_exists(path_pattern):
                     self._postgresql_conf_path = path_pattern
                     self.logger.info(f"Found postgresql.conf: {path_pattern}")
                     return path_pattern
@@ -101,8 +99,7 @@ class PostgresConfigManager:
             result = self.system_utils.execute_as_postgres_user("psql -t -c 'SHOW hba_file;'")
             if result['exit_code'] == 0 and result['stdout'].strip():
                 hba_file = result['stdout'].strip()
-                check_result = self.ssh.execute_command(f"sudo test -f {hba_file} && echo 'exists'")
-                if 'exists' in check_result['stdout']:
+                if self.ssh.check_file_exists(hba_file):
                     self._pg_hba_conf_path = hba_file
                     self.logger.info(f"Found pg_hba.conf via PostgreSQL query: {hba_file}")
                     return hba_file
@@ -114,8 +111,7 @@ class PostgresConfigManager:
         if postgresql_conf:
             conf_dir = os.path.dirname(postgresql_conf)
             hba_path = os.path.join(conf_dir, "pg_hba.conf")
-            check_result = self.ssh.execute_command(f"sudo test -f {hba_path} && echo 'exists'")
-            if 'exists' in check_result['stdout']:
+            if self.ssh.check_file_exists(hba_path):
                 self._pg_hba_conf_path = hba_path
                 self.logger.info(f"Found pg_hba.conf in config directory: {hba_path}")
                 return hba_path
@@ -124,8 +120,7 @@ class PostgresConfigManager:
         data_dir = self.get_data_directory()
         if data_dir:
             hba_path = os.path.join(data_dir, "pg_hba.conf")
-            check_result = self.ssh.execute_command(f"sudo test -f {hba_path} && echo 'exists'")
-            if 'exists' in check_result['stdout']:
+            if self.ssh.check_file_exists(hba_path):
                 self._pg_hba_conf_path = hba_path
                 self.logger.info(f"Found pg_hba.conf in data directory: {hba_path}")
                 return hba_path
@@ -150,15 +145,13 @@ class PostgresConfigManager:
                     for expanded_path in expanded_paths:
                         expanded_path = expanded_path.strip()
                         if expanded_path and os.path.basename(expanded_path) == 'pg_hba.conf':
-                            check_result = self.ssh.execute_command(f"sudo test -f {expanded_path} && echo 'exists'")
-                            if 'exists' in check_result['stdout']:
+                            if self.ssh.check_file_exists(expanded_path):
                                 self._pg_hba_conf_path = expanded_path
                                 self.logger.info(f"Found pg_hba.conf: {expanded_path}")
                                 return expanded_path
             else:
                 # Direct path without wildcards
-                check_result = self.ssh.execute_command(f"sudo test -f {path_pattern} && echo 'exists'")
-                if 'exists' in check_result['stdout']:
+                if self.ssh.check_file_exists(path_pattern):
                     self._pg_hba_conf_path = path_pattern
                     self.logger.info(f"Found pg_hba.conf: {path_pattern}")
                     return path_pattern
@@ -180,8 +173,7 @@ class PostgresConfigManager:
             result = self.system_utils.execute_as_postgres_user("psql -t -c 'SHOW data_directory;'")
             if result['exit_code'] == 0 and result['stdout'].strip():
                 data_dir = result['stdout'].strip()
-                check_result = self.ssh.execute_command(f"sudo test -d {data_dir} && echo 'exists'")
-                if 'exists' in check_result['stdout']:
+                if self.ssh.check_directory_exists(data_dir):
                     self._data_directory = data_dir
                     self.logger.info(f"Found data directory via PostgreSQL query: {data_dir}")
                     return data_dir
@@ -209,15 +201,13 @@ class PostgresConfigManager:
                         expanded_path = expanded_path.strip()
                         if expanded_path:
                             # Check if this looks like a PostgreSQL data directory
-                            check_result = self.ssh.execute_command(f"sudo test -f {expanded_path}/PG_VERSION && echo 'exists'")
-                            if 'exists' in check_result['stdout']:
+                            if self.ssh.check_file_exists(f"{expanded_path}/PG_VERSION"):
                                 self._data_directory = expanded_path
                                 self.logger.info(f"Found data directory: {expanded_path}")
                                 return expanded_path
             else:
                 # Direct path without wildcards
-                check_result = self.ssh.execute_command(f"sudo test -f {path_pattern}/PG_VERSION && echo 'exists'")
-                if 'exists' in check_result['stdout']:
+                if self.ssh.check_file_exists(f"{path_pattern}/PG_VERSION"):
                     self._data_directory = path_pattern
                     self.logger.info(f"Found data directory: {path_pattern}")
                     return path_pattern
@@ -647,10 +637,8 @@ class PostgresConfigManager:
         Returns:
             bool: True if certificates exist and are readable
         """
-        cert_check = self.ssh.execute_command(f"sudo test -f {cert_path} && sudo test -r {cert_path} && echo 'exists'")
-        key_check = self.ssh.execute_command(f"sudo test -f {key_path} && sudo test -r {key_path} && echo 'exists'")
-        
-        return 'exists' in cert_check['stdout'] and 'exists' in key_check['stdout']
+        return (self.ssh.check_file_exists(cert_path) and 
+                self.ssh.check_file_exists(key_path))
     
     def _generate_ssl_certificates(self, cert_path: str, key_path: str) -> Tuple[bool, str]:
         """Generate self-signed SSL certificates for PostgreSQL.

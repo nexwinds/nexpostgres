@@ -1,32 +1,24 @@
-from app.models.database import BackupJob, PostgresDatabase, RestoreLog, S3Storage, db
+from app.models.database import BackupJob, PostgresDatabase, RestoreLog, db
 from app.utils.ssh_manager import SSHManager
 from app.utils.postgres_manager import PostgresManager
 from app.utils.scheduler import schedule_backup_job, execute_manual_backup
 from datetime import datetime, timedelta
 import os
 import re
-import hashlib
-import threading
-from functools import lru_cache
 
 
 class BackupService:
     """Service class for handling backup operations and SSH connections."""
     
-    # In-memory cache for configuration validation results
-    _config_cache = {}
-    _cache_lock = threading.Lock()
-    _cache_ttl = 3600  # 1 hour cache TTL
-    
     @staticmethod
     def create_ssh_connection(server):
-        """Create and test SSH connection to server.
+        """Create SSH connection to server (simplified).
         
         Args:
             server: Server object with connection details
             
         Returns:
-            tuple: (ssh_manager, success_message) or (None, error_message)
+            SSHManager or None
         """
         try:
             ssh = SSHManager(
@@ -36,12 +28,11 @@ class BackupService:
                 ssh_key_content=server.ssh_key_content
             )
             
-            if not ssh.connect():
-                return None, 'Failed to connect to server via SSH'
-            
-            return ssh, 'SSH connection established successfully'
-        except Exception as e:
-            return None, f'SSH connection error: {str(e)}'
+            if ssh.connect():
+                return ssh
+            return None
+        except Exception:
+            return None
     
     @staticmethod
     def create_postgres_manager(ssh):
@@ -55,76 +46,13 @@ class BackupService:
         """
         return PostgresManager(ssh)
     
-    @staticmethod
-    def execute_with_postgres(server, operation_name, operation_func, *args, **kwargs):
-        """Execute operation with PostgreSQL manager and proper cleanup.
-        
-        Args:
-            server: Server object
-            operation_name: Name of operation for error messages
-            operation_func: Function to execute with pg_manager
-            *args, **kwargs: Arguments for operation_func
-            
-        Returns:
-            tuple: (success, message)
-        """
-        ssh = None
-        try:
-            ssh, ssh_message = BackupService.create_ssh_connection(server)
-            if not ssh:
-                return False, ssh_message
-            
-            pg_manager = BackupService.create_postgres_manager(ssh)
-            result = operation_func(pg_manager, *args, **kwargs)
-            
-            return True, result if isinstance(result, str) else 'Operation completed successfully'
-            
-        except Exception as e:
-            return False, f'{operation_name} failed: {str(e)}'
-        finally:
-            if ssh:
-                ssh.disconnect()
+
     
-    @staticmethod
-    def validate_backup_job_data(name, database_id, s3_storage_id, retention_count, backup_job_id=None):
-        """Validate backup job form data with one-to-one relationship enforcement.
-        
-        Args:
-            name: Backup job name
-            database_id: Database ID
-            s3_storage_id: S3 storage configuration ID
-            retention_count: Number of backups to retain
-            backup_job_id: Existing backup job ID (for updates, None for new jobs)
-            
-        Returns:
-            tuple: (is_valid, error_message, database, s3_storage)
-        """
-        from app.utils.unified_validation_service import UnifiedValidationService
-        
-        # Validate database
-        database = PostgresDatabase.query.get(database_id)
-        if not database:
-            return False, 'Selected database does not exist', None, None
-        
-        # Validate one-to-one relationship
-        is_valid, error = UnifiedValidationService.validate_one_to_one_backup_relationship(database_id, backup_job_id)
-        if not is_valid:
-            return False, error, None, None
-        
-        # Validate S3 storage
-        s3_storage = S3Storage.query.get(s3_storage_id)
-        if not s3_storage:
-            return False, 'Selected S3 storage configuration does not exist', None, None
-        
-        # Validate retention count
-        if not retention_count or retention_count < 1:
-            return False, 'Retention count must be at least 1', None, None
-        
-        return True, 'Validation successful', database, s3_storage
+
     
     @staticmethod
     def create_backup_job(name, database_id, cron_expression, s3_storage_id, retention_count):
-        """Create and save backup job.
+        """Create and save backup job with configuration.
         
         Args:
             name: Backup job name
@@ -134,7 +62,7 @@ class BackupService:
             retention_count: Retention count
             
         Returns:
-            BackupJob: Created backup job
+            tuple: (BackupJob or None, success_message or error_message)
         """
         database = PostgresDatabase.query.get(database_id)
         
@@ -150,7 +78,15 @@ class BackupService:
         db.session.add(backup_job)
         db.session.commit()
         
-        return backup_job
+        # Configure backup during creation
+        config_result = BackupService.check_and_configure_backup(backup_job)
+        if not config_result['success']:
+            # Delete the backup job if configuration fails
+            db.session.delete(backup_job)
+            db.session.commit()
+            return None, config_result['message']
+        
+        return backup_job, "Backup job created and configured successfully"
     
     @staticmethod
     def update_backup_job(backup_job, name, database_id, cron_expression, enabled, s3_storage_id, retention_count):
@@ -179,7 +115,7 @@ class BackupService:
     
     @staticmethod
     def check_and_configure_backup(backup_job):
-        """Configure backup system for the given backup job with intelligent caching.
+        """Configure backup system for the given backup job.
         
         Args:
             backup_job: BackupJob object containing all necessary configuration
@@ -187,17 +123,8 @@ class BackupService:
         Returns:
             dict: {'success': bool, 'message': str}
         """
-        # Generate cache key and check for cached result
-        cache_key = BackupService._generate_cache_key(backup_job)
-        cached_result = BackupService._get_cached_result(cache_key)
-        
-        if cached_result:
-            return {'success': True, 'message': 'WAL-G backup system already configured and validated (cached)'}
-        
         def configure_operation(pg_manager):
-            # WAL-G is pre-installed during server provisioning, so skip installation check
-            
-            # Configure WAL-G based on storage type
+            # Configure WAL-G based on storage type (WAL-G assumed pre-installed)
             if backup_job.s3_storage:
                 s3_config = {
                     'bucket': backup_job.s3_storage.bucket,
@@ -220,91 +147,22 @@ class BackupService:
             
             return {'success': True, 'message': 'WAL-G backup system configured successfully'}
         
+        ssh = None
         try:
-            ssh, ssh_message = BackupService.create_ssh_connection(backup_job.database.server)
+            ssh = BackupService.create_ssh_connection(backup_job.database.server)
             if not ssh:
-                return {'success': False, 'message': ssh_message}
+                return {'success': False, 'message': 'Failed to connect to server'}
             
             pg_manager = BackupService.create_postgres_manager(ssh)
-            result = configure_operation(pg_manager)
+            return configure_operation(pg_manager)
             
-            # Cache successful configuration
-            if result.get('success'):
-                BackupService._cache_result(cache_key, result)
-            
-            ssh.disconnect()
-            return result
         except Exception as e:
             return {'success': False, 'message': f'Configuration error: {str(e)}'}
+        finally:
+            if ssh:
+                ssh.disconnect()
     
-    @staticmethod
-    def _generate_cache_key(backup_job):
-        """Generate a unique cache key for the backup job configuration.
-        
-        Args:
-            backup_job: BackupJob object
-            
-        Returns:
-            str: SHA256 hash of configuration for caching
-        """
-        # Use only essential configuration elements for cache key
-        key_elements = [
-            str(backup_job.id),
-            str(backup_job.database_id), 
-            str(backup_job.vps_server_id),
-            str(backup_job.s3_storage_id),
-            str(backup_job.encryption_key or '')
-        ]
-        key_string = '|'.join(key_elements)
-        return hashlib.sha256(key_string.encode()).hexdigest()[:12]
-    
-    @staticmethod
-    def _get_cached_result(cache_key):
-        """Get cached configuration result if valid.
-        
-        Args:
-            cache_key: Configuration cache key
-            
-        Returns:
-            dict or None: Cached result if valid, None otherwise
-        """
-        with BackupService._cache_lock:
-            if cache_key in BackupService._config_cache:
-                cached_data = BackupService._config_cache[cache_key]
-                cache_time = cached_data.get('timestamp', 0)
-                
-                # Check if cache is still valid (within TTL)
-                if (datetime.utcnow().timestamp() - cache_time) < BackupService._cache_ttl:
-                    return cached_data.get('result')
-                else:
-                    # Remove expired cache entry
-                    del BackupService._config_cache[cache_key]
-        
-        return None
-    
-    @staticmethod
-    def _cache_result(cache_key, result):
-        """Cache configuration result.
-        
-        Args:
-            cache_key: Configuration cache key
-            result: Result to cache
-        """
-        with BackupService._cache_lock:
-            BackupService._config_cache[cache_key] = {
-                'result': result,
-                'timestamp': datetime.utcnow().timestamp()
-            }
-            
-            # Clean up old cache entries to prevent memory leaks
-            current_time = datetime.utcnow().timestamp()
-            expired_keys = [
-                key for key, data in BackupService._config_cache.items()
-                if (current_time - data.get('timestamp', 0)) >= BackupService._cache_ttl
-            ]
-            
-            for key in expired_keys:
-                del BackupService._config_cache[key]
+
     
     @staticmethod
     def schedule_backup_job_safe(backup_job):
@@ -512,7 +370,7 @@ class BackupRestoreService:
         """
         ssh = None
         try:
-            ssh, ssh_message = BackupService.create_ssh_connection(backup_job.database.server)
+            ssh = BackupService.create_ssh_connection(backup_job.database.server)
             if not ssh:
                 return None, backup_log_id
             
@@ -565,9 +423,9 @@ class BackupRestoreService:
         ssh = None
         try:
             print(f"DEBUG: Connecting to target server {target_database.server.host}")
-            ssh, ssh_message = BackupService.create_ssh_connection(target_database.server)
+            ssh = BackupService.create_ssh_connection(target_database.server)
             if not ssh:
-                print(f"DEBUG: Failed to connect to target server: {ssh_message}")
+                print("DEBUG: Failed to connect to target server")
                 return None, backup_log_id
             
             print("DEBUG: Connected successfully, creating postgres manager")
@@ -704,7 +562,7 @@ class BackupRestoreService:
         """
         ssh = None
         try:
-            ssh, ssh_message = BackupService.create_ssh_connection(database.server)
+            ssh = BackupService.create_ssh_connection(database.server)
             if not ssh:
                 return False, []
             
@@ -891,15 +749,7 @@ class BackupRestoreService:
                 
                 print(f"DEBUG: Configuring WAL-G for database '{backup_job.database.name}' with data_dir '{data_dir}'")
                 
-                # WAL-G configuration is already handled by check_and_configure_backup
-                # Just verify WAL-G is properly installed and configured
-                if not pg_manager.backup_manager.is_walg_installed():
-                    print("DEBUG: WAL-G not found, installing...")
-                    success, message = pg_manager.backup_manager.install_walg()
-                    if not success:
-                        print(f"DEBUG: WAL-G installation failed: {message}")
-                        return False, f"WAL-G installation failed: {message}"
-                
+                # WAL-G is assumed to be pre-installed during server setup
                 print("DEBUG: WAL-G configured successfully for S3 restore")
                 return True, "WAL-G configured for S3 restore"
             
@@ -938,9 +788,6 @@ class BackupRestoreService:
             return False, f'Error during restore operation: {str(e)}'
 
 
-class S3TestService:
-    """Service class for testing S3 connections."""
-    
     @staticmethod
     def test_s3_connection(bucket, region, access_key, secret_key):
         """Test S3 connection with provided credentials.

@@ -108,27 +108,17 @@ def logout():
     return redirect(url_for('auth.login'))
 
 def validate_password_strength(password):
-    """Validate password strength and return list of errors."""
+    """Validate password strength with basic requirements."""
     errors = []
     
-    if len(password) < 12:
-        errors.append('Password must be at least 12 characters long')
+    if len(password) < 8:
+        errors.append('Password must be at least 8 characters long')
     
-    if not re.search(r'[A-Z]', password):
-        errors.append('Password must contain at least one uppercase letter')
+    # Basic complexity check - at least one letter and one number
+    has_letter = any(c.isalpha() for c in password)
+    has_number = any(c.isdigit() for c in password)
     
-    if not re.search(r'[a-z]', password):
-        errors.append('Password must contain at least one lowercase letter')
-    
-    if not re.search(r'\d', password):
-        errors.append('Password must contain at least one number')
-    
-    if not re.search(r'[!@#$%^&*()_+\-=\[\]{};:"\\|,.<>\/?]', password):
-        errors.append('Password must contain at least one special character')
-    
-    # Check for common weak passwords
-    weak_passwords = ['password123', 'admin123', 'nexpostgres', '123456789']
-    if password.lower() in weak_passwords:
-        errors.append('Password is too common. Please choose a stronger password')
+    if not (has_letter and has_number):
+        errors.append('Password must contain at least one letter and one number')
     
     return errors

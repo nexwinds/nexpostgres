@@ -15,6 +15,39 @@ logger = logging.getLogger(__name__)
 
 app_backup_bp = Blueprint('app_backup', __name__, url_prefix='/app-backup')
 
+def _find_database_path():
+    """Helper function to find the database path.
+    
+    Returns:
+        str: Path to the database file
+    """
+    db_uri = current_app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    
+    if db_uri.startswith('sqlite:///'):
+        app_root = current_app.root_path
+        parent_dir = os.path.dirname(app_root)
+        
+        # Try multiple possible locations
+        paths_to_try = [
+            os.path.join(app_root, db_uri.replace('sqlite:///', '')),  # App root
+            os.path.join(parent_dir, db_uri.replace('sqlite:///', '')),  # Parent directory
+            os.path.join(parent_dir, 'instance', db_uri.replace('sqlite:///', ''))  # Instance folder
+        ]
+        
+        for path in paths_to_try:
+            if os.path.exists(path):
+                logger.info(f"Found database at: {path}")
+                return path
+        
+        # Default to the first path if none found
+        logger.warning(f"Database not found, defaulting to: {paths_to_try[0]}")
+        return paths_to_try[0]
+    else:
+        # If using a different format, default to the instance folder
+        default_path = os.path.join(os.path.dirname(current_app.root_path), 'nexpostgres.sqlite')
+        logger.info(f"Using default path: {default_path}")
+        return default_path
+
 @app_backup_bp.route('/')
 @login_required
 @first_login_required
@@ -53,45 +86,8 @@ def index():
 @first_login_required
 def export_db():
     try:
-        # Get database path from app config
-        db_uri = current_app.config['SQLALCHEMY_DATABASE_URI']
-        logger.info(f"Database URI from config: {db_uri}")
-        
-        # Try to find the actual database file
-        if db_uri.startswith('sqlite:////'):  # Absolute path
-            db_path = db_uri.replace('sqlite:////', '')
-            logger.info(f"Absolute path detected: {db_path}")
-        elif db_uri.startswith('sqlite:///'):  # Relative path
-            # Try different approaches to find the database
-            app_root = current_app.root_path
-            parent_dir = os.path.dirname(app_root)
-            
-            # Option 1: Database in the app directory
-            path1 = os.path.join(app_root, db_uri.replace('sqlite:///', ''))
-            # Option 2: Database in the parent directory
-            path2 = os.path.join(parent_dir, db_uri.replace('sqlite:///', ''))
-            # Option 3: Database in the instance folder
-            path3 = os.path.join(parent_dir, 'instance', db_uri.replace('sqlite:///', ''))
-            
-            logger.info(f"Checking paths: {path1}, {path2}, {path3}")
-            
-            if os.path.exists(path1):
-                db_path = path1
-                logger.info(f"Found database at path1: {db_path}")
-            elif os.path.exists(path2):
-                db_path = path2
-                logger.info(f"Found database at path2: {db_path}")
-            elif os.path.exists(path3):
-                db_path = path3
-                logger.info(f"Found database at path3: {db_path}")
-            else:
-                # Default to the app root path
-                db_path = path1
-                logger.warning(f"Database not found, defaulting to: {db_path}")
-        else:
-            # If using a different format, default to the instance folder
-            db_path = os.path.join(os.path.dirname(current_app.root_path), 'nexpostgres.sqlite')
-            logger.info(f"Using default path: {db_path}")
+        # Get database path
+        db_path = _find_database_path()
         
         # Check if the file exists
         if not os.path.exists(db_path):
@@ -189,45 +185,8 @@ def import_db():
                 flash('Invalid backup file or incompatible database schema', 'danger')
                 return redirect(url_for('app_backup.index'))
             
-            # Get database path from app config
-            db_uri = current_app.config['SQLALCHEMY_DATABASE_URI']
-            logger.info(f"Import - Database URI from config: {db_uri}")
-            
-            # Try to find the actual database file
-            if db_uri.startswith('sqlite:////'):  # Absolute path
-                db_path = db_uri.replace('sqlite:////', '')
-                logger.info(f"Import - Absolute path detected: {db_path}")
-            elif db_uri.startswith('sqlite:///'):  # Relative path
-                # Try different approaches to find the database
-                app_root = current_app.root_path
-                parent_dir = os.path.dirname(app_root)
-                
-                # Option 1: Database in the app directory
-                path1 = os.path.join(app_root, db_uri.replace('sqlite:///', ''))
-                # Option 2: Database in the parent directory
-                path2 = os.path.join(parent_dir, db_uri.replace('sqlite:///', ''))
-                # Option 3: Database in the instance folder
-                path3 = os.path.join(parent_dir, 'instance', db_uri.replace('sqlite:///', ''))
-                
-                logger.info(f"Import - Checking paths: {path1}, {path2}, {path3}")
-                
-                if os.path.exists(path1):
-                    db_path = path1
-                    logger.info(f"Import - Found database at path1: {db_path}")
-                elif os.path.exists(path2):
-                    db_path = path2
-                    logger.info(f"Import - Found database at path2: {db_path}")
-                elif os.path.exists(path3):
-                    db_path = path3
-                    logger.info(f"Import - Found database at path3: {db_path}")
-                else:
-                    # Default to the app root path
-                    db_path = path1
-                    logger.warning(f"Import - Database not found, defaulting to: {db_path}")
-            else:
-                # If using a different format, default to the instance folder
-                db_path = os.path.join(os.path.dirname(current_app.root_path), 'nexpostgres.sqlite')
-                logger.info(f"Import - Using default path: {db_path}")
+            # Get database path
+            db_path = _find_database_path()
             
             # For import, we don't need to check if the file exists
             # If it doesn't exist, we'll create it by copying the imported file

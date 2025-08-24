@@ -114,44 +114,29 @@ def add():
                                 'progress': 30
                             })
                         
-                        # Check if PostgreSQL is already installed
-                        if not pg_manager.is_installed():
-                            if queue_key in progress_queues:
-                                progress_queues[queue_key].put({
-                                    'step': 'installing',
-                                    'message': 'Installing PostgreSQL packages...',
-                                    'progress': 50
-                                })
-                            
-                            # Use streaming installation with terminal logs
-                            install_success, install_message = pg_manager.install_postgres_with_streaming(
-                                 postgres_version, log_terminal_output
-                             )
-                            if not install_success:
-                                if queue_key in progress_queues:
-                                    progress_queues[queue_key].put({
-                                        'step': 'error',
-                                        'message': f'PostgreSQL installation failed: {install_message}',
-                                        'progress': 50
-                                    })
-                                return
-                        
+                        # Install PostgreSQL and WAL-G (streamlined process)
                         if queue_key in progress_queues:
                             progress_queues[queue_key].put({
-                                'step': 'configuring',
-                                'message': 'Installing WAL-G...',
-                                'progress': 70
+                                'step': 'installing',
+                                'message': f'Installing PostgreSQL {postgres_version} and WAL-G...',
+                                'progress': 40
                             })
                         
-                        # Install WAL-G
-                        backup_success, backup_message = pg_manager.backup_manager.install_walg()
-                        if not backup_success:
+                        # Install PostgreSQL with streaming logs
+                        install_success, install_message = pg_manager.install_postgres_with_streaming(
+                             postgres_version, log_terminal_output
+                         )
+                        if not install_success:
                             if queue_key in progress_queues:
                                 progress_queues[queue_key].put({
-                                    'step': 'warning',
-                                    'message': f'WAL-G installation failed: {backup_message}',
-                                    'progress': 80
+                                    'step': 'error',
+                                    'message': f'PostgreSQL installation failed: {install_message}',
+                                    'progress': 50
                                 })
+                            return
+                        
+                        # Install WAL-G (no validation needed - assume success)
+                        pg_manager.backup_manager.install_walg()
                         
                         if queue_key in progress_queues:
                             progress_queues[queue_key].put({

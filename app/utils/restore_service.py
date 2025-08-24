@@ -1,4 +1,3 @@
-import uuid
 import logging
 from datetime import datetime
 from typing import Dict, Optional
@@ -132,7 +131,6 @@ class RestoreService:
             result = ssh_manager.execute_command(restore_command)
             exit_status = result['exit_code']
             output = result['stdout']
-            stderr_output = result['stderr']
             
             if exit_status == 0:
                 # Start PostgreSQL service

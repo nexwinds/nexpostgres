@@ -10,32 +10,14 @@ from flask import flash
 from app.models.database import VpsServer, RestoreLog, db
 from app.utils.ssh_manager import SSHManager
 from app.utils.postgres_manager import PostgresManager
+from app.utils.backup_service import BackupService
 from app.utils.permission_manager import PermissionManager
 
 
 class DatabaseService:
     """Service class for database operations."""
     
-    @staticmethod
-    def create_ssh_connection(server: VpsServer) -> Optional[SSHManager]:
-        """Create and establish SSH connection to server.
-        
-        Args:
-            server: VpsServer instance
-            
-        Returns:
-            SSHManager instance if successful, None otherwise
-        """
-        ssh = SSHManager(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            ssh_key_content=server.ssh_key_content
-        )
-        
-        if ssh.connect():
-            return ssh
-        return None
+
     
     @staticmethod
     def create_postgres_manager(ssh: SSHManager) -> Optional[PostgresManager]:
@@ -69,7 +51,7 @@ class DatabaseService:
         """
         ssh = None
         try:
-            ssh = DatabaseService.create_ssh_connection(server)
+            ssh = BackupService.create_ssh_connection(server)
             if not ssh:
                 return False, f'{operation_name} failed: Could not connect to server via SSH'
             
@@ -159,7 +141,7 @@ class DatabaseService:
         user_permissions = {}
         ssh = None
         try:
-            ssh = DatabaseService.create_ssh_connection(server)
+            ssh = BackupService.create_ssh_connection(server)
             if ssh:
                 pg_manager = DatabaseService.create_postgres_manager(ssh)
                 if pg_manager:
@@ -204,7 +186,7 @@ class DatabaseService:
         user_individual_permissions = {}
         ssh = None
         try:
-            ssh = DatabaseService.create_ssh_connection(server)
+            ssh = BackupService.create_ssh_connection(server)
             if ssh:
                 pg_manager = DatabaseService.create_postgres_manager(ssh)
                 if pg_manager:
@@ -286,7 +268,7 @@ class DatabaseService:
         """
         ssh = None
         try:
-            ssh = DatabaseService.create_ssh_connection(server)
+            ssh = BackupService.create_ssh_connection(server)
             if not ssh:
                 return {
                     'success': False,
