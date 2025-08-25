@@ -33,19 +33,19 @@ class BackupMetadataService:
         try:
             # Connect to server
             ssh = SSHManager(
-                host=backup_job.database.server.host,
-                port=backup_job.database.server.port,
-                username=backup_job.database.server.username,
-                ssh_key_content=backup_job.database.server.ssh_key_content
+                host=backup_job.server.host,
+                port=backup_job.server.port,
+                username=backup_job.server.username,
+                ssh_key_content=backup_job.server.ssh_key_content
             )
             
             if not ssh.connect():
-                logger.error(f"Failed to connect to server {backup_job.database.server.host}")
+                logger.error(f"Failed to connect to server {backup_job.server.host}")
                 return []
                 
             pg_manager = PostgresManager(ssh)
-            logger.info(f"Attempting to list backups for database: {backup_job.database.name}")
-            backups = pg_manager.list_backups(backup_job.database.name)
+            logger.info(f"Attempting to list backups for server: {backup_job.server.name}")
+            backups = pg_manager.list_backups()
             
             logger.info(f"Found {len(backups) if backups else 0} backups from WAL-G")
             if backups:
@@ -229,13 +229,13 @@ class BackupMetadataService:
                 )
                 
                 # List objects in the S3 bucket with WAL-G's postgres prefix
-                prefix = f"postgres/{job.database.name}/"
+                prefix = f"postgres/"
                 response = s3_client.list_objects_v2(
                     Bucket=job.s3_storage.bucket,
                     Prefix=prefix
                 )
                 
-                database_backups = []
+                server_backups = []
                 if 'Contents' in response:
                     for obj in response['Contents']:
                         # Extract backup information from S3 object
@@ -246,15 +246,14 @@ class BackupMetadataService:
                             'backup_name': obj['Key'].split('/')[-1],
                             'job_id': job.id,
                             'job_name': job.name,
-                            'database_name': job.database.name,
                             'server_name': job.server.name,
                             'server_id': job.server.id
                         }
-                        database_backups.append(backup_info)
+                        server_backups.append(backup_info)
                 
                 # Sort backups by last modified date (newest first)
-                database_backups.sort(key=lambda x: x['last_modified'], reverse=True)
-                backup_structure[job.database.name] = database_backups
+                server_backups.sort(key=lambda x: x['last_modified'], reverse=True)
+                backup_structure[job.server.name] = server_backups
                 
             except Exception as e:
                 logger.error(f"Error accessing S3 for job {job.name}: {str(e)}")

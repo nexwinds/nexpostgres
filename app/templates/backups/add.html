@@ -17,31 +17,31 @@
             </div>
             
             <div class="mb-3">
-                <label for="database_id" class="form-label">Database</label>
-                {% if databases %}
-                <select class="form-select" id="database_id" name="database_id" required>
-                    <option value="" selected disabled>Select a database</option>
-                    {% for database in databases %}
-                    <option value="{{ database.id }}">{{ database.name }} on {{ database.server.name }}</option>
+                <label for="server_id" class="form-label">Server</label>
+                {% if servers %}
+                <select class="form-select" id="server_id" name="server_id" required>
+                    <option value="" selected disabled>Select a server</option>
+                    {% for server in servers %}
+                    <option value="{{ server.id }}">{{ server.name }} ({{ server.host }})</option>
                     {% endfor %}
                 </select>
                 <div class="form-text">
                     <i class="fas fa-info-circle text-info me-1"></i>
-                    <strong>Important:</strong> WAL-G supports both cluster-level and single database backups. When partial restore is enabled (default), WAL-G collects metadata that allows restoration of individual databases. The selected database will be the primary target for restoration, though the backup contains all databases in the cluster. Each database can have exactly one backup job.
+                    <strong>Important:</strong> WAL-G performs cluster-level backups that include all databases on the selected server. When partial restore is enabled (default), WAL-G collects metadata that allows restoration of individual databases. Each server can have exactly one backup job.
                 </div>
                 {% else %}
                 <div class="alert alert-warning" role="alert">
                     <i class="fas fa-exclamation-triangle me-2"></i>
-                    <strong>No databases available</strong><br>
-                    All existing databases already have backup jobs. Each database can have only one backup job to ensure simplicity and minimize risk.
+                    <strong>No servers available</strong><br>
+                    All existing servers already have backup jobs. Each server can have only one backup job to ensure simplicity and minimize risk.
                     <hr class="my-2">
                     <small class="text-muted">
-                        To create a backup job for a new database, please 
-                        <a href="{{ url_for('databases.add_database') }}" class="alert-link">create a new database</a> first.
+                        To create a backup job for a new server, please 
+                        <a href="{{ url_for('servers.add_server') }}" class="alert-link">create a new server</a> first.
                     </small>
                 </div>
-                <select class="form-select" id="database_id" name="database_id" required disabled>
-                    <option value="" selected>No databases available</option>
+                <select class="form-select" id="server_id" name="server_id" required disabled>
+                    <option value="" selected>No servers available</option>
                 </select>
                 {% endif %}
             </div>

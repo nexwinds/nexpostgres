@@ -8,7 +8,7 @@ ensuring consistent validation patterns.
 import re
 from typing import List, Tuple, Optional, Dict, Any
 from flask import flash
-from app.models.database import BackupJob, PostgresDatabase, S3Storage
+from app.models.database import BackupJob, PostgresDatabase, S3Storage, VpsServer
 
 
 class UnifiedValidationService:
@@ -381,7 +381,26 @@ class UnifiedValidationService:
             return False, "S3 storage not found", None
         
         return True, None, s3_storage
-    
+
+    @staticmethod
+    def validate_server_exists(server_id: Any) -> Tuple[bool, Optional[str], Optional[VpsServer]]:
+        """Validate that VPS server exists.
+        
+        Args:
+            server_id: Server ID to check
+            
+        Returns:
+            Tuple of (is_valid, error_message, server_object)
+        """
+        if not server_id:
+            return False, "Server ID is required", None
+        
+        server = VpsServer.query.get(server_id)
+        if not server:
+            return False, "Server not found", None
+        
+        return True, None, server
+
     @staticmethod
     def validate_backup_job_exists(backup_job_id: Any) -> Tuple[bool, Optional[str], Optional[BackupJob]]:
         """Validate that backup job exists (simplified).
@@ -401,29 +420,32 @@ class UnifiedValidationService:
         
         return True, None, backup_job
     
+    # Removed deprecated validate_one_to_one_backup_relationship method
+    # Backup jobs are now associated with servers, not individual databases
+
     @staticmethod
-    def validate_one_to_one_backup_relationship(database_id: int, backup_job_id: Optional[int] = None) -> Tuple[bool, Optional[str]]:
-        """Validate one-to-one relationship between database and backup job.
+    def validate_one_to_one_server_backup_relationship(server_id: int, backup_job_id: Optional[int] = None) -> Tuple[bool, Optional[str]]:
+        """Validate one-to-one relationship between server and backup job.
         
         Args:
-            database_id: Database ID to check
+            server_id: Server ID to check
             backup_job_id: Existing backup job ID (for updates, None for new jobs)
             
         Returns:
             Tuple of (is_valid, error_message)
         """
-        # Check if database already has a backup job
-        existing_backup_job = BackupJob.query.filter_by(database_id=database_id).first()
+        # Check if server already has a backup job
+        existing_backup_job = BackupJob.query.filter_by(vps_server_id=server_id).first()
         
         if existing_backup_job:
             # If we're updating an existing backup job, allow it
             if backup_job_id and existing_backup_job.id == backup_job_id:
                 return True, None
-            # Otherwise, this database already has a backup job
-            return False, f"Database already has a backup job ('{existing_backup_job.name}'). Each database can have only one backup job."
+            # Otherwise, this server already has a backup job
+            return False, f"Server already has a backup job ('{existing_backup_job.name}'). Each server can have only one backup job."
         
         return True, None
-    
+
     @staticmethod
     def validate_and_flash_errors(validation_results: List[Tuple[bool, Optional[str]]]) -> bool:
         """Validate multiple fields and flash error messages.
@@ -517,7 +539,7 @@ class UnifiedValidationService:
         validated_data = {}
         
         # Required fields validation
-        required_fields = ['name', 'database_id', 'cron_expression', 's3_storage_id', 'retention_count']
+        required_fields = ['name', 'server_id', 'cron_expression', 's3_storage_id', 'retention_count']
         is_valid, field_errors = cls.validate_required_fields(form_data, required_fields)
         if not is_valid:
             errors.extend(field_errors)
@@ -546,18 +568,18 @@ class UnifiedValidationService:
             else:
                 validated_data['retention_count'] = int(form_data['retention_count'])
         
-        # Database existence validation
-        if form_data.get('database_id'):
-            is_valid, error, database = cls.validate_database_exists(form_data['database_id'])
+        # Server existence validation
+        if form_data.get('server_id'):
+            is_valid, error, server = cls.validate_server_exists(form_data['server_id'])
             if not is_valid:
                 errors.append(error)
             else:
-                validated_data['database'] = database
-                validated_data['database_id'] = database.id
+                validated_data['server'] = server
+                validated_data['server_id'] = server.id
                 
                 # Validate one-to-one relationship (for new backup jobs)
                 backup_job_id = form_data.get('backup_job_id')  # Will be None for new jobs
-                is_valid, error = cls.validate_one_to_one_backup_relationship(database.id, backup_job_id)
+                is_valid, error = cls.validate_one_to_one_server_backup_relationship(server.id, backup_job_id)
                 if not is_valid:
                     errors.append(error)
         

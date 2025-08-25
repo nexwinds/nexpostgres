@@ -51,12 +51,12 @@ class BackupService:
 
     
     @staticmethod
-    def create_backup_job(name, database_id, cron_expression, s3_storage_id, retention_count):
+    def create_backup_job(name, server_id, cron_expression, s3_storage_id, retention_count):
         """Create and save backup job with configuration.
         
         Args:
             name: Backup job name
-            database_id: Database ID
+            server_id: Server ID
             cron_expression: Cron schedule expression
             s3_storage_id: S3 storage ID
             retention_count: Retention count
@@ -64,12 +64,9 @@ class BackupService:
         Returns:
             tuple: (BackupJob or None, success_message or error_message)
         """
-        database = PostgresDatabase.query.get(database_id)
-        
         backup_job = BackupJob(
             name=name,
-            database_id=database_id,
-            vps_server_id=database.vps_server_id,
+            vps_server_id=server_id,
             cron_expression=cron_expression,
             s3_storage_id=s3_storage_id,
             retention_count=retention_count
@@ -89,23 +86,20 @@ class BackupService:
         return backup_job, "Backup job created and configured successfully"
     
     @staticmethod
-    def update_backup_job(backup_job, name, database_id, cron_expression, enabled, s3_storage_id, retention_count):
+    def update_backup_job(backup_job, name, server_id, cron_expression, enabled, s3_storage_id, retention_count):
         """Update existing backup job.
         
         Args:
             backup_job: Existing backup job
             name: New name
-            database_id: New database ID
+            server_id: New server ID
             cron_expression: New cron expression
             enabled: Whether job is enabled
             s3_storage_id: New S3 storage ID
             retention_count: New retention count
         """
-        database = PostgresDatabase.query.get(database_id)
-        
         backup_job.name = name
-        backup_job.database_id = database_id
-        backup_job.vps_server_id = database.vps_server_id
+        backup_job.vps_server_id = server_id
         backup_job.cron_expression = cron_expression
         backup_job.enabled = enabled
         backup_job.s3_storage_id = s3_storage_id
@@ -141,7 +135,7 @@ class BackupService:
                 return {'success': False, 'message': f'Failed to configure WAL-G: {message}'}
             
             # Configure PostgreSQL archiving (required for WAL-G)
-            success, message = pg_manager.configure_postgresql_archiving(backup_job.database.name)
+            success, message = pg_manager.configure_postgresql_archiving()
             if not success:
                 return {'success': False, 'message': f'Failed to configure PostgreSQL archiving: {message}'}
             
@@ -149,7 +143,7 @@ class BackupService:
         
         ssh = None
         try:
-            ssh = BackupService.create_ssh_connection(backup_job.database.server)
+            ssh = BackupService.create_ssh_connection(backup_job.server)
             if not ssh:
                 return {'success': False, 'message': 'Failed to connect to server'}
             
@@ -334,7 +328,7 @@ class BackupRestoreService:
         
         # Set database ID from backup job if not set
         if not database_id:
-            database_id = backup_job.database_id
+            database_id = backup_job.vps_server_id
         
         # Validate database
         database = PostgresDatabase.query.get(database_id)
@@ -370,12 +364,12 @@ class BackupRestoreService:
         """
         ssh = None
         try:
-            ssh = BackupService.create_ssh_connection(backup_job.database.server)
+            ssh = BackupService.create_ssh_connection(backup_job.server)
             if not ssh:
                 return None, backup_log_id
             
             pg_manager = BackupService.create_postgres_manager(ssh)
-            backups = pg_manager.list_backups(backup_job.database.name)
+            backups = pg_manager.list_backups()
             
             if not backups:
                 return None, backup_log_id
@@ -432,13 +426,13 @@ class BackupRestoreService:
             pg_manager = BackupService.create_postgres_manager(ssh)
             
             # Use the original database name from backup_job for listing backups
-            print(f"DEBUG: Listing backups for database '{backup_job.database.name}' on target server")
-            backups = pg_manager.list_backups(backup_job.database.name)
+            print(f"DEBUG: Listing backups on target server")
+            backups = pg_manager.list_backups()
             
             print(f"DEBUG: Found {len(backups) if backups else 0} backups: {backups}")
             
             if not backups:
-                print(f"DEBUG: No backups found for database '{backup_job.database.name}'")
+                print(f"DEBUG: No backups found")
                 return None, backup_log_id
             
             # If backup_log_id is provided, find corresponding backup
@@ -661,9 +655,10 @@ class BackupRestoreService:
             tuple: (success, message)
         """
         def restore_operation(pg_manager):
-            # WAL-G doesn't use stanzas, just restore directly
+            # Use database-specific restore for individual database operations
             success, log_output = pg_manager.restore_database(
-                backup_name
+                backup_name,
+                restore_type='database'
             )
             
             # Update restore log
@@ -738,12 +733,12 @@ class BackupRestoreService:
             use_recovery_time = validated_data.get('use_recovery_time', False)
             recovery_time = validated_data.get('recovery_time')
             
-            print(f"DEBUG: Restore operation - Source server ID: {backup_job.database.server.id}, Target server ID: {database.server.id}")
-            print(f"DEBUG: Source server host: {backup_job.database.server.host}, Target server host: {database.server.host}")
+            print(f"DEBUG: Restore operation - Source server ID: {backup_job.server.id}, Target server ID: {database.server.id}")
+            print(f"DEBUG: Source server host: {backup_job.server.host}, Target server host: {database.server.host}")
             print(f"DEBUG: Target database: {database.name} on server: {database.server.name}")
             print(f"DEBUG: Target server SSH details - Host: {database.server.host}, Port: {database.server.port}, Username: {database.server.username}")
             print(f"DEBUG: Target server SSH key length: {len(database.server.ssh_key_content) if database.server.ssh_key_content else 0}")
-            print(f"DEBUG: Source database: {backup_job.database.name} on server: {backup_job.database.server.name}")
+            print(f"DEBUG: Source server: {backup_job.server.name}")
             
             # Always configure WAL-G on target server for S3 restore (disaster recovery scenario)
             # This ensures we can restore from S3 even if the original server is down
@@ -766,7 +761,7 @@ class BackupRestoreService:
                 if not data_dir:
                     return False, "Could not determine PostgreSQL data directory"
                 
-                print(f"DEBUG: Configuring WAL-G for database '{backup_job.database.name}' with data_dir '{data_dir}'")
+                print(f"DEBUG: Configuring WAL-G with data_dir '{data_dir}'")
                 
                 # WAL-G is assumed to be pre-installed during server setup
                 print("DEBUG: WAL-G configured successfully for S3 restore")

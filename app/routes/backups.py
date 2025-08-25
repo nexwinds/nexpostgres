@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
-from app.models.database import BackupJob, RestoreLog, PostgresDatabase, S3Storage
+from app.models.database import BackupJob, RestoreLog, PostgresDatabase, S3Storage, VpsServer
 from app.models.database import db
 from app.utils.backup_service import BackupService, BackupRestoreService
 from app.utils.unified_validation_service import UnifiedValidationService
@@ -51,20 +51,20 @@ def add_backup():
         
         if not is_valid:
             UnifiedValidationService.flash_validation_errors(errors)
-            # Only show databases without backup jobs
-            databases = PostgresDatabase.query.filter(~PostgresDatabase.id.in_(
-                db.session.query(BackupJob.database_id).distinct()
+            # Only show servers without backup jobs
+            servers = VpsServer.query.filter(~VpsServer.id.in_(
+                db.session.query(BackupJob.vps_server_id).distinct()
             )).all()
             s3_storages = S3Storage.query.all()
             return render_template('backups/add.html', 
-                                 databases=databases, 
+                                 servers=servers, 
                                  s3_storages=s3_storages)
         
         # Create and configure backup job
         backup_service = BackupService()
         backup_job, message = backup_service.create_backup_job(
             name=validated_data['name'],
-            database_id=validated_data['database_id'],
+            server_id=validated_data['server_id'],
             cron_expression=validated_data['cron_expression'],
             s3_storage_id=validated_data['s3_storage_id'],
             retention_count=validated_data['retention_count']
@@ -72,12 +72,12 @@ def add_backup():
         
         if not backup_job:
             flash(message, 'danger')
-            databases = PostgresDatabase.query.filter(~PostgresDatabase.id.in_(
-                db.session.query(BackupJob.database_id).distinct()
+            servers = VpsServer.query.filter(~VpsServer.id.in_(
+                db.session.query(BackupJob.vps_server_id).distinct()
             )).all()
             s3_storages = S3Storage.query.all()
             return render_template('backups/add.html', 
-                                 databases=databases, 
+                                 servers=servers, 
                                  s3_storages=s3_storages)
         
         if backup_job:
@@ -96,13 +96,13 @@ def add_backup():
         else:
             flash(message, 'danger')
     
-    # Only show databases without backup jobs for new backup creation
-    databases = PostgresDatabase.query.filter(~PostgresDatabase.id.in_(
-        db.session.query(BackupJob.database_id).distinct()
+    # Only show servers without backup jobs for new backup creation
+    servers = VpsServer.query.filter(~VpsServer.id.in_(
+        db.session.query(BackupJob.vps_server_id).distinct()
     )).all()
     s3_storages = S3Storage.query.all()
     return render_template('backups/add.html', 
-                         databases=databases, 
+                         servers=servers, 
                          s3_storages=s3_storages)
 
 
@@ -125,19 +125,19 @@ def edit_backup(backup_job_id):
         
         if not is_valid:
             UnifiedValidationService.flash_validation_errors(errors)
-            # For editing: show current database + databases without backup jobs
-            databases_without_backup = PostgresDatabase.query.filter(~PostgresDatabase.id.in_(
-                db.session.query(BackupJob.database_id).distinct()
+            # For editing: show current server + servers without backup jobs
+            servers_without_backup = VpsServer.query.filter(~VpsServer.id.in_(
+                db.session.query(BackupJob.vps_server_id).distinct()
             )).all()
-            # Ensure current database is included
-            if backup_job.database not in databases_without_backup:
-                databases = [backup_job.database] + databases_without_backup
+            # Ensure current server is included
+            if backup_job.server not in servers_without_backup:
+                servers = [backup_job.server] + servers_without_backup
             else:
-                databases = databases_without_backup
+                servers = servers_without_backup
             s3_storages = S3Storage.query.all()
             return render_template('backups/edit.html', 
                                  backup_job=backup_job,
-                                 databases=databases, 
+                                 servers=servers, 
                                  s3_storages=s3_storages)
         
         # Update backup job
@@ -145,7 +145,7 @@ def edit_backup(backup_job_id):
         backup_service.update_backup_job(
             backup_job=backup_job,
             name=validated_data['name'],
-            database_id=validated_data['database_id'],
+            server_id=validated_data['server_id'],
             cron_expression=validated_data['cron_expression'],
             enabled=validated_data.get('enabled', True),
             s3_storage_id=validated_data['s3_storage_id'],
@@ -159,19 +159,19 @@ def edit_backup(backup_job_id):
         else:
             flash(message, 'danger')
     
-    # For editing: show current database + databases without backup jobs
-    databases_without_backup = PostgresDatabase.query.filter(~PostgresDatabase.id.in_(
-        db.session.query(BackupJob.database_id).distinct()
+    # For editing: show current server + servers without backup jobs
+    servers_without_backup = VpsServer.query.filter(~VpsServer.id.in_(
+        db.session.query(BackupJob.vps_server_id).distinct()
     )).all()
-    # Ensure current database is included
-    if backup_job.database not in databases_without_backup:
-        databases = [backup_job.database] + databases_without_backup
+    # Ensure current server is included
+    if backup_job.server not in servers_without_backup:
+        servers = [backup_job.server] + servers_without_backup
     else:
-        databases = databases_without_backup
+        servers = servers_without_backup
     s3_storages = S3Storage.query.all()
     return render_template('backups/edit.html', 
                          backup_job=backup_job,
-                         databases=databases, 
+                         servers=servers, 
                          s3_storages=s3_storages)
 
 

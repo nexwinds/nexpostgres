@@ -374,33 +374,42 @@ class RestoreService:
             
             env_setup = ' '.join([f'{k}={v}' for k, v in walg_env.items()])
             
-            # Try partial restore first (database-specific)
-            partial_restore_command = f"{env_setup} wal-g backup-fetch {walg_env['PGDATA']} {fetch_backup_name} --restore-only={database_name} --reverse-unpack --skip-redundant-tars"
-            restore_log.log_output += f"Attempting partial restore for database '{database_name}'...\n"
+            # Use WAL-G database-specific restore functionality
+            pg_manager = PostgresManager(ssh_manager)
+            
+            # Try database-specific restore first
+            restore_log.log_output += f"Attempting database-specific restore for '{database_name}'...\n"
             db.session.commit()
             
-            result = ssh_manager.execute_command(partial_restore_command)
+            success, restore_message = pg_manager.restore_database(
+                database_name, 
+                fetch_backup_name, 
+                restore_type='database'
+            )
             
-            if result['exit_code'] != 0:
-                # Partial restore failed, try full cluster restore as fallback
-                restore_log.log_output += f"Partial restore failed: {result['stderr']}\n"
-                restore_log.log_output += "Attempting full cluster restore as fallback...\n"
+            if not success:
+                # Database restore failed, try cluster restore as fallback
+                restore_log.log_output += f"Database restore failed: {restore_message}\n"
+                restore_log.log_output += "Attempting cluster restore as fallback...\n"
                 db.session.commit()
                 
-                full_restore_command = f"{env_setup} wal-g backup-fetch {walg_env['PGDATA']} {fetch_backup_name}"
-                result = ssh_manager.execute_command(full_restore_command)
+                success, restore_message = pg_manager.restore_database(
+                    database_name, 
+                    fetch_backup_name, 
+                    restore_type='cluster'
+                )
                 
-                if result['exit_code'] != 0:
-                    error_msg = f"Both partial and full WAL-G backup-fetch failed: {result['stderr']}"
+                if not success:
+                    error_msg = f"Both database and cluster restore failed: {restore_message}"
                     restore_log.log_output += f"ERROR: {error_msg}\n"
                     db.session.commit()
                     raise Exception(error_msg)
                 
-                restore_log.log_output += "Full cluster restore completed successfully\n"
+                restore_log.log_output += "Cluster restore completed successfully\n"
             else:
-                restore_log.log_output += f"Partial restore for database '{database_name}' completed successfully\n"
+                restore_log.log_output += f"Database restore for '{database_name}' completed successfully\n"
             
-            restore_log.log_output += f"Command output: {result['stdout']}\n"
+            restore_log.log_output += f"Restore output: {restore_message}\n"
             db.session.commit()
             
             # Step 6: Start PostgreSQL service and verify recovery

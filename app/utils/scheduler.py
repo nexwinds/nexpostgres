@@ -98,9 +98,9 @@ def execute_backup(job_id, manual=False):
         backup_type = "manual" if manual else "scheduled"
         logger.info(f"Executing {backup_type} backup job {job.id}...")
                 
-        # Execute the backup (always incremental) with partial restore metadata collection enabled
-        success, log_output = pg_manager.perform_backup(job.database.name)
-        message = "Backup completed successfully" if success else f"Backup failed: {log_output}"
+        # Execute database-specific backup (optimized for individual database operations)
+        success, log_output = pg_manager.perform_backup(job.database.name, backup_type='database')
+        message = "Database backup completed successfully" if success else f"Database backup failed: {log_output}"
         logger.info(f"Backup job {job.name} (ID: {job.id}): {message}")
         
         # Log backup completion (WAL-G handles metadata storage)

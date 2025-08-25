@@ -159,18 +159,22 @@ class WalgBackupManager:
         if endpoint:
             env_vars.append(f"export AWS_ENDPOINT={endpoint}")
         
-        # Add WAL-G specific settings only if explicitly configured (no defaults)
+        # Add optimized WAL-G specific settings
         walg_settings = PostgresConstants.WALG_S3_ENV
         
-        # Only add settings that are explicitly configured
-        if walg_settings.get('WALG_COMPRESSION_METHOD'):
-            env_vars.append(f"export WALG_COMPRESSION_METHOD={walg_settings['WALG_COMPRESSION_METHOD']}")
-        
-        if walg_settings.get('WALG_DELTA_MAX_STEPS'):
-            env_vars.append(f"export WALG_DELTA_MAX_STEPS={walg_settings['WALG_DELTA_MAX_STEPS']}")
-        
-        if walg_settings.get('WALG_TAR_SIZE_THRESHOLD'):
-            env_vars.append(f"export WALG_TAR_SIZE_THRESHOLD={walg_settings['WALG_TAR_SIZE_THRESHOLD']}")
+        # Performance and reliability optimizations
+        env_vars.extend([
+            f"export WALG_COMPRESSION_METHOD={walg_settings['WALG_COMPRESSION_METHOD']}",
+            f"export WALG_DELTA_MAX_STEPS={walg_settings['WALG_DELTA_MAX_STEPS']}",
+            f"export WALG_TAR_SIZE_THRESHOLD={walg_settings['WALG_TAR_SIZE_THRESHOLD']}",
+            f"export WALG_UPLOAD_CONCURRENCY={walg_settings['WALG_UPLOAD_CONCURRENCY']}",
+            f"export WALG_DOWNLOAD_CONCURRENCY={walg_settings['WALG_DOWNLOAD_CONCURRENCY']}",
+            f"export WALG_DOWNLOAD_FILE_RETRIES={walg_settings['WALG_DOWNLOAD_FILE_RETRIES']}",
+            f"export WALG_UPLOAD_DISK_CONCURRENCY={walg_settings['WALG_UPLOAD_DISK_CONCURRENCY']}",
+            f"export WALG_ALIVE_CHECK_INTERVAL={walg_settings['WALG_ALIVE_CHECK_INTERVAL']}",
+            f"export WALG_DELTA_ORIGIN={walg_settings['WALG_DELTA_ORIGIN']}",
+            f"export WALG_UPLOAD_WAL_METADATA={walg_settings['WALG_UPLOAD_WAL_METADATA']}"
+        ])
         
         env_content = '\n'.join(env_vars) + '\n'
         
@@ -309,15 +313,23 @@ class WalgBackupManager:
             error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
             return False, f"Failed to delete backup '{backup_name}': {error_msg}"
     
-    def perform_backup(self, db_name: str) -> Tuple[bool, str]:
-        """Perform a backup using WAL-G.
+    def perform_backup(self, db_name: str, backup_type: str = 'database') -> Tuple[bool, str]:
+        """Perform a backup using WAL-G with support for both cluster and database-specific backups.
         
         Args:
-            db_name: Database name (used for logging only - WAL-G backs up entire cluster)
+            db_name: Database name
+            backup_type: 'cluster' for full cluster backup, 'database' for individual database backup
             
         Returns:
             tuple: (success, message)
         """
+        if backup_type == 'cluster':
+            return self._perform_cluster_backup(db_name)
+        else:
+            return self._perform_database_backup(db_name)
+    
+    def _perform_cluster_backup(self, db_name: str) -> Tuple[bool, str]:
+        """Perform a full cluster backup using WAL-G."""
         self.logger.info(f"Performing WAL-G cluster backup (triggered by database '{db_name}')...")
         
         # Get data directory
@@ -329,7 +341,6 @@ class WalgBackupManager:
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
         
         # WAL-G performs cluster-level backup of entire data directory
-        # This includes ALL databases in the PostgreSQL cluster, not just the specified db_name
         backup_cmd = f"bash -c 'source {env_file} && wal-g backup-push {data_dir}'"
         self.logger.info("WAL-G full cluster backup")
         
@@ -341,44 +352,80 @@ class WalgBackupManager:
         error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
         return False, f"WAL-G cluster backup failed: {error_msg}"
     
-    def list_backups(self, db_name: str) -> List[Dict]:
-        """List available backups using WAL-G.
+    def _perform_database_backup(self, db_name: str) -> Tuple[bool, str]:
+        """Perform a database-specific backup using pg_dump (WAL-G only supports cluster backups)."""
+        self.logger.info(f"Performing database backup for '{db_name}' using pg_dump...")
+        
+        # WAL-G only supports cluster-level backups with backup-push
+        # For individual database backups, we use standard pg_dump
+        # This creates a logical backup that can be restored independently
+        
+        # Create backup directory if it doesn't exist
+        backup_dir = "/var/lib/postgresql/backups"
+        self.ssh.execute_command(f"mkdir -p {backup_dir}")
+        
+        # Generate timestamp for backup file
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = f"{backup_dir}/{db_name}_{timestamp}.sql"
+        
+        # Use pg_dump for database-specific backup
+        backup_cmd = f"pg_dump -h localhost -U postgres -d {db_name} -f {backup_file}"
+        
+        result = self.system_utils.execute_as_postgres_user(backup_cmd)
+        
+        if result['exit_code'] == 0:
+            return True, f"Database backup for '{db_name}' completed successfully: {backup_file}"
+        
+        error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
+        return False, f"Database backup for '{db_name}' failed: {error_msg}"
+    
+    def list_backups(self, db_name: str, backup_type: str = 'all') -> List[Dict]:
+        """List available backups using WAL-G with support for both cluster and database-specific backups.
         
         Args:
             db_name: Database name
+            backup_type: 'cluster', 'database', or 'all' to list specific backup types
             
         Returns:
             list: List of backup information dictionaries
         """
+        backups = []
+        
+        # List cluster backups if requested
+        if backup_type in ['cluster', 'all']:
+            cluster_backups = self._list_cluster_backups()
+            backups.extend(cluster_backups)
+        
+        # List database-specific backups if requested
+        if backup_type in ['database', 'all']:
+            database_backups = self._list_database_backups(db_name)
+            backups.extend(database_backups)
+        
+        return backups
+    
+    def _list_cluster_backups(self) -> List[Dict]:
+        """List cluster backups using WAL-G backup-list."""
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
         
         command = f"bash -c 'source {env_file} && wal-g backup-list --json --detail'"
-        self.logger.info(f"[WALGBackupManager] Executing WAL-G command: {command}")
+        self.logger.info(f"[WALGBackupManager] Executing WAL-G cluster backup list: {command}")
         result = self.system_utils.execute_as_postgres_user(command)
-        
-        self.logger.info(f"[WALGBackupManager] WAL-G command exit code: {result['exit_code']}")
-        if result['stdout']:
-            self.logger.info(f"[WALGBackupManager] WAL-G stdout: {result['stdout'][:1000]}...")  # First 1000 chars for debugging
-        if result['stderr']:
-            self.logger.warning(f"[WALGBackupManager] WAL-G stderr: {result['stderr']}")
         
         backups = []
         if result['exit_code'] == 0 and result['stdout'].strip():
             try:
-                self.logger.info("[WALGBackupManager] Parsing JSON output...")
                 backup_data = json.loads(result['stdout'])
-                self.logger.info(f"[WALGBackupManager] Parsed {len(backup_data)} backups from WAL-G")
+                self.logger.info(f"[WALGBackupManager] Parsed {len(backup_data)} cluster backups from WAL-G")
                 
-                for i, backup in enumerate(backup_data):
-                    self.logger.info(f"[WALGBackupManager] Processing backup {i+1}: {backup.get('backup_name', 'unknown')}")
-                    # Map WAL-G backup fields according to official documentation
-                    # WAL-G --json --detail provides: backup_name, time, uncompressed_size, compressed_size, start_time, finish_time, etc.
+                for backup in backup_data:
                     backup_info = {
                         'name': backup.get('backup_name', ''),
-                        'type': 'full' if backup.get('is_permanent', False) else 'delta',
+                        'type': 'cluster',
+                        'backup_method': 'full' if backup.get('is_permanent', False) else 'delta',
                         'timestamp': backup.get('time', ''),
-                        'size': backup.get('uncompressed_size', 0),  # Primary size field
-                        'compressed_size': backup.get('compressed_size', 0),  # Additional size info
+                        'size': backup.get('uncompressed_size', 0),
+                        'compressed_size': backup.get('compressed_size', 0),
                         'is_permanent': backup.get('is_permanent', False),
                         'wal_file_name': backup.get('wal_file_name', ''),
                         'start_time': backup.get('start_time', ''),
@@ -388,28 +435,84 @@ class WalgBackupManager:
                         'pg_version': backup.get('pg_version', ''),
                         'start_lsn': backup.get('start_lsn', ''),
                         'finish_lsn': backup.get('finish_lsn', ''),
-                        'info': backup  # Keep full backup info for debugging
+                        'info': backup
                     }
                     backups.append(backup_info)
-                    self.logger.info(f"[WALGBackupManager] Added backup info: {backup_info['name']} at {backup_info['timestamp']}")
-            except (json.JSONDecodeError, KeyError) as e:
-                self.logger.error(f"[WALGBackupManager] Failed to parse backup info: {str(e)}")
-        else:
-            self.logger.warning("[WALGBackupManager] WAL-G command failed or returned empty output")
+                    
+            except json.JSONDecodeError as e:
+                self.logger.error(f"[WALGBackupManager] Failed to parse cluster backup JSON: {e}")
         
-        self.logger.info(f"[WALGBackupManager] Returning {len(backups)} backups")
         return backups
     
-    def restore_database(self, db_name: str, backup_name: str = None) -> Tuple[bool, str]:
-        """Restore a database from backup using WAL-G.
+    def _list_database_backups(self, db_name: str) -> List[Dict]:
+        """List database-specific backups from filesystem (pg_dump files)."""
+        backup_dir = "/var/lib/postgresql/backups"
+        
+        # List backup files for the specific database
+        command = f"ls -la {backup_dir}/{db_name}_*.sql 2>/dev/null || echo 'No backups found'"
+        self.logger.info(f"[WALGBackupManager] Listing database backup files: {command}")
+        result = self.system_utils.execute_as_postgres_user(command)
+        
+        backups = []
+        if result['exit_code'] == 0 and result['stdout'].strip() and 'No backups found' not in result['stdout']:
+            lines = result['stdout'].strip().split('\n')
+            
+            for line in lines:
+                if line.strip() and f'{db_name}_' in line and '.sql' in line:
+                    parts = line.split()
+                    if len(parts) >= 9:
+                        filename = parts[-1]
+                        size = parts[4]
+                        date_str = f"{parts[5]} {parts[6]} {parts[7]}"
+                        
+                        # Extract timestamp from filename
+                        try:
+                            timestamp_part = filename.split('_')[1].replace('.sql', '')
+                            import datetime
+                            timestamp = datetime.datetime.strptime(timestamp_part, '%Y%m%d_%H%M%S')
+                            timestamp_str = timestamp.strftime('%Y-%m-%d %H:%M:%S')
+                        except:
+                            timestamp_str = date_str
+                        
+                        backup_info = {
+                            'name': filename,
+                            'type': 'database',
+                            'backup_method': 'logical',
+                            'database_name': db_name,
+                            'timestamp': timestamp_str,
+                            'size': size,
+                            'compressed_size': 0,
+                            'start_time': timestamp_str,
+                            'finish_time': timestamp_str,
+                            'hostname': 'localhost',
+                            'pg_version': '',
+                            'file_path': f"{backup_dir}/{filename}",
+                            'info': {'file_path': f"{backup_dir}/{filename}", 'size': size}
+                        }
+                        backups.append(backup_info)
+                        
+            self.logger.info(f"[WALGBackupManager] Found {len(backups)} database backups for {db_name}")
+        
+        return backups
+    
+    def restore_database(self, db_name: str, backup_name: str = None, restore_type: str = 'database') -> Tuple[bool, str]:
+        """Restore a database from backup using WAL-G with support for both cluster and database-specific restores.
         
         Args:
-            db_name: Database name (for logging only - WAL-G restores full cluster)
+            db_name: Database name
             backup_name: Specific backup to restore (LATEST if None)
+            restore_type: 'cluster' for full cluster restore, 'database' for individual database restore
             
         Returns:
             tuple: (success, message)
         """
+        if restore_type == 'cluster':
+            return self._restore_cluster(db_name, backup_name)
+        else:
+            return self._restore_database(db_name, backup_name)
+    
+    def _restore_cluster(self, db_name: str, backup_name: str = None) -> Tuple[bool, str]:
+        """Restore full cluster from backup using WAL-G."""
         self.logger.info(f"Restoring database {db_name} using WAL-G (full cluster restore)...")
         
         # Stop PostgreSQL
@@ -431,7 +534,7 @@ class WalgBackupManager:
         # Build restore command using bash to handle 'source' command
         backup_target = backup_name or 'LATEST'
         
-        # WAL-G always performs full cluster restore
+        # WAL-G performs full cluster restore
         restore_cmd = f"bash -c 'source {env_file} && wal-g backup-fetch {data_dir} {backup_target}'"
         self.logger.info("Using WAL-G full cluster restore")
         
@@ -450,6 +553,56 @@ class WalgBackupManager:
             return False, f"Restore completed but failed to start PostgreSQL: {message}"
         
         return True, f"Database {db_name} restored successfully using full cluster restore"
+    
+    def _restore_database(self, db_name: str, backup_name: str = None) -> Tuple[bool, str]:
+        """Restore individual database from pg_dump backup file."""
+        self.logger.info(f"Restoring database {db_name} from pg_dump backup...")
+        
+        backup_dir = "/var/lib/postgresql/backups"
+        
+        # Find the backup file to restore
+        if backup_name:
+            backup_file = f"{backup_dir}/{backup_name}"
+        else:
+            # Find the latest backup file for this database
+            list_cmd = f"ls -t {backup_dir}/{db_name}_*.sql 2>/dev/null | head -1"
+            result = self.system_utils.execute_as_postgres_user(list_cmd)
+            
+            if result['exit_code'] != 0 or not result['stdout'].strip():
+                return False, f"No backup files found for database {db_name}"
+            
+            backup_file = result['stdout'].strip()
+        
+        # Check if backup file exists
+        check_cmd = f"test -f {backup_file}"
+        result = self.system_utils.execute_as_postgres_user(check_cmd)
+        
+        if result['exit_code'] != 0:
+            return False, f"Backup file not found: {backup_file}"
+        
+        # Drop and recreate the database to ensure clean restore
+        drop_cmd = f"dropdb -h localhost -U postgres --if-exists {db_name}"
+        self.system_utils.execute_as_postgres_user(drop_cmd)
+        
+        create_cmd = f"createdb -h localhost -U postgres {db_name}"
+        result = self.system_utils.execute_as_postgres_user(create_cmd)
+        
+        if result['exit_code'] != 0:
+            error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
+            return False, f"Failed to create database {db_name}: {error_msg}"
+        
+        # Restore from backup file using psql
+        restore_cmd = f"psql -h localhost -U postgres -d {db_name} -f {backup_file}"
+        self.logger.info(f"Restoring from backup file: {backup_file}")
+        
+        result = self.system_utils.execute_as_postgres_user(restore_cmd)
+        
+        if result['exit_code'] != 0:
+            error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
+            self.logger.error(f"Database restore command failed with exit code {result['exit_code']}: {error_msg}")
+            return False, f"Database restore failed: {error_msg}"
+        
+        return True, f"Database {db_name} restored successfully from {backup_file}"
     
     def cleanup_old_backups(self, db_name: str, retention_count: int = None) -> Tuple[bool, str]:
         """Clean up old backups using WAL-G retention policy.

@@ -590,9 +590,17 @@ class PostgresManager:
         """Delete a backup."""
         return self.backup_manager.delete_backup(backup_name)
     
-    def perform_backup(self, db_name: str) -> Tuple[bool, str]:
-        """Perform a backup."""
-        return self.backup_manager.perform_backup(db_name)
+    def perform_backup(self, db_name: str, backup_type: str = 'database') -> Tuple[bool, str]:
+        """Perform a backup.
+        
+        Args:
+            db_name: Database name
+            backup_type: 'cluster' for full cluster backup, 'database' for individual database backup
+            
+        Returns:
+            tuple: (success, message)
+        """
+        return self.backup_manager.perform_backup(db_name, backup_type)
     
     def restore_database(self, db_name: str, backup_label: str = None) -> Tuple[bool, str]:
         """Restore a database from backup."""

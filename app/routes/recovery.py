@@ -139,8 +139,8 @@ def initiate_recovery():
         backup_job = None
         
         if database:
-            # Database exists, try to find backup job
-            backup_job = BackupJob.query.filter_by(database_id=database.id).first()
+            # Database exists, try to find backup job for its server
+            backup_job = BackupJob.query.filter_by(vps_server_id=database.vps_server_id).first()
         else:
             # Database doesn't exist - this is a disaster recovery scenario
             # We'll create a temporary database entry for the recovery process

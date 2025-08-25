@@ -41,35 +41,39 @@ class VpsServer(BaseModel):
     
     # Relationships
     databases = db.relationship('PostgresDatabase', backref='server', lazy=True, cascade="all, delete-orphan")
-    backup_jobs = db.relationship('BackupJob', backref='server', lazy=True, cascade="all, delete-orphan")
+    backup_job = db.relationship('BackupJob', backref='server', lazy=True, cascade="all, delete-orphan", uselist=False)  # One-to-one relationship
     
     def __repr__(self):
         return f'<VpsServer {self.name}>'
     
     @property
+    def has_backup_job(self):
+        """Check if this server has an associated backup job."""
+        return self.backup_job is not None
+    
+    @property
     def databases_without_backup(self):
-        """Get databases on this server that don't have backup jobs."""
-        return [db for db in self.databases if not db.has_backup_job]
+        """Get databases on this server (backup jobs are now server-level)."""
+        return self.databases if not self.has_backup_job else []
     
     @property
     def databases_with_backup(self):
-        """Get databases on this server that have backup jobs."""
-        return [db for db in self.databases if db.has_backup_job]
+        """Get databases on this server (backup jobs are now server-level)."""
+        return self.databases if self.has_backup_job else []
 
 class PostgresDatabase(BaseModel):
     name = db.Column(db.String(80), nullable=False)
     vps_server_id = db.Column(db.Integer, db.ForeignKey('vps_server.id', ondelete='CASCADE'), nullable=False)
     size = db.Column(db.String(20))
     
-    # Relationships - enforcing one-to-one with backup job
-    backup_job = db.relationship('BackupJob', backref='database', lazy=True, cascade="all, delete-orphan", uselist=False)
+    # Relationships
     restore_logs = db.relationship('RestoreLog', backref='database', lazy=True, cascade="all, delete-orphan")
     users = db.relationship('PostgresDatabaseUser', backref='database', lazy=True, cascade="all, delete-orphan")
     
     @property
     def has_backup_job(self):
-        """Check if database has an associated backup job."""
-        return self.backup_job is not None
+        """Check if this database's server has an associated backup job."""
+        return self.server.backup_job is not None
 
 class PostgresDatabaseUser(BaseModel):
     username = db.Column(db.String(80), nullable=False)
@@ -93,8 +97,7 @@ class S3Storage(BaseModel):
 
 class BackupJob(BaseModel):
     name = db.Column(db.String(80), nullable=False)
-    database_id = db.Column(db.Integer, db.ForeignKey('postgres_database.id', ondelete='CASCADE'), nullable=False, unique=True)  # Enforce one-to-one at DB level
-    vps_server_id = db.Column(db.Integer, db.ForeignKey('vps_server.id', ondelete='CASCADE'), nullable=False)
+    vps_server_id = db.Column(db.Integer, db.ForeignKey('vps_server.id', ondelete='CASCADE'), nullable=False, unique=True)  # Enforce one-to-one relationship with server
     cron_expression = db.Column(db.String(50), nullable=False)
     enabled = db.Column(db.Boolean, default=True)
     s3_storage_id = db.Column(db.Integer, db.ForeignKey('s3_storage.id'), nullable=False)
@@ -102,7 +105,7 @@ class BackupJob(BaseModel):
     encryption_key = db.Column(db.String(255), nullable=True)  # Base64-encoded encryption key for WAL-G
     
     def __repr__(self):
-        return f'<BackupJob {self.name} for database {self.database_id}>'
+        return f'<BackupJob {self.name} for server {self.vps_server_id}>'
 
 
 

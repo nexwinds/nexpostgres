@@ -33,16 +33,23 @@ class PostgresConstants:
         'download_url': 'https://github.com/wal-g/wal-g/releases/latest/download/wal-g-pg-ubuntu-20.04-amd64.tar.gz'
     }
     
-    # WAL-G S3 environment variables - no default values per requirements
+    # WAL-G S3 environment variables with optimized defaults
     WALG_S3_ENV = {
         'WALE_S3_PREFIX': None,  # Will be set to s3://bucket-name/postgres
         'AWS_ACCESS_KEY_ID': None,
         'AWS_SECRET_ACCESS_KEY': None,
         'AWS_REGION': None,
         'AWS_ENDPOINT': None,  # Optional for S3-compatible storage
-        'WALG_COMPRESSION_METHOD': None,  # Must be explicitly configured
-        'WALG_DELTA_MAX_STEPS': None,  # Must be explicitly configured
-        'WALG_TAR_SIZE_THRESHOLD': None  # Must be explicitly configured
+        'WALG_COMPRESSION_METHOD': 'lz4',  # Fast compression for better performance
+        'WALG_DELTA_MAX_STEPS': '5',  # Enable incremental backups with 5 delta steps
+        'WALG_TAR_SIZE_THRESHOLD': '1073741824',  # 1GB bundle size for optimal performance
+        'WALG_UPLOAD_CONCURRENCY': '16',  # Default concurrent upload streams
+        'WALG_DOWNLOAD_CONCURRENCY': '10',  # Default concurrent download streams
+        'WALG_DOWNLOAD_FILE_RETRIES': '15',  # Retry failed downloads
+        'WALG_UPLOAD_DISK_CONCURRENCY': '1',  # Disk read concurrency
+        'WALG_ALIVE_CHECK_INTERVAL': '1m',  # Check PostgreSQL health during backup
+        'WALG_DELTA_ORIGIN': 'LATEST',  # Chain incremental backups for efficiency
+        'WALG_UPLOAD_WAL_METADATA': 'INDIVIDUAL'  # Upload WAL metadata for better recovery
     }
     
     # Timeouts and retries
