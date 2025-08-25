@@ -226,12 +226,9 @@ class DatabaseService:
                 
                 # For primary users, ensure they have comprehensive access
                 if is_primary and permission_level == 'all_permissions':
-                    # Verify the user has the expected permissions
-                    users = pg_manager.user_manager.list_database_users(db_name)
-                    user_found = any(user['username'] == username for user in users)
-                    
-                    if not user_found:
-                        return False, f"User '{username}' was created but not found in database user list"
+                    # Verify the user exists using simple existence check
+                    if not pg_manager.user_manager.user_exists(username):
+                        return False, f"User '{username}' was created but not found in PostgreSQL"
                     
                     return True, f"Primary user '{username}' created successfully with {permission_level} on database '{db_name}'"
                 else:

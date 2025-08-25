@@ -22,20 +22,62 @@
     <div class="card-body">
         <form method="post" id="restoreForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-            <!-- Database Selection -->
-            <h4 class="border-bottom pb-2 mb-3">Database Selection</h4>
+            
+            <!-- Restore Type Options -->
+            <h4 class="border-bottom pb-2 mb-3">Restore Type</h4>
             
             <div class="mb-3">
-                <label for="database_id" class="form-label">Target Database</label>
-                <select class="form-select" id="database_id" name="database_id" required>
-                    <option value="" selected disabled>Select a database to restore</option>
-                    {% for db in databases %}
-                    <option value="{{ db.id }}" data-backup-job-id="{{ db.backup_job.id }}">
-                        {{ db.name }} on {{ db.server.name }}
-                    </option>
-                    {% endfor %}
-                </select>
-                <div class="form-text">Select the database you want to restore (maintains one-to-one relationship with backup jobs)</div>
+                <label class="form-label">Restoration Scope</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="restore_type" id="restore_database" value="database" checked>
+                    <label class="form-check-label" for="restore_database">
+                        <strong>Individual Database Restore</strong>
+                    </label>
+                    <div class="form-text ms-4">Restore only the selected database from the backup. Faster and more targeted.</div>
+                </div>
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="radio" name="restore_type" id="restore_cluster" value="cluster">
+                    <label class="form-check-label" for="restore_cluster">
+                        <strong>Full Cluster Restore</strong>
+                    </label>
+                    <div class="form-text ms-4">Restore the entire PostgreSQL cluster including all databases. Use this for complete disaster recovery.</div>
+                </div>
+            </div>
+            
+            <!-- Database Selection (for Individual Database Restore) -->
+            <div id="databaseSelectionSection">
+                <h4 class="border-bottom pb-2 mb-3">Database Selection</h4>
+                
+                <div class="mb-3">
+                    <label for="database_id" class="form-label">Target Database</label>
+                    <select class="form-select" id="database_id" name="database_id">
+                        <option value="" selected disabled>Select a database to restore</option>
+                        {% for db in databases %}
+                        <option value="{{ db.id }}" data-backup-job-id="{{ db.server.backup_job.id }}">
+                            {{ db.name }} on {{ db.server.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Select the database you want to restore (maintains one-to-one relationship with backup jobs)</div>
+                </div>
+            </div>
+            
+            <!-- Server Selection (for Full Cluster Restore) -->
+            <div id="serverSelectionSection" style="display: none;">
+                <h4 class="border-bottom pb-2 mb-3">Server Selection</h4>
+                
+                <div class="mb-3">
+                    <label for="server_id" class="form-label">Target Server</label>
+                    <select class="form-select" id="server_id" name="server_id">
+                        <option value="" selected disabled>Select a server to restore</option>
+                        {% for server in servers %}
+                        <option value="{{ server.id }}" data-backup-job-id="{{ server.backup_job.id }}">
+                            {{ server.name }} ({{ server.host }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Select the server where you want to restore the entire PostgreSQL cluster</div>
+                </div>
             </div>
             
             <div class="mb-3" id="backupSelection">
@@ -104,33 +146,37 @@
                 </div>
             </div>
             
-            <!-- Target Options -->
-            <h4 class="border-bottom pb-2 mb-3 mt-5">Target Options</h4>
+
             
-            <div class="mb-3">
-                <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" id="restore_to_same" name="restore_to_same" value="true" checked>
-                    <label class="form-check-label" for="restore_to_same">Restore to same database</label>
-                </div>
-                <div class="form-text">When checked, the backup will be restored to the source database. When unchecked, you can select a different target database.</div>
-            </div>
-            
-            <div class="mb-3" id="targetDatabaseDiv" style="display: none;">
-                <div class="row">
-                    <div class="col-md-6">
-                        <label for="target_database_name" class="form-label">New Database Name</label>
-                        <input type="text" class="form-control" id="target_database_name" name="target_database_name" placeholder="Enter new database name">
-                        <div class="form-text">Name for the restored database</div>
+            <!-- Target Options (only for Individual Database Restore) -->
+            <div id="targetOptionsSection">
+                <h4 class="border-bottom pb-2 mb-3 mt-4">Target Options</h4>
+                
+                <div class="mb-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="restore_to_same" name="restore_to_same" value="true" checked>
+                        <label class="form-check-label" for="restore_to_same">Restore to same database</label>
                     </div>
-                    <div class="col-md-6">
-                        <label for="target_database_id" class="form-label">Target Server</label>
-                        <select class="form-select" id="target_database_id" name="target_database_id">
-                            <option value="" selected disabled>Select a target server</option>
-                            {% for db in databases %}
-                            <option value="{{ db.id }}" data-server-name="{{ db.server.name }}">{{ db.server.name }}</option>
-                            {% endfor %}
-                        </select>
-                        <div class="form-text">Server to restore the database to</div>
+                    <div class="form-text">When checked, the backup will be restored to the source database. When unchecked, you can select a different target database.</div>
+                </div>
+                
+                <div class="mb-3" id="targetDatabaseDiv" style="display: none;">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <label for="target_database_name" class="form-label">New Database Name</label>
+                            <input type="text" class="form-control" id="target_database_name" name="target_database_name" placeholder="Enter new database name">
+                            <div class="form-text">Name for the restored database</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="target_database_id" class="form-label">Target Server</label>
+                            <select class="form-select" id="target_database_id" name="target_database_id">
+                                <option value="" selected disabled>Select a target server</option>
+                                {% for db in databases %}
+                                <option value="{{ db.id }}" data-server-name="{{ db.server.name }}">{{ db.server.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Server to restore the database to</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -138,9 +184,14 @@
 
             
             <!-- Warning -->
-            <div class="alert alert-warning mt-4">
+            <div class="alert alert-warning mt-4" id="restoreWarning">
                 <i class="fas fa-exclamation-triangle me-2"></i>
-                <strong>Warning:</strong> Restoring a database will overwrite all existing data in the target database. The target database will be stopped before restore to ensure data integrity. This action cannot be undone.
+                <div id="databaseRestoreWarning">
+                    <strong>Warning:</strong> Restoring a database will overwrite all existing data in the target database. The target database will be stopped before restore to ensure data integrity. This action cannot be undone.
+                </div>
+                <div id="clusterRestoreWarning" style="display: none;">
+                    <strong>Critical Warning:</strong> Full cluster restore will overwrite ALL databases on the target server. The entire PostgreSQL service will be stopped and all existing data will be replaced with the backup data. This is intended for complete disaster recovery scenarios only. This action cannot be undone.
+                </div>
             </div>
             
             <div class="d-flex justify-content-end">
@@ -166,6 +217,49 @@
         const pointInTimeSelection = document.getElementById('pointInTimeSelection');
         const latestBackupInfo = document.getElementById('latestBackupInfo');
         
+        // Handle restore type changes
+        const restoreTypeRadios = document.querySelectorAll('input[name="restore_type"]');
+        const databaseRestoreWarning = document.getElementById('databaseRestoreWarning');
+        const clusterRestoreWarning = document.getElementById('clusterRestoreWarning');
+        const databaseSelectionSection = document.getElementById('databaseSelectionSection');
+        const serverSelectionSection = document.getElementById('serverSelectionSection');
+        const targetOptionsSection = document.getElementById('targetOptionsSection');
+        const serverSelect = document.getElementById('server_id');
+        
+        restoreTypeRadios.forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.value === 'cluster') {
+                    // Show cluster-specific elements
+                    databaseRestoreWarning.style.display = 'none';
+                    clusterRestoreWarning.style.display = 'block';
+                    document.getElementById('restoreWarning').className = 'alert alert-danger mt-4';
+                    
+                    // Show server selection, hide database selection and target options
+                    databaseSelectionSection.style.display = 'none';
+                    serverSelectionSection.style.display = 'block';
+                    targetOptionsSection.style.display = 'none';
+                    
+                    // Remove required attribute from database select, add to server select
+                    databaseSelect.removeAttribute('required');
+                    serverSelect.setAttribute('required', 'required');
+                } else {
+                    // Show database-specific elements
+                    databaseRestoreWarning.style.display = 'block';
+                    clusterRestoreWarning.style.display = 'none';
+                    document.getElementById('restoreWarning').className = 'alert alert-warning mt-4';
+                    
+                    // Show database selection and target options, hide server selection
+                    databaseSelectionSection.style.display = 'block';
+                    serverSelectionSection.style.display = 'none';
+                    targetOptionsSection.style.display = 'block';
+                    
+                    // Add required attribute to database select, remove from server select
+                    databaseSelect.setAttribute('required', 'required');
+                    serverSelect.removeAttribute('required');
+                }
+            });
+        });
+        
         // Handle database selection change
         databaseSelect.addEventListener('change', function() {
             const databaseId = this.value;
@@ -184,6 +278,25 @@
             } else if (selectedBackupType === 'latest') {
                 loadLatestBackupInfo(backupJobId);
             }
+        });
+        
+        // Handle server selection change (for cluster restore)
+        serverSelect.addEventListener('change', function() {
+            const serverId = this.value;
+            if (!serverId) return;
+            
+            // Get the backup job ID from the selected server option
+            const backupJobId = this.options[this.selectedIndex].getAttribute('data-backup-job-id');
+            
+            // Update content based on selected backup type
+            const selectedBackupType = document.querySelector('input[name="backup_type"]:checked')?.value;
+            
+            if (selectedBackupType === 'specific') {
+                loadBackupLogs(backupJobId);
+            } else if (selectedBackupType === 'latest') {
+                loadLatestBackupInfo(backupJobId);
+            }
+            // Note: Point-in-time recovery is not typically used for cluster restores
         });
         
         // Handle backup type radio button changes

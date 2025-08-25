@@ -658,4 +658,11 @@ class UnifiedValidationService:
         validated_data['use_recovery_time'] = form_data.get('use_recovery_time') == 'true'
         validated_data['recovery_time'] = form_data.get('recovery_time')
         
+        # Restore type validation
+        restore_type = form_data.get('restore_type', 'database')
+        if restore_type not in ['database', 'cluster']:
+            errors.append('Invalid restore type. Must be either "database" or "cluster"')
+        else:
+            validated_data['restore_type'] = restore_type
+        
         return len(errors) == 0, errors, validated_data

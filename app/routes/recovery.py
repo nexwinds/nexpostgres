@@ -9,23 +9,72 @@ logger = logging.getLogger(__name__)
 
 recovery_bp = Blueprint('recovery', __name__, url_prefix='/recovery')
 
+# Shared utility functions for recovery operations
+def get_recovery_context():
+    """Get common context data for recovery pages."""
+    s3_storages = S3Storage.query.all()
+    servers = VpsServer.query.all()
+    return {
+        's3_storages': s3_storages,
+        'servers': servers
+    }
+
+def validate_recovery_request(data, recovery_type='database'):
+    """Validate recovery request data."""
+    required_fields = ['target_server_id', 's3_storage_id']
+    
+    if recovery_type == 'database':
+        required_fields.extend(['database_name', 'backup_key'])
+    elif recovery_type == 'cluster':
+        required_fields.append('backup_key')
+    
+    missing_fields = [field for field in required_fields if not data.get(field)]
+    if missing_fields:
+        return False, f"Missing required fields: {', '.join(missing_fields)}"
+    
+    return True, None
+
+def get_target_server_and_storage(target_server_id, s3_storage_id):
+    """Get and validate target server and S3 storage."""
+    target_server = VpsServer.query.get(target_server_id)
+    if not target_server:
+        return None, None, 'Target server not found'
+    
+    s3_storage = S3Storage.query.get(s3_storage_id)
+    if not s3_storage:
+        return None, None, 'S3 storage not found'
+    
+    return target_server, s3_storage, None
+
+# Legacy route - redirect to database recovery
 @recovery_bp.route('/')
 @login_required
 def index():
-    """Database recovery main page - disaster recovery with S3 selection."""
+    """Legacy recovery route - redirect to database recovery."""
+    return redirect(url_for('recovery.recovery_db'))
+
+@recovery_bp.route('/recovery-db')
+@login_required
+def recovery_db():
+    """Database recovery page - disaster recovery with S3 selection."""
     try:
-        # Get all S3 storage configurations for selection
-        s3_storages = S3Storage.query.all()
-        
-        # Get all servers for recovery target selection
-        servers = VpsServer.query.all()
-        
-        return render_template('recovery/index.html', 
-                             s3_storages=s3_storages,
-                             servers=servers)
+        context = get_recovery_context()
+        return render_template('recovery/recovery_db.html', **context)
     except Exception as e:
-        logger.error(f"Error loading recovery page: {str(e)}")
-        flash('Error loading recovery page', 'error')
+        logger.error(f"Error loading database recovery page: {str(e)}")
+        flash('Error loading database recovery page', 'error')
+        return redirect(url_for('dashboard.index'))
+
+@recovery_bp.route('/recovery-cluster')
+@login_required
+def recovery_cluster():
+    """Cluster recovery page - full cluster disaster recovery."""
+    try:
+        context = get_recovery_context()
+        return render_template('recovery/recovery_cluster.html', **context)
+    except Exception as e:
+        logger.error(f"Error loading cluster recovery page: {str(e)}")
+        flash('Error loading cluster recovery page', 'error')
         return redirect(url_for('dashboard.index'))
 
 @recovery_bp.route('/api/s3/<int:s3_storage_id>/databases')
@@ -53,135 +102,198 @@ def get_s3_databases(s3_storage_id):
             'error': str(e)
         }), 500
 
-@recovery_bp.route('/initiate', methods=['POST'])
+@recovery_bp.route('/api/s3/<int:s3_storage_id>/cluster-backups')
 @login_required
-def initiate_recovery():
-    """Initiate database recovery process."""
+def get_s3_cluster_backups(s3_storage_id):
+    """Get cluster backups available in S3 storage for recovery."""
     try:
-        data = request.get_json()
+        s3_storage = S3Storage.query.get_or_404(s3_storage_id)
         
-        database_name = data.get('database_name')
-        backup_key = data.get('backup_key')
-        target_server_id = data.get('target_server_id')
-        s3_storage_id = data.get('s3_storage_id')
+        # Get cluster backups from backup metadata
+        backups = BackupMetadataService.get_cluster_backups_for_s3_storage(s3_storage_id)
         
-        if not all([database_name, backup_key, target_server_id, s3_storage_id]):
-            return jsonify({
-                'success': False,
-                'error': 'Missing required parameters'
-            }), 400
-        
-        # Get S3 storage
-        s3_storage = S3Storage.query.get(s3_storage_id)
-        if not s3_storage:
-            return jsonify({
-                'success': False,
-                'error': 'S3 storage not found'
-            }), 404
-        
-        # Get target server
-        target_server = VpsServer.query.get(target_server_id)
-        if not target_server:
-            return jsonify({
-                'success': False,
-                'error': 'Target server not found'
-            }), 404
-        
-        # For recovery, validate that the backup exists in the specified S3 storage
-        # We don't use get_database_backups since it's for backup jobs, not recovery
-        import boto3
-        from botocore.exceptions import ClientError
-        
-        try:
-            # Initialize S3 client for the specified storage
-            s3_client = boto3.client(
-                's3',
-                aws_access_key_id=s3_storage.access_key,
-                aws_secret_access_key=s3_storage.secret_key,
-                region_name=s3_storage.region,
-                endpoint_url=s3_storage.endpoint if s3_storage.endpoint else None
-            )
-            
-            # Check if the backup key exists in S3
-            s3_client.head_object(Bucket=s3_storage.bucket, Key=backup_key)
-            
-            # Create backup info for the restore service
-            # Extract backup name from backup key (e.g., "postgres/dbname/backup_20230823_120000.tar.gz")
-            backup_name = backup_key.split('/')[-1] if '/' in backup_key else backup_key
-            selected_backup = {
-                'key': backup_key,
-                'backup_name': backup_name,
-                'database_name': database_name,
-                's3_storage': s3_storage
-            }
-            
-        except ClientError as e:
-            if e.response['Error']['Code'] == '404':
-                return jsonify({
-                    'success': False,
-                    'error': 'Selected backup not found in S3 storage'
-                }), 404
-            else:
-                logger.error(f"Error accessing S3 storage: {str(e)}")
-                return jsonify({
-                    'success': False,
-                    'error': f'Error accessing S3 storage: {str(e)}'
-                }), 500
-        except Exception as e:
-            logger.error(f"Error validating backup: {str(e)}")
-            return jsonify({
-                'success': False,
-                'error': f'Error validating backup: {str(e)}'
-            }), 500
-        
-        # For disaster recovery, we may need to register the database if it doesn't exist
-        database = PostgresDatabase.query.filter_by(name=database_name).first()
-        backup_job = None
-        
-        if database:
-            # Database exists, try to find backup job for its server
-            backup_job = BackupJob.query.filter_by(vps_server_id=database.vps_server_id).first()
-        else:
-            # Database doesn't exist - this is a disaster recovery scenario
-            # We'll create a temporary database entry for the recovery process
-            from app.models.database import db
-            database = PostgresDatabase(
-                name=database_name,
-                vps_server_id=target_server_id,
-                size='Unknown'  # Will be updated after recovery
-            )
-            db.session.add(database)
-            db.session.commit()
-        
-        # Initiate the recovery process
-        restore_service = RestoreService()
-        recovery_result = restore_service.initiate_recovery(
-            backup_key=backup_key,
-            target_server=target_server,
-            backup_info=selected_backup,
-            database_id=database.id,
-            s3_storage=s3_storage,
-            backup_job=backup_job
-        )
-        
-        if recovery_result['success']:
-            flash(f'Database recovery initiated successfully. Recovery ID: {recovery_result["recovery_id"]}', 'success')
-            return jsonify({
-                'success': True,
-                'recovery_id': recovery_result['recovery_id'],
-                'message': 'Recovery process initiated successfully'
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': recovery_result.get('error', 'Unknown error occurred')
-            }), 500
-            
+        return jsonify({
+            'success': True,
+            'backups': backups
+        })
     except Exception as e:
-        logger.error(f"Error initiating recovery: {str(e)}")
+        logger.error(f"Error getting S3 cluster backups for storage {s3_storage_id}: {str(e)}")
         return jsonify({
             'success': False,
             'error': str(e)
+        }), 500
+
+def process_recovery_initiation(data, recovery_type='database'):
+    """Common logic for processing recovery initiation."""
+    # Validate request data
+    is_valid, error_msg = validate_recovery_request(data, recovery_type)
+    if not is_valid:
+        return {
+            'success': False,
+            'error': error_msg,
+            'status_code': 400
+        }
+    
+    # Get target server and S3 storage
+    target_server, s3_storage, error_msg = get_target_server_and_storage(
+        data.get('target_server_id'), 
+        data.get('s3_storage_id')
+    )
+    if error_msg:
+        return {
+            'success': False,
+            'error': error_msg,
+            'status_code': 404
+        }
+    
+    backup_key = data.get('backup_key')
+    
+    return {
+        'success': True,
+        'target_server': target_server,
+        's3_storage': s3_storage,
+        'backup_key': backup_key
+    }
+
+@recovery_bp.route('/initiate', methods=['POST'])
+@login_required
+def initiate_recovery():
+    """Unified recovery endpoint using shared WAL-G configuration."""
+    try:
+        data = request.get_json()
+        recovery_type = data.get('recovery_type', 'database')
+        
+        # Process common recovery logic
+        result = process_recovery_initiation(data, recovery_type)
+        if not result['success']:
+            return jsonify({
+                'success': False,
+                'error': result['error']
+            }), result['status_code']
+        
+        target_server = result['target_server']
+        s3_storage = result['s3_storage']
+        backup_key = result['backup_key']
+        
+        # Validate backup exists using shared WAL-G configuration
+        from app.utils.walg_config import WalgConfig
+        
+        # Get database name for WAL-G environment
+        database_name = data.get('database_name', 'postgres')
+        
+        # Create WAL-G environment for validation
+        walg_env = WalgConfig.create_env(s3_storage, database_name)
+        
+        # Validate backup exists
+        backup_valid, backup_message = WalgConfig.verify_backup(
+            None,  # SSH manager not needed for S3 validation
+            walg_env,
+            backup_key
+        )
+        
+        if not backup_valid:
+            return jsonify({
+                'success': False,
+                'error': f'Backup validation failed: {backup_message}'
+            }), 404
+        
+        # Create backup info for the restore service
+        backup_name = backup_key.split('/')[-1] if '/' in backup_key else backup_key
+        selected_backup = {
+            'key': backup_key,
+            'backup_name': backup_name,
+            's3_storage': s3_storage
+        }
+        
+        # Handle database-specific logic
+        if recovery_type == 'database':
+            database_name = data.get('database_name')
+            # Check if this is a backup identifier rather than actual database name
+            if database_name and database_name.startswith('basebackups_'):
+                # Use 'postgres' as the actual database name for WAL-G prefix
+                actual_database_name = 'postgres'
+                logger.info(f"Detected backup identifier '{database_name}', using 'postgres' as database name")
+            else:
+                actual_database_name = database_name
+            selected_backup['database_name'] = actual_database_name
+            
+            # For disaster recovery, register database if it doesn't exist
+            database = PostgresDatabase.query.filter_by(name=database_name).first()
+            backup_job = None
+            
+            if database:
+                backup_job = BackupJob.query.filter_by(vps_server_id=database.vps_server_id).first()
+            else:
+                from app.models.database import db
+                database = PostgresDatabase(
+                    name=database_name,
+                    vps_server_id=target_server.id,
+                    size='Unknown'
+                )
+                db.session.add(database)
+                db.session.commit()
+            
+            # Initiate database recovery
+            restore_service = RestoreService()
+            recovery_result = restore_service.initiate_recovery(
+                backup_key=backup_key,
+                target_server=target_server,
+                backup_info=selected_backup,
+                database_id=database.id,
+                s3_storage=s3_storage,
+                backup_job=backup_job
+            )
+        else:
+            # Initiate cluster recovery
+            restore_service = RestoreService()
+            recovery_result = restore_service.initiate_cluster_recovery(
+                backup_key=backup_key,
+                target_server=target_server,
+                backup_info=selected_backup,
+                s3_storage=s3_storage
+            )
+        
+        return handle_recovery_result(recovery_result, recovery_type.capitalize())
+            
+    except Exception as e:
+        logger.error(f"Error initiating {recovery_type} recovery: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# Legacy endpoints for backward compatibility
+@recovery_bp.route('/initiate-db', methods=['POST'])
+@login_required
+def initiate_database_recovery():
+    """Legacy database recovery endpoint - redirects to unified endpoint."""
+    data = request.get_json()
+    data['recovery_type'] = 'database'
+    request._cached_json = data
+    return initiate_recovery()
+
+@recovery_bp.route('/initiate-cluster', methods=['POST'])
+@login_required
+def initiate_cluster_recovery():
+    """Legacy cluster recovery endpoint - redirects to unified endpoint."""
+    data = request.get_json()
+    data['recovery_type'] = 'cluster'
+    request._cached_json = data
+    return initiate_recovery()
+
+def handle_recovery_result(recovery_result, recovery_type):
+    """Handle the result of a recovery operation."""
+    if recovery_result['success']:
+        flash(f'{recovery_type} recovery initiated successfully. Recovery ID: {recovery_result["recovery_id"]}', 'success')
+        return jsonify({
+            'success': True,
+            'recovery_id': recovery_result['recovery_id'],
+            'message': f'{recovery_type} recovery process initiated successfully'
+        })
+    else:
+        return jsonify({
+            'success': False,
+            'error': recovery_result.get('error', 'Unknown error occurred')
         }), 500
 
 @recovery_bp.route('/status/<recovery_id>')

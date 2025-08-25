@@ -148,10 +148,16 @@ class WalgBackupManager:
         # Build environment configuration
         env_vars = [
             "# WAL-G Environment Configuration",
-            f"export WALE_S3_PREFIX=s3://{bucket_name}/postgres/{backup_job.database.name if backup_job and backup_job.database else 'default'}",
+            f"export WALE_S3_PREFIX=s3://{bucket_name}/postgres",
             f"export AWS_ACCESS_KEY_ID={access_key}",
             f"export AWS_SECRET_ACCESS_KEY={secret_key}",
-            f"export AWS_REGION={region}"
+            f"export AWS_REGION={region}",
+            "",
+            "# PostgreSQL Connection Parameters",
+            "export PGHOST=localhost",
+            "export PGPORT=5432",
+            "export PGUSER=postgres",
+            "export PGDATABASE=postgres"
         ]
         
         # Add optional endpoint for S3-compatible storage
@@ -208,12 +214,9 @@ class WalgBackupManager:
         
         return True, "WAL-G configuration created successfully"
     
-    def configure_postgresql_archiving(self, db_name: str) -> Tuple[bool, str]:
+    def configure_postgresql_archiving(self) -> Tuple[bool, str]:
         """Configure PostgreSQL for archiving with WAL-G.
         
-        Args:
-            db_name: Database name
-            
         Returns:
             tuple: (success, message)
         """
@@ -257,6 +260,16 @@ class WalgBackupManager:
             tuple: (success, message)
         """
         self.logger.info(f"Creating backup '{backup_name}' using WAL-G (full cluster backup)...")
+        
+        # Check PostgreSQL service status first
+        service_info = self.system_utils.check_postgresql_service()
+        if not service_info['is_running']:
+            self.logger.warning(f"PostgreSQL service is not running: {service_info['status']}")
+            # Try to start PostgreSQL service
+            success, start_message = self.system_utils.start_postgresql_service()
+            if not success:
+                return False, f"PostgreSQL is not running and failed to start: {start_message}"
+            self.logger.info(f"PostgreSQL service started: {start_message}")
         
         # Get data directory
         data_dir = self.config_manager.get_data_directory()
@@ -331,6 +344,16 @@ class WalgBackupManager:
     def _perform_cluster_backup(self, db_name: str) -> Tuple[bool, str]:
         """Perform a full cluster backup using WAL-G."""
         self.logger.info(f"Performing WAL-G cluster backup (triggered by database '{db_name}')...")
+        
+        # Check PostgreSQL service status first
+        service_info = self.system_utils.check_postgresql_service()
+        if not service_info['is_running']:
+            self.logger.warning(f"PostgreSQL service is not running: {service_info['status']}")
+            # Try to start PostgreSQL service
+            success, start_message = self.system_utils.start_postgresql_service()
+            if not success:
+                return False, f"PostgreSQL is not running and failed to start: {start_message}"
+            self.logger.info(f"PostgreSQL service started: {start_message}")
         
         # Get data directory
         data_dir = self.config_manager.get_data_directory()
@@ -631,12 +654,9 @@ class WalgBackupManager:
             error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
             return False, f"Cleanup failed: {error_msg}"
     
-    def health_check(self, db_name: str) -> Tuple[bool, str, Dict]:
+    def health_check(self) -> Tuple[bool, str, Dict]:
         """Perform a comprehensive health check of the WAL-G backup system.
         
-        Args:
-            db_name: Database name
-            
         Returns:
             tuple: (success, message, health_info)
         """
@@ -683,12 +703,12 @@ class WalgBackupManager:
             if not health_info['archiving_configured']:
                 issues.append("PostgreSQL archiving is not properly configured for WAL-G")
         
-        # Check for recent backups
+        # Check for recent backups (cluster-level)
         if health_info['walg_configured']:
-            backups = self.list_backups(db_name)
-            health_info['recent_backup_exists'] = len(backups) > 0
+            cluster_backups = self._list_cluster_backups()
+            health_info['recent_backup_exists'] = len(cluster_backups) > 0
             if not health_info['recent_backup_exists']:
-                issues.append("No backups found")
+                issues.append("No cluster backups found")
         
         success = len(issues) == 0
         message = "WAL-G backup system is healthy" if success else f"Issues found: {'; '.join(issues)}"

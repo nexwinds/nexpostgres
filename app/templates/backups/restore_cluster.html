@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+
+{% block title %}Restore Cluster - NEXPOSTGRES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Restore PostgreSQL Cluster</h1>
+    <div>
+        <a href="{{ url_for('backups.backups') }}" class="btn btn-secondary me-2">
+            <i class="fas fa-arrow-left me-1"></i> Back to Backup Jobs
+        </a>
+        <a href="{{ url_for('backups.restore_logs') }}" class="btn btn-info">
+            <i class="fas fa-history me-1"></i> Restore Logs
+        </a>
+    </div>
+</div>
+
+<div class="card shadow">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">Cluster Restore Options</h5>
+    </div>
+    <div class="card-body">
+        <form method="post" id="restoreForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <input type="hidden" name="restore_type" value="cluster">
+            
+            <!-- Server Selection -->
+            <h4 class="border-bottom pb-2 mb-3">Server Selection</h4>
+            
+            <div class="mb-3">
+                <label for="server_id" class="form-label">Target Server</label>
+                <select class="form-select" id="server_id" name="server_id" required>
+                    <option value="" selected disabled>Select a server to restore</option>
+                    {% for server in servers %}
+                    <option value="{{ server.id }}" data-backup-job-id="{{ server.backup_job.id }}">
+                        {{ server.name }} ({{ server.host }})
+                    </option>
+                    {% endfor %}
+                </select>
+                <div class="form-text">Select the server where you want to restore the entire PostgreSQL cluster</div>
+            </div>
+            
+            <div class="mb-3" id="backupSelection">
+                <h4 class="border-bottom pb-2 mb-3">Backup Selection</h4>
+                
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="backup_type" id="latest_backup" value="latest" checked>
+                    <label class="form-check-label" for="latest_backup">
+                        <strong>Latest Backup</strong> (Recommended)
+                    </label>
+                </div>
+                
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="radio" name="backup_type" id="specific_backup" value="specific">
+                    <label class="form-check-label" for="specific_backup">
+                        <strong>Specific Backup</strong>
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Latest Backup Info -->
+            <div id="latestBackupInfo" class="mb-3" style="display: none;">
+                <div class="card border-info">
+                    <div class="card-body">
+                        <h6 class="card-title">Latest Backup Information</h6>
+                        <div id="latestBackupDetails">Select a server to view latest backup details</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Specific Backup Selection -->
+            <div id="specificBackupSelection" class="mb-3" style="display: none;">
+                <label for="backup_log_id" class="form-label">Select Backup</label>
+                <select class="form-select" id="backup_log_id" name="backup_log_id">
+                    <option value="" selected disabled>Select a specific backup</option>
+                </select>
+                <div class="form-text">Choose from available backups for the selected server</div>
+            </div>
+            
+            <!-- Warning Messages -->
+            <div id="restoreWarning" class="alert alert-danger mt-4">
+                <div id="clusterRestoreWarning">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    <strong>DANGER:</strong> This will restore the entire PostgreSQL cluster, including all databases. 
+                    This operation will completely replace all existing data on the target server. 
+                    Any data added after the backup point will be permanently lost.
+                </div>
+            </div>
+            
+            <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                <button type="button" class="btn btn-secondary me-md-2" onclick="window.history.back();">Cancel</button>
+                <button type="submit" class="btn btn-danger" id="restoreButton">
+                    <i class="fas fa-server me-1"></i> Start Cluster Restore
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const serverSelect = document.getElementById('server_id');
+    const specificBackupSelection = document.getElementById('specificBackupSelection');
+    const latestBackupInfo = document.getElementById('latestBackupInfo');
+    
+    // Handle server selection change
+    serverSelect.addEventListener('change', function() {
+        const serverId = this.value;
+        if (!serverId) return;
+        
+        // Get the backup job ID from the selected server option
+        const backupJobId = this.options[this.selectedIndex].getAttribute('data-backup-job-id');
+        
+        // Update content based on selected backup type
+        const selectedBackupType = document.querySelector('input[name="backup_type"]:checked')?.value;
+        
+        if (selectedBackupType === 'specific') {
+            loadBackupLogs(backupJobId);
+        } else if (selectedBackupType === 'latest') {
+            loadLatestBackupInfo(backupJobId);
+        }
+    });
+    
+    // Handle backup type radio button changes
+    document.querySelectorAll('input[name="backup_type"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            // Hide all sections first
+            specificBackupSelection.style.display = 'none';
+            latestBackupInfo.style.display = 'none';
+            
+            const serverSelect = document.getElementById('server_id');
+            const serverId = serverSelect.value;
+            const backupJobId = serverSelect.options[serverSelect.selectedIndex]?.getAttribute('data-backup-job-id');
+            
+            if (this.value === 'specific') {
+                specificBackupSelection.style.display = 'block';
+                if (backupJobId) {
+                    loadBackupLogs(backupJobId);
+                }
+            } else if (this.value === 'latest') {
+                latestBackupInfo.style.display = 'block';
+                if (backupJobId) {
+                    loadLatestBackupInfo(backupJobId);
+                }
+            }
+        });
+    });
+    
+    // Load functions
+    function loadBackupLogs(backupJobId) {
+        fetch(`/backups/api/logs/${backupJobId}`)
+            .then(response => response.json())
+            .then(data => {
+                const select = document.getElementById('backup_log_id');
+                select.innerHTML = '<option value="" selected disabled>Select a specific backup</option>';
+                
+                if (data.logs && data.logs.length > 0) {
+                    data.logs.forEach(log => {
+                        const option = document.createElement('option');
+                        option.value = log.id;
+                        option.textContent = `${log.backup_type} - ${log.created_at} (${log.status})`;
+                        select.appendChild(option);
+                    });
+                } else {
+                    const option = document.createElement('option');
+                    option.textContent = 'No backups available';
+                    option.disabled = true;
+                    select.appendChild(option);
+                }
+            })
+            .catch(error => {
+                console.error('Error loading backup logs:', error);
+            });
+    }
+    
+    function loadLatestBackupInfo(backupJobId) {
+        fetch(`/backups/get_backup_logs/${backupJobId}`)
+            .then(response => response.json())
+            .then(data => {
+                const detailsDiv = document.getElementById('latestBackupDetails');
+                
+                if (data.logs && data.logs.length > 0) {
+                    const latestLog = data.logs[0];
+                    detailsDiv.innerHTML = `
+                        <p><strong>Backup Date:</strong> ${latestLog.created_at}</p>
+                        <p><strong>Status:</strong> <span class="badge bg-${latestLog.status === 'completed' ? 'success' : 'warning'}">${latestLog.status}</span></p>
+                        <p><strong>Type:</strong> ${latestLog.backup_type}</p>
+                        <p><strong>Size:</strong> ${latestLog.backup_size || 'N/A'}</p>
+                    `;
+                } else {
+                    detailsDiv.innerHTML = '<p class="text-muted">No backup information available</p>';
+                }
+            })
+            .catch(error => {
+                console.error('Error loading latest backup info:', error);
+                document.getElementById('latestBackupDetails').innerHTML = '<p class="text-danger">Error loading backup information</p>';
+            });
+    }
+});
+</script>
+{% endblock %}

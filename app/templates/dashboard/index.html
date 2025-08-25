@@ -74,7 +74,6 @@
                         {% for log in recent_logs %}
                         <tr>
                             <td>{{ log.backup_job.name }}</td>
-                            <td>{{ log.backup_job.database.name }}</td>
                             <td>{{ log.backup_job.server.name }}</td>
                             <td>{{ status_badge(log.status) }}</td>
                             <td>{{ log.start_time.strftime('%Y-%m-%d %H:%M') }}</td>
@@ -125,7 +124,7 @@
                             <h5 class="mb-1">{{ job.name }}</h5>
                             <small>{{ job.logs[-1].start_time.strftime('%Y-%m-%d %H:%M') }}</small>
                         </div>
-                        <p class="mb-1">Database: {{ job.database.name }} on {{ job.server.name }}</p>
+                        <p class="mb-1">Server: {{ job.server.name }} (Server-wide backup)</p>
                         <small>
                             <a href="{{ url_for('backups.view_log', id=job.logs[-1].id) }}">View Log</a> |
                             <a href="{{ url_for('backups.execute_backup', backup_job_id=job.id) }}" onclick="return confirm('Are you sure you want to run this backup job now?')">Run Now</a>

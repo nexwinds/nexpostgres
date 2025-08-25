@@ -42,7 +42,7 @@
                     {% for job in backup_jobs %}
                     <tr>
                         <td>{{ job.name }}</td>
-                        <td>{{ job.database.name }}</td>
+                        <td>Server-wide backup</td>
                         <td>{{ job.server.name }}</td>
                         <td>
                             <a href="{{ url_for('s3_storage.edit', id=job.s3_storage.id) }}" title="Edit S3 Storage">

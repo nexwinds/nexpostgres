@@ -98,14 +98,14 @@ def execute_backup(job_id, manual=False):
         backup_type = "manual" if manual else "scheduled"
         logger.info(f"Executing {backup_type} backup job {job.id}...")
                 
-        # Execute database-specific backup (optimized for individual database operations)
-        success, log_output = pg_manager.perform_backup(job.database.name, backup_type='database')
-        message = "Database backup completed successfully" if success else f"Database backup failed: {log_output}"
+        # Execute cluster-level backup (WAL-G performs cluster backups)
+        success, log_output = pg_manager.perform_backup('postgres', backup_type='cluster')
+        message = "Cluster backup completed successfully" if success else f"Cluster backup failed: {log_output}"
         logger.info(f"Backup job {job.name} (ID: {job.id}): {message}")
         
         # Log backup completion (WAL-G handles metadata storage)
         if success:
-            logger.info(f"Backup completed successfully for database {job.database.name}")
+            logger.info(f"Backup completed successfully for server {job.server.name}")
     
     except Exception as e:
         success, message = False, str(e)

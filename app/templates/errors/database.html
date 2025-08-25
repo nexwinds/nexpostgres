@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Database Error{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h4 class="mb-0">
+                        <i class="fas fa-database me-2"></i>
+                        Database Error
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-danger" role="alert">
+                        <h5 class="alert-heading">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            Database Connection Error
+                        </h5>
+                        <p class="mb-3">
+                            We're experiencing issues connecting to the database. This could be due to:
+                        </p>
+                        <ul class="mb-3">
+                            <li>Database server is temporarily unavailable</li>
+                            <li>Network connectivity issues</li>
+                            <li>Database maintenance in progress</li>
+                            <li>Configuration problems</li>
+                        </ul>
+                        <hr>
+                        <p class="mb-0">
+                            <strong>Error ID:</strong> {{ error_id }}<br>
+                            <small class="text-muted">Please provide this ID when contacting support.</small>
+                        </p>
+                    </div>
+                    
+                    <div class="text-center">
+                        <a href="{{ url_for('dashboard.index') }}" class="btn btn-primary me-2">
+                            <i class="fas fa-home me-1"></i>
+                            Return to Dashboard
+                        </a>
+                        <button onclick="window.location.reload()" class="btn btn-outline-secondary">
+                            <i class="fas fa-redo me-1"></i>
+                            Try Again
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

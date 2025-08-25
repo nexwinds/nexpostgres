@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Database Recovery{% endblock %}
+{% block title %}Cluster Recovery{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
@@ -9,13 +9,13 @@
             <div class="card">
                 <div class="card-header">
                     <h3 class="card-title">
-                        <i class="fas fa-database"></i>
-                        Database Recovery
+                        <i class="fas fa-server"></i>
+                        Cluster Recovery
                     </h3>
-                    <p class="card-text text-muted">Select a database backup and target server to initiate recovery</p>
+                    <p class="card-text text-muted">Select a cluster backup and target server to initiate full cluster recovery</p>
                 </div>
                 <div class="card-body">
-                    <form id="recoveryForm">
+                    <form id="clusterRecoveryForm">
                         <!-- S3 Storage Selection -->
                         <div class="row mb-4">
                             <div class="col-md-6">
@@ -28,7 +28,7 @@
                                     <option value="{{ storage.id }}">{{ storage.name }} ({{ storage.bucket }})</option>
                                     {% endfor %}
                                 </select>
-                                <div class="form-text">Select the S3 storage containing the backup to restore</div>
+                                <div class="form-text">Select the S3 storage containing the cluster backup</div>
                             </div>
                             <div class="col-md-6">
                                 <label for="serverSelect" class="form-label">
@@ -40,20 +40,20 @@
                                     <option value="{{ server.id }}">{{ server.name }} ({{ server.host }})</option>
                                     {% endfor %}
                                 </select>
-                                <div class="form-text">Server where the database will be restored</div>
+                                <div class="form-text">Server where the cluster will be restored</div>
                             </div>
                         </div>
 
-                        <!-- Database Selection with Metadata -->
+                        <!-- Cluster Backup Selection -->
                         <div class="row mb-4">
                             <div class="col-12">
                                 <label class="form-label">
-                                    <i class="fas fa-database"></i> Available Databases
+                                    <i class="fas fa-server"></i> Available Cluster Backups
                                 </label>
-                                <div id="databasesList" class="border rounded p-3" style="min-height: 200px; background-color: #f8f9fa;">
+                                <div id="clusterBackupsList" class="border rounded p-3" style="min-height: 200px; background-color: #f8f9fa;">
                                     <div class="text-center text-muted">
                                         <i class="fas fa-info-circle"></i>
-                                        Select an S3 storage to view available databases
+                                        Select an S3 storage to view available cluster backups
                                     </div>
                                 </div>
                             </div>
@@ -62,9 +62,9 @@
                         <!-- Warning Message -->
                         <div class="row mb-3" id="warningSection" style="display: none;">
                             <div class="col-12">
-                                <div class="alert alert-warning" role="alert">
+                                <div class="alert alert-danger" role="alert">
                                     <i class="fas fa-exclamation-triangle"></i>
-                                    <strong>Warning:</strong> Database '<span id="warningDatabaseName"></span>' on server '<span id="warningServerName"></span>' will be permanently replaced. This action cannot be undone.
+                                    <strong>Critical Warning:</strong> The entire PostgreSQL cluster on server '<span id="warningServerName"></span>' will be completely replaced. All existing databases and configurations will be permanently lost. This action cannot be undone.
                                 </div>
                             </div>
                         </div>
@@ -72,8 +72,8 @@
                         <!-- Recovery Actions -->
                         <div class="row">
                             <div class="col-12">
-                                <button type="submit" class="btn btn-primary" id="initiateRecovery" disabled>
-                                    <i class="fas fa-play"></i> Initiate Recovery
+                                <button type="submit" class="btn btn-danger" id="initiateClusterRecovery" disabled>
+                                    <i class="fas fa-exclamation-triangle"></i> Initiate Cluster Recovery
                                 </button>
                                 <button type="button" class="btn btn-secondary" onclick="resetForm()">
                                     <i class="fas fa-undo"></i> Reset
@@ -92,7 +92,7 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">
-                        <i class="fas fa-cogs"></i> Recovery Status
+                        <i class="fas fa-cogs"></i> Cluster Recovery Status
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
@@ -102,7 +102,7 @@
                             <div class="spinner-border text-primary" role="status">
                                 <span class="visually-hidden">Loading...</span>
                             </div>
-                            <p class="mt-2">Initiating recovery...</p>
+                            <p class="mt-2">Initiating cluster recovery...</p>
                         </div>
                     </div>
                 </div>
@@ -115,7 +115,7 @@
 </div>
 
 <style>
-.database-item {
+.cluster-backup-item {
     border: 1px solid #dee2e6;
     border-radius: 0.375rem;
     padding: 1rem;
@@ -124,28 +124,28 @@
     transition: all 0.2s;
 }
 
-.database-item:hover {
-    border-color: #0d6efd;
-    background-color: #f8f9ff;
+.cluster-backup-item:hover {
+    border-color: #dc3545;
+    background-color: #fff5f5;
 }
 
-.database-item.selected {
-    border-color: #0d6efd;
-    background-color: #e7f1ff;
-    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+.cluster-backup-item.selected {
+    border-color: #dc3545;
+    background-color: #ffe6e6;
+    box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25);
 }
 
-.database-meta {
+.backup-meta {
     font-size: 0.875rem;
     color: #6c757d;
 }
 
-.database-size {
+.backup-size {
     font-weight: 600;
     color: #198754;
 }
 
-.walg-compliance-badge {
+.cluster-compliance-badge {
     font-size: 0.75rem;
     padding: 0.25rem 0.5rem;
 }
@@ -222,115 +222,115 @@
 </style>
 
 <script>
-let selectedDatabase = null;
+let selectedClusterBackup = null;
 
-// Load databases when S3 storage is selected
+// Load cluster backups when S3 storage is selected
 document.getElementById('s3StorageSelect').addEventListener('change', function() {
     const s3StorageId = this.value;
-    const databasesList = document.getElementById('databasesList');
-    const initiateButton = document.getElementById('initiateRecovery');
+    const clusterBackupsList = document.getElementById('clusterBackupsList');
+    const initiateButton = document.getElementById('initiateClusterRecovery');
     
-    selectedDatabase = null;
+    selectedClusterBackup = null;
     initiateButton.disabled = true;
     
     if (!s3StorageId) {
-        databasesList.innerHTML = `
+        clusterBackupsList.innerHTML = `
             <div class="text-center text-muted">
                 <i class="fas fa-info-circle"></i>
-                Select an S3 storage to view available databases
+                Select an S3 storage to view available cluster backups
             </div>
         `;
         return;
     }
     
     // Show loading
-    databasesList.innerHTML = `
+    clusterBackupsList.innerHTML = `
         <div class="text-center">
             <div class="spinner-border text-primary" role="status">
                 <span class="visually-hidden">Loading...</span>
             </div>
-            <p class="mt-2">Loading databases...</p>
+            <p class="mt-2">Loading cluster backups...</p>
         </div>
     `;
     
-    // Fetch databases from S3
-    fetch(`/recovery/api/s3/${s3StorageId}/databases`)
+    // Fetch cluster backups from S3
+    fetch(`/recovery/api/s3/${s3StorageId}/cluster-backups`)
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                displayDatabases(data.databases);
+                displayClusterBackups(data.backups);
             } else {
-                databasesList.innerHTML = `
+                clusterBackupsList.innerHTML = `
                     <div class="text-center text-danger">
                         <i class="fas fa-exclamation-triangle"></i>
-                        Error loading databases: ${data.error}
+                        Error loading cluster backups: ${data.error}
                     </div>
                 `;
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            databasesList.innerHTML = `
+            clusterBackupsList.innerHTML = `
                 <div class="text-center text-danger">
                     <i class="fas fa-exclamation-triangle"></i>
-                    Error loading databases
+                    Error loading cluster backups
                 </div>
             `;
         });
 });
 
-function displayDatabases(databases) {
-    const databasesList = document.getElementById('databasesList');
+function displayClusterBackups(backups) {
+    const clusterBackupsList = document.getElementById('clusterBackupsList');
     
-    if (databases.length === 0) {
-        databasesList.innerHTML = `
+    if (backups.length === 0) {
+        clusterBackupsList.innerHTML = `
             <div class="text-center text-muted">
                 <i class="fas fa-info-circle"></i>
-                No databases found in this S3 storage
+                No cluster backups found in this S3 storage
             </div>
         `;
         return;
     }
     
     let html = '';
-    databases.forEach(database => {
-        const size = formatBytes(database.total_size);
-        const date = new Date(database.last_backup_date).toLocaleString();
-        const backupAge = getBackupAge(database.last_backup_date);
-        const isLatest = isLatestBackup(database.last_backup_date);
+    backups.forEach(backup => {
+        const size = formatBytes(backup.total_size);
+        const date = new Date(backup.backup_date).toLocaleString();
+        const backupAge = getBackupAge(backup.backup_date);
+        const isLatest = isLatestBackup(backup.backup_date);
         
         html += `
-            <div class="database-item" onclick="selectDatabase('${database.name}', '${database.latest_backup_key}', this)">
+            <div class="cluster-backup-item" onclick="selectClusterBackup('${backup.backup_key}', '${backup.cluster_name}', this)">
                 <div class="d-flex justify-content-between align-items-start">
                     <div class="flex-grow-1">
                         <div class="d-flex align-items-center mb-1">
                             <h6 class="mb-0 me-2">
-                                <i class="fas fa-database"></i> ${database.name}
+                                <i class="fas fa-server"></i> ${backup.cluster_name || 'PostgreSQL Cluster'}
                             </h6>
                             ${isLatest ? 
-                                '<span class="badge bg-success walg-compliance-badge"><i class="fas fa-check"></i> Latest</span>' : 
-                                '<span class="badge bg-warning walg-compliance-badge"><i class="fas fa-clock"></i> ' + backupAge + '</span>'
+                                '<span class="badge bg-success cluster-compliance-badge"><i class="fas fa-check"></i> Latest</span>' : 
+                                '<span class="badge bg-warning cluster-compliance-badge"><i class="fas fa-clock"></i> ' + backupAge + '</span>'
                             }
-                            <span class="badge bg-info walg-compliance-badge ms-1">
-                                <i class="fas fa-shield-alt"></i> WAL-G Compatible
+                            <span class="badge bg-danger cluster-compliance-badge ms-1">
+                                <i class="fas fa-exclamation-triangle"></i> Full Cluster
                             </span>
                         </div>
-                        <div class="database-meta">
-                            <span><i class="fas fa-calendar"></i> Last backup: ${date}</span>
-                            <span class="ms-3"><i class="fas fa-archive"></i> ${database.backup_count} backups</span>
+                        <div class="backup-meta">
+                            <span><i class="fas fa-calendar"></i> Backup date: ${date}</span>
+                            <span class="ms-3"><i class="fas fa-database"></i> ${backup.database_count || 'Multiple'} databases</span>
                         </div>
                         <div class="text-muted small mt-1">
-                            <i class="fas fa-info-circle"></i> Latest backup verified for recovery (WAL-G compliant)
+                            <i class="fas fa-info-circle"></i> Complete cluster backup including all databases, users, and configurations
                         </div>
                         <div class="text-muted small">
-                            <i class="fas fa-key"></i> Backup key: <code class="small">${database.latest_backup_key}</code>
+                            <i class="fas fa-key"></i> Backup key: <code class="small">${backup.backup_key}</code>
                         </div>
                     </div>
                     <div class="text-end">
-                        <div class="database-size">${size}</div>
+                        <div class="backup-size">${size}</div>
                         <div class="text-muted small">Total size</div>
                         <div class="text-muted small mt-1">
-                            <i class="fas fa-check-circle text-success"></i> Integrity verified
+                            <i class="fas fa-shield-alt text-warning"></i> Cluster-wide
                         </div>
                     </div>
                 </div>
@@ -338,13 +338,13 @@ function displayDatabases(databases) {
         `;
     });
     
-    databasesList.innerHTML = html;
+    clusterBackupsList.innerHTML = html;
 }
 
-function getBackupAge(lastBackupDate) {
+function getBackupAge(backupDate) {
     const now = new Date();
-    const backupDate = new Date(lastBackupDate);
-    const diffHours = Math.floor((now - backupDate) / (1000 * 60 * 60));
+    const backup = new Date(backupDate);
+    const diffHours = Math.floor((now - backup) / (1000 * 60 * 60));
     
     if (diffHours < 1) return 'Recent';
     if (diffHours < 24) return diffHours + 'h old';
@@ -353,24 +353,24 @@ function getBackupAge(lastBackupDate) {
     return Math.floor(diffDays / 7) + 'w old';
 }
 
-function isLatestBackup(lastBackupDate) {
+function isLatestBackup(backupDate) {
     const now = new Date();
-    const backupDate = new Date(lastBackupDate);
-    const diffHours = Math.floor((now - backupDate) / (1000 * 60 * 60));
+    const backup = new Date(backupDate);
+    const diffHours = Math.floor((now - backup) / (1000 * 60 * 60));
     return diffHours < 24; // Consider latest if within 24 hours
 }
 
-function selectDatabase(databaseName, backupKey, element) {
+function selectClusterBackup(backupKey, clusterName, element) {
     // Remove previous selection
-    document.querySelectorAll('.database-item').forEach(item => {
+    document.querySelectorAll('.cluster-backup-item').forEach(item => {
         item.classList.remove('selected');
     });
     
-    // Select current database
+    // Select current backup
     element.classList.add('selected');
-    selectedDatabase = {
-        name: databaseName,
-        backup_key: backupKey
+    selectedClusterBackup = {
+        backup_key: backupKey,
+        cluster_name: clusterName
     };
     
     // Update warning message and show/hide warning section
@@ -378,14 +378,14 @@ function selectDatabase(databaseName, backupKey, element) {
     
     // Enable initiate button if server is also selected
     const serverSelect = document.getElementById('serverSelect');
-    const initiateButton = document.getElementById('initiateRecovery');
-    initiateButton.disabled = !selectedDatabase || !serverSelect.value;
+    const initiateButton = document.getElementById('initiateClusterRecovery');
+    initiateButton.disabled = !selectedClusterBackup || !serverSelect.value;
 }
 
 // Enable/disable initiate button when server is selected
 document.getElementById('serverSelect').addEventListener('change', function() {
-    const initiateButton = document.getElementById('initiateRecovery');
-    initiateButton.disabled = !selectedDatabase || !this.value;
+    const initiateButton = document.getElementById('initiateClusterRecovery');
+    initiateButton.disabled = !selectedClusterBackup || !this.value;
     
     // Update warning message when server changes
     updateWarningMessage();
@@ -395,13 +395,12 @@ function updateWarningMessage() {
     const serverSelect = document.getElementById('serverSelect');
     const warningSection = document.getElementById('warningSection');
     
-    if (selectedDatabase && serverSelect.value) {
+    if (selectedClusterBackup && serverSelect.value) {
         // Get selected server name
         const selectedOption = serverSelect.options[serverSelect.selectedIndex];
         const serverName = selectedOption.text;
         
         // Update warning message content
-        document.getElementById('warningDatabaseName').textContent = selectedDatabase.name;
         document.getElementById('warningServerName').textContent = serverName;
         
         // Show warning section with animation
@@ -415,14 +414,19 @@ function updateWarningMessage() {
 }
 
 // Handle form submission
-document.getElementById('recoveryForm').addEventListener('submit', function(e) {
+document.getElementById('clusterRecoveryForm').addEventListener('submit', function(e) {
     e.preventDefault();
     
     const s3StorageId = document.getElementById('s3StorageSelect').value;
     const serverId = document.getElementById('serverSelect').value;
     
-    if (!selectedDatabase || !s3StorageId || !serverId) {
-        alert('Please select an S3 storage, database, and target server');
+    if (!selectedClusterBackup || !s3StorageId || !serverId) {
+        alert('Please select an S3 storage, cluster backup, and target server');
+        return;
+    }
+    
+    // Show confirmation dialog for cluster recovery
+    if (!confirm('WARNING: This will completely replace the entire PostgreSQL cluster. All existing data will be permanently lost. Are you sure you want to continue?')) {
         return;
     }
     
@@ -430,13 +434,12 @@ document.getElementById('recoveryForm').addEventListener('submit', function(e) {
     const modal = new bootstrap.Modal(document.getElementById('recoveryStatusModal'));
     modal.show();
     
-    // Initiate recovery
+    // Initiate cluster recovery
     csrfFetch('/recovery/initiate', {
         method: 'POST',
         body: JSON.stringify({
-            recovery_type: 'database',
-            database_name: selectedDatabase.name,
-            backup_key: selectedDatabase.backup_key,
+            recovery_type: 'cluster',
+            backup_key: selectedClusterBackup.backup_key,
             target_server_id: serverId,
             s3_storage_id: s3StorageId
         })
@@ -459,7 +462,7 @@ document.getElementById('recoveryForm').addEventListener('submit', function(e) {
         document.getElementById('recoveryStatusContent').innerHTML = `
             <div class="alert alert-danger">
                 <i class="fas fa-exclamation-triangle"></i>
-                Error initiating recovery
+                Error initiating cluster recovery
             </div>
         `;
     });
@@ -512,32 +515,40 @@ function initializeProgressTracking() {
     statusContent.innerHTML = `
         <div class="recovery-progress-container">
             <div class="progress mb-3" style="height: 25px;">
-                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                <div class="progress-bar progress-bar-striped progress-bar-animated bg-danger" 
                      role="progressbar" style="width: 0%" id="recoveryProgressBar">
-                    <span id="progressText">Initializing...</span>
+                    <span id="progressText">Initializing cluster recovery...</span>
                 </div>
             </div>
             <div class="recovery-steps" id="recoverySteps">
                 <div class="step-item pending" id="step-validation">
-                    <i class="fas fa-circle"></i> WAL-G Configuration Validation
+                    <i class="fas fa-circle"></i> Cluster Configuration Validation
                 </div>
                 <div class="step-item pending" id="step-connection">
                     <i class="fas fa-circle"></i> Server Connection & Authentication
                 </div>
-                <div class="step-item pending" id="step-preparation">
-                    <i class="fas fa-circle"></i> Database Service Preparation
+                <div class="step-item pending" id="step-shutdown">
+                    <i class="fas fa-circle"></i> PostgreSQL Service Shutdown
+                </div>
+                <div class="step-item pending" id="step-backup">
+                    <i class="fas fa-circle"></i> Current Data Backup (Safety)
+                </div>
+                <div class="step-item pending" id="step-cleanup">
+                    <i class="fas fa-circle"></i> Data Directory Cleanup
                 </div>
                 <div class="step-item pending" id="step-fetch">
-                    <i class="fas fa-circle"></i> WAL-G Backup Fetch
+                    <i class="fas fa-circle"></i> Cluster Backup Fetch
                 </div>
-                <div class="step-item pending" id="step-integrity">
-                    <i class="fas fa-circle"></i> Data Integrity Verification
+                <div class="step-item pending" id="step-restore">
+                    <i class="fas fa-circle"></i> Cluster Restore
                 </div>
-                <div class="step-item pending" id="step-completion">
-                    <i class="fas fa-circle"></i> Recovery Completion
+                <div class="step-item pending" id="step-startup">
+                    <i class="fas fa-circle"></i> PostgreSQL Service Startup
+                </div>
+                <div class="step-item pending" id="step-verification">
+                    <i class="fas fa-circle"></i> Cluster Verification
                 </div>
             </div>
-            <div class="recovery-details mt-3" id="recoveryDetails"></div>
         </div>
     `;
 }
@@ -546,145 +557,65 @@ function updateProgressTracking(status) {
     const progressBar = document.getElementById('recoveryProgressBar');
     const progressText = document.getElementById('progressText');
     
-    let progress = 0;
-    let currentStep = 'Initializing';
+    if (status.progress) {
+        progressBar.style.width = status.progress + '%';
+        progressText.textContent = status.current_step || 'Processing...';
+    }
     
-    // Determine progress based on status and command output
-    switch(status.status) {
-        case 'initiated':
-            progress = 10;
-            currentStep = 'Validating WAL-G Configuration';
-            updateStepStatus('step-validation', 'active');
-            break;
-        case 'running':
-            // Parse command output to determine specific step
-            if (status.command_output) {
-                if (status.command_output.includes('Connecting to')) {
-                    progress = 25;
-                    currentStep = 'Connecting to Server';
-                    updateStepStatus('step-validation', 'completed');
-                    updateStepStatus('step-connection', 'active');
-                } else if (status.command_output.includes('Stopping PostgreSQL')) {
-                    progress = 40;
-                    currentStep = 'Preparing Database Service';
-                    updateStepStatus('step-connection', 'completed');
-                    updateStepStatus('step-preparation', 'active');
-                } else if (status.command_output.includes('wal-g backup-fetch')) {
-                    progress = 60;
-                    currentStep = 'Fetching Backup with WAL-G';
-                    updateStepStatus('step-preparation', 'completed');
-                    updateStepStatus('step-fetch', 'active');
-                } else if (status.command_output.includes('Verifying')) {
-                    progress = 80;
-                    currentStep = 'Verifying Data Integrity';
-                    updateStepStatus('step-fetch', 'completed');
-                    updateStepStatus('step-integrity', 'active');
+    // Update step status
+    if (status.steps) {
+        status.steps.forEach(step => {
+            const stepElement = document.getElementById(`step-${step.name}`);
+            if (stepElement) {
+                stepElement.className = `step-item ${step.status}`;
+                const icon = stepElement.querySelector('i');
+                if (step.status === 'completed') {
+                    icon.className = 'fas fa-check-circle';
+                } else if (step.status === 'failed') {
+                    icon.className = 'fas fa-times-circle';
+                } else if (step.status === 'active') {
+                    icon.className = 'fas fa-spinner fa-spin';
                 }
-            } else {
-                progress = 30;
-                currentStep = 'Recovery in Progress';
             }
-            break;
-        case 'completed':
-            progress = 100;
-            currentStep = 'Recovery Completed Successfully';
-            document.querySelectorAll('.step-item').forEach(step => updateStepStatus(step.id, 'completed'));
-            break;
-        case 'failed':
-            progress = 0;
-            currentStep = 'Recovery Failed';
-            // Mark current step as failed
-            const activeStep = document.querySelector('.step-item.active');
-            if (activeStep) {
-                updateStepStatus(activeStep.id, 'failed');
-            }
-            break;
-    }
-    
-    progressBar.style.width = progress + '%';
-    progressText.textContent = currentStep;
-    
-    // Update progress bar color based on status
-    progressBar.className = 'progress-bar progress-bar-striped';
-    if (status.status === 'completed') {
-        progressBar.classList.add('bg-success');
-    } else if (status.status === 'failed') {
-        progressBar.classList.add('bg-danger');
-    } else {
-        progressBar.classList.add('progress-bar-animated', 'bg-primary');
-    }
-}
-
-function updateStepStatus(stepId, status) {
-    const step = document.getElementById(stepId);
-    if (!step) return;
-    
-    step.className = `step-item ${status}`;
-    const icon = step.querySelector('i');
-    
-    switch(status) {
-        case 'active':
-            icon.className = 'fas fa-spinner fa-spin';
-            break;
-        case 'completed':
-            icon.className = 'fas fa-check-circle';
-            break;
-        case 'failed':
-            icon.className = 'fas fa-times-circle';
-            break;
-        default:
-            icon.className = 'fas fa-circle';
+        });
     }
 }
 
 function updateRecoveryDetails(status) {
-    const detailsContainer = document.getElementById('recoveryDetails');
-    let statusClass = 'info';
-    let statusIcon = 'fas fa-info-circle';
-    
+    // Additional status details can be shown here
     if (status.status === 'completed') {
-        statusClass = 'success';
-        statusIcon = 'fas fa-check-circle';
+        const progressBar = document.getElementById('recoveryProgressBar');
+        progressBar.className = 'progress-bar bg-success';
+        progressBar.style.width = '100%';
+        document.getElementById('progressText').textContent = 'Cluster Recovery Completed Successfully';
     } else if (status.status === 'failed') {
-        statusClass = 'danger';
-        statusIcon = 'fas fa-exclamation-triangle';
-    } else if (status.status === 'running') {
-        statusClass = 'warning';
-        statusIcon = 'fas fa-cogs';
+        const progressBar = document.getElementById('recoveryProgressBar');
+        progressBar.className = 'progress-bar bg-danger';
+        document.getElementById('progressText').textContent = 'Cluster Recovery Failed';
     }
-    
-    detailsContainer.innerHTML = `
-        <div class="alert alert-${statusClass}">
-            <h6><i class="${statusIcon}"></i> Recovery Status: ${status.status.toUpperCase()}</h6>
-            <p><strong>Recovery ID:</strong> ${status.recovery_id}</p>
-            <p><strong>Database:</strong> ${status.database_name}</p>
-            <p><strong>Target Server:</strong> ${status.server_name}</p>
-            <p><strong>Backup:</strong> ${status.backup_name}</p>
-            ${status.start_time ? `<p><strong>Started:</strong> ${new Date(status.start_time).toLocaleString()}</p>` : ''}
-            ${status.end_time ? `<p><strong>Completed:</strong> ${new Date(status.end_time).toLocaleString()}</p>` : ''}
-            ${status.error_details ? `<div class="mt-2"><strong>Error:</strong><br><code>${status.error_details}</code></div>` : ''}
-        </div>
-    `;
 }
 
 function resetForm() {
-    document.getElementById('recoveryForm').reset();
-    selectedBackup = null;
-    document.getElementById('initiateRecovery').disabled = true;
-    document.getElementById('backupsList').innerHTML = `
+    document.getElementById('clusterRecoveryForm').reset();
+    selectedClusterBackup = null;
+    document.getElementById('initiateClusterRecovery').disabled = true;
+    document.getElementById('warningSection').style.display = 'none';
+    document.getElementById('clusterBackupsList').innerHTML = `
         <div class="text-center text-muted">
             <i class="fas fa-info-circle"></i>
-            Select a database to view available backups
+            Select an S3 storage to view available cluster backups
         </div>
     `;
 }
 
-function formatBytes(bytes) {
+// Utility function for formatting bytes
+function formatBytes(bytes, decimals = 2) {
     if (bytes === 0) return '0 Bytes';
     const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
 </script>
 {% endblock %}

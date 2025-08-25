@@ -299,14 +299,22 @@ function displayDatabases(databases) {
         const backupAge = getBackupAge(database.last_backup_date);
         const isLatest = isLatestBackup(database.last_backup_date);
         
+        // Determine display name and actual database name
+        const displayName = database.actual_database_name || database.name;
+        const isBackupIdentifier = database.name.startsWith('basebackups_');
+        
         html += `
             <div class="database-item" onclick="selectDatabase('${database.name}', '${database.latest_backup_key}', this)">
                 <div class="d-flex justify-content-between align-items-start">
                     <div class="flex-grow-1">
                         <div class="d-flex align-items-center mb-1">
                             <h6 class="mb-0 me-2">
-                                <i class="fas fa-database"></i> ${database.name}
+                                <i class="fas fa-database"></i> ${displayName}
                             </h6>
+                            ${isBackupIdentifier ? 
+                                '<span class="badge bg-info walg-compliance-badge me-1"><i class="fas fa-info-circle"></i> Backup ID: ' + database.name + '</span>' : 
+                                ''
+                            }
                             ${isLatest ? 
                                 '<span class="badge bg-success walg-compliance-badge"><i class="fas fa-check"></i> Latest</span>' : 
                                 '<span class="badge bg-warning walg-compliance-badge"><i class="fas fa-clock"></i> ' + backupAge + '</span>'
@@ -368,9 +376,14 @@ function selectDatabase(databaseName, backupKey, element) {
     
     // Select current database
     element.classList.add('selected');
+    
+    // Determine actual database name for WAL-G prefix
+    const actualDatabaseName = databaseName.startsWith('basebackups_') ? 'postgres' : databaseName;
+    
     selectedDatabase = {
-        name: databaseName,
-        backup_key: backupKey
+        name: actualDatabaseName,  // Use actual database name for recovery
+        backup_key: backupKey,
+        original_name: databaseName  // Keep original for reference
     };
     
     // Update warning message and show/hide warning section
@@ -530,14 +543,13 @@ function initializeProgressTracking() {
                 <div class="step-item pending" id="step-fetch">
                     <i class="fas fa-circle"></i> WAL-G Backup Fetch
                 </div>
-                <div class="step-item pending" id="step-integrity">
-                    <i class="fas fa-circle"></i> Data Integrity Verification
+                <div class="step-item pending" id="step-restore">
+                    <i class="fas fa-circle"></i> Database Restore
                 </div>
-                <div class="step-item pending" id="step-completion">
-                    <i class="fas fa-circle"></i> Recovery Completion
+                <div class="step-item pending" id="step-verification">
+                    <i class="fas fa-circle"></i> Recovery Verification
                 </div>
             </div>
-            <div class="recovery-details mt-3" id="recoveryDetails"></div>
         </div>
     `;
 }
@@ -546,145 +558,65 @@ function updateProgressTracking(status) {
     const progressBar = document.getElementById('recoveryProgressBar');
     const progressText = document.getElementById('progressText');
     
-    let progress = 0;
-    let currentStep = 'Initializing';
+    if (status.progress) {
+        progressBar.style.width = status.progress + '%';
+        progressText.textContent = status.current_step || 'Processing...';
+    }
     
-    // Determine progress based on status and command output
-    switch(status.status) {
-        case 'initiated':
-            progress = 10;
-            currentStep = 'Validating WAL-G Configuration';
-            updateStepStatus('step-validation', 'active');
-            break;
-        case 'running':
-            // Parse command output to determine specific step
-            if (status.command_output) {
-                if (status.command_output.includes('Connecting to')) {
-                    progress = 25;
-                    currentStep = 'Connecting to Server';
-                    updateStepStatus('step-validation', 'completed');
-                    updateStepStatus('step-connection', 'active');
-                } else if (status.command_output.includes('Stopping PostgreSQL')) {
-                    progress = 40;
-                    currentStep = 'Preparing Database Service';
-                    updateStepStatus('step-connection', 'completed');
-                    updateStepStatus('step-preparation', 'active');
-                } else if (status.command_output.includes('wal-g backup-fetch')) {
-                    progress = 60;
-                    currentStep = 'Fetching Backup with WAL-G';
-                    updateStepStatus('step-preparation', 'completed');
-                    updateStepStatus('step-fetch', 'active');
-                } else if (status.command_output.includes('Verifying')) {
-                    progress = 80;
-                    currentStep = 'Verifying Data Integrity';
-                    updateStepStatus('step-fetch', 'completed');
-                    updateStepStatus('step-integrity', 'active');
+    // Update step status
+    if (status.steps) {
+        status.steps.forEach(step => {
+            const stepElement = document.getElementById(`step-${step.name}`);
+            if (stepElement) {
+                stepElement.className = `step-item ${step.status}`;
+                const icon = stepElement.querySelector('i');
+                if (step.status === 'completed') {
+                    icon.className = 'fas fa-check-circle';
+                } else if (step.status === 'failed') {
+                    icon.className = 'fas fa-times-circle';
+                } else if (step.status === 'active') {
+                    icon.className = 'fas fa-spinner fa-spin';
                 }
-            } else {
-                progress = 30;
-                currentStep = 'Recovery in Progress';
             }
-            break;
-        case 'completed':
-            progress = 100;
-            currentStep = 'Recovery Completed Successfully';
-            document.querySelectorAll('.step-item').forEach(step => updateStepStatus(step.id, 'completed'));
-            break;
-        case 'failed':
-            progress = 0;
-            currentStep = 'Recovery Failed';
-            // Mark current step as failed
-            const activeStep = document.querySelector('.step-item.active');
-            if (activeStep) {
-                updateStepStatus(activeStep.id, 'failed');
-            }
-            break;
-    }
-    
-    progressBar.style.width = progress + '%';
-    progressText.textContent = currentStep;
-    
-    // Update progress bar color based on status
-    progressBar.className = 'progress-bar progress-bar-striped';
-    if (status.status === 'completed') {
-        progressBar.classList.add('bg-success');
-    } else if (status.status === 'failed') {
-        progressBar.classList.add('bg-danger');
-    } else {
-        progressBar.classList.add('progress-bar-animated', 'bg-primary');
-    }
-}
-
-function updateStepStatus(stepId, status) {
-    const step = document.getElementById(stepId);
-    if (!step) return;
-    
-    step.className = `step-item ${status}`;
-    const icon = step.querySelector('i');
-    
-    switch(status) {
-        case 'active':
-            icon.className = 'fas fa-spinner fa-spin';
-            break;
-        case 'completed':
-            icon.className = 'fas fa-check-circle';
-            break;
-        case 'failed':
-            icon.className = 'fas fa-times-circle';
-            break;
-        default:
-            icon.className = 'fas fa-circle';
+        });
     }
 }
 
 function updateRecoveryDetails(status) {
-    const detailsContainer = document.getElementById('recoveryDetails');
-    let statusClass = 'info';
-    let statusIcon = 'fas fa-info-circle';
-    
+    // Additional status details can be shown here
     if (status.status === 'completed') {
-        statusClass = 'success';
-        statusIcon = 'fas fa-check-circle';
+        const progressBar = document.getElementById('recoveryProgressBar');
+        progressBar.className = 'progress-bar bg-success';
+        progressBar.style.width = '100%';
+        document.getElementById('progressText').textContent = 'Recovery Completed Successfully';
     } else if (status.status === 'failed') {
-        statusClass = 'danger';
-        statusIcon = 'fas fa-exclamation-triangle';
-    } else if (status.status === 'running') {
-        statusClass = 'warning';
-        statusIcon = 'fas fa-cogs';
+        const progressBar = document.getElementById('recoveryProgressBar');
+        progressBar.className = 'progress-bar bg-danger';
+        document.getElementById('progressText').textContent = 'Recovery Failed';
     }
-    
-    detailsContainer.innerHTML = `
-        <div class="alert alert-${statusClass}">
-            <h6><i class="${statusIcon}"></i> Recovery Status: ${status.status.toUpperCase()}</h6>
-            <p><strong>Recovery ID:</strong> ${status.recovery_id}</p>
-            <p><strong>Database:</strong> ${status.database_name}</p>
-            <p><strong>Target Server:</strong> ${status.server_name}</p>
-            <p><strong>Backup:</strong> ${status.backup_name}</p>
-            ${status.start_time ? `<p><strong>Started:</strong> ${new Date(status.start_time).toLocaleString()}</p>` : ''}
-            ${status.end_time ? `<p><strong>Completed:</strong> ${new Date(status.end_time).toLocaleString()}</p>` : ''}
-            ${status.error_details ? `<div class="mt-2"><strong>Error:</strong><br><code>${status.error_details}</code></div>` : ''}
-        </div>
-    `;
 }
 
 function resetForm() {
     document.getElementById('recoveryForm').reset();
-    selectedBackup = null;
+    selectedDatabase = null;
     document.getElementById('initiateRecovery').disabled = true;
-    document.getElementById('backupsList').innerHTML = `
+    document.getElementById('warningSection').style.display = 'none';
+    document.getElementById('databasesList').innerHTML = `
         <div class="text-center text-muted">
             <i class="fas fa-info-circle"></i>
-            Select a database to view available backups
+            Select an S3 storage to view available databases
         </div>
     `;
 }
 
-function formatBytes(bytes) {
+// Utility function for formatting bytes
+function formatBytes(bytes, decimals = 2) {
     if (bytes === 0) return '0 Bytes';
     const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
 </script>
 {% endblock %}

@@ -55,8 +55,12 @@
                             <li><a class="dropdown-item" href="{{ url_for('backups.backups') }}">Backup Jobs</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('backups.backups') }}">Backup Logs</a></li>
                             <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{{ url_for('backups.restore') }}">Restore Database</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('recovery.index') }}"><i class="fas fa-magic me-1"></i> Database Recovery</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('backups.restore_db') }}"><i class="fas fa-database me-1"></i> Restore Database</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('backups.restore_cluster') }}"><i class="fas fa-server me-1"></i> Restore Cluster</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{{ url_for('recovery.recovery_db') }}"><i class="fas fa-database me-1"></i> Recovery Database</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('recovery.recovery_cluster') }}"><i class="fas fa-server me-1"></i> Recovery Cluster</a></li>
+                            <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{{ url_for('backups.restore_logs') }}">Restore Logs</a></li>
                         </ul>
                     </li>

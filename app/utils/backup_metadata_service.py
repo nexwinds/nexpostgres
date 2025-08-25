@@ -1,8 +1,11 @@
+import os
+import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import re
 import logging
 import boto3
+from botocore.exceptions import ClientError
 from app.utils.ssh_manager import SSHManager
 from app.utils.postgres_manager import PostgresManager
 from app.models.database import BackupJob
@@ -52,7 +55,7 @@ class BackupMetadataService:
                 logger.debug(f"First backup data: {backups[0] if backups else 'None'}")
             
             if not backups:
-                logger.warning(f"No backups found for database {backup_job.database.name}")
+                logger.warning(f"No backups found for server {backup_job.server.name}")
                 return []
                 
             # Convert WAL-G backup list to backup log format
@@ -257,7 +260,7 @@ class BackupMetadataService:
                 
             except Exception as e:
                 logger.error(f"Error accessing S3 for job {job.name}: {str(e)}")
-                backup_structure[job.database.name] = []
+                backup_structure[job.server.name] = []
         
         return backup_structure
     
@@ -317,6 +320,15 @@ class BackupMetadataService:
                             s3_client, s3_storage.bucket, database_name
                         )
                         if db_metadata:
+                            # Check if this looks like a backup name rather than database name
+                            if database_name.startswith('basebackups_'):
+                                # For backup names, use 'postgres' as the actual database name
+                                # but keep the backup key for restoration
+                                db_metadata['actual_database_name'] = 'postgres'
+                                db_metadata['backup_identifier'] = database_name
+                            else:
+                                db_metadata['actual_database_name'] = database_name
+                                db_metadata['backup_identifier'] = None
                             databases.append(db_metadata)
             
             # Sort by last backup date (newest first)
@@ -387,6 +399,81 @@ class BackupMetadataService:
         return [db_name for db_name, backups in backup_structure.items() if backups]
     
     @staticmethod
+    def get_cluster_backups_for_s3_storage(s3_storage_id: int) -> List[Dict]:
+        """Get cluster backups for a specific S3 storage.
+        
+        Args:
+            s3_storage_id: S3 storage ID
+            
+        Returns:
+            List of cluster backup dictionaries
+        """
+        from app.models.database import S3Storage
+        import boto3
+        from botocore.exceptions import ClientError
+        
+        try:
+            s3_storage = S3Storage.query.get(s3_storage_id)
+            if not s3_storage:
+                logger.error(f"S3 storage {s3_storage_id} not found")
+                return []
+            
+            # Initialize S3 client
+            s3_client = boto3.client(
+                's3',
+                aws_access_key_id=s3_storage.access_key,
+                aws_secret_access_key=s3_storage.secret_key,
+                region_name=s3_storage.region,
+                endpoint_url=s3_storage.endpoint if s3_storage.endpoint else None
+            )
+            
+            # List cluster backups (look for cluster-wide backup patterns)
+            cluster_backups = []
+            response = s3_client.list_objects_v2(
+                Bucket=s3_storage.bucket,
+                Prefix='postgres/'
+            )
+            
+            if 'Contents' in response:
+                # Group backups by cluster/server
+                cluster_groups = {}
+                for obj in response['Contents']:
+                    # Extract cluster name from path
+                    path_parts = obj['Key'].split('/')
+                    if len(path_parts) >= 2:
+                        cluster_name = path_parts[1] if path_parts[1] else 'default'
+                        
+                        if cluster_name not in cluster_groups:
+                            cluster_groups[cluster_name] = {
+                                'cluster_name': cluster_name,
+                                'backup_key': obj['Key'],
+                                'backup_date': obj['LastModified'].isoformat(),
+                                'total_size': 0,
+                                'backup_count': 0
+                            }
+                        
+                        cluster_groups[cluster_name]['total_size'] += obj['Size']
+                        cluster_groups[cluster_name]['backup_count'] += 1
+                        
+                        # Use the most recent backup as the representative
+                        if obj['LastModified'] > datetime.fromisoformat(cluster_groups[cluster_name]['backup_date'].replace('Z', '+00:00')):
+                            cluster_groups[cluster_name]['backup_key'] = obj['Key']
+                            cluster_groups[cluster_name]['backup_date'] = obj['LastModified'].isoformat()
+                
+                cluster_backups = list(cluster_groups.values())
+                # Sort by backup date (newest first)
+                cluster_backups.sort(key=lambda x: x['backup_date'], reverse=True)
+            
+            return cluster_backups
+            
+        except ClientError as e:
+            logger.error(f"Error accessing S3 storage {s3_storage_id}: {str(e)}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error getting cluster backups for S3 storage {s3_storage_id}: {str(e)}")
+            return []
+    
+    @staticmethod
     def find_backup_by_name_or_time(backup_job_id: int, backup_name: Optional[str] = None, backup_time: Optional[datetime] = None) -> Optional[Dict]:
         """Find a specific backup by name or time.
         
@@ -433,7 +520,7 @@ class BackupMetadataService:
         backup_job_name = backup_job.name if backup_job else f'Job {backup_job_id}'
         
         # Get database and server information through relationships
-        database_name = backup_job.database.name if backup_job and backup_job.database else 'Unknown'
+        database_name = backup_job.server.name if backup_job and backup_job.server else 'Unknown'
         server_name = backup_job.server.name if backup_job and backup_job.server else 'Unknown'
         
         # Get S3 storage information

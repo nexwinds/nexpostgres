@@ -582,9 +582,9 @@ class PostgresManager:
         """Restore from backup."""
         return self.backup_manager.restore_backup(backup_name)
     
-    def list_backups(self, db_name: str) -> List[Dict[str, Any]]:
+    def list_backups(self) -> List[Dict[str, Any]]:
         """List available backups."""
-        return self.backup_manager.list_backups(db_name)
+        return self.backup_manager.list_backups('postgres', 'cluster')
     
     def delete_backup(self, backup_name: str) -> Tuple[bool, str]:
         """Delete a backup."""
@@ -610,17 +610,17 @@ class PostgresManager:
         """Clean up old backups using WAL-G retention policy."""
         return self.backup_manager.cleanup_old_backups(db_name, retention_count)
     
-    def check_health(self, db_name: str) -> Tuple[bool, str, Dict]:
+    def check_health(self) -> Tuple[bool, str, Dict]:
         """Perform a comprehensive health check of the backup system."""
-        return self.backup_manager.health_check(db_name)
+        return self.backup_manager.health_check()
     
     def setup_log_rotation(self) -> Tuple[bool, str]:
         """Set up log rotation for WAL-G logs."""
         return self.backup_manager.setup_log_rotation()
     
-    def configure_postgresql_archiving(self, db_name: str) -> Tuple[bool, str]:
+    def configure_postgresql_archiving(self) -> Tuple[bool, str]:
         """Configure PostgreSQL for archiving with WAL-G."""
-        return self.backup_manager.configure_postgresql_archiving(db_name)
+        return self.backup_manager.configure_postgresql_archiving()
     
     # ===== INSTALLATION =====
     

@@ -210,18 +210,18 @@ def execute_backup(backup_job_id):
 # Removed backup_logs route - functionality merged into /backups route
 
 
-@backups_bp.route('/restore', methods=['GET', 'POST'])
-def restore():
-    """Initiate database restore - routine restoration with database selection."""
+@backups_bp.route('/restore-db', methods=['GET', 'POST'])
+def restore_db():
+    """Database restore - restore individual databases."""
     if request.method == 'POST':
         # Validate form data
         is_valid, errors, validated_data = UnifiedValidationService.validate_restore_form_data(request.form)
         
         if not is_valid:
             UnifiedValidationService.flash_validation_errors(errors)
-            # Get databases that have backup jobs (one-to-one relationship)
-            databases_with_backups = PostgresDatabase.query.join(BackupJob).all()
-            return render_template('backups/restore.html', 
+            # Get databases that have backup jobs (through server relationship)
+            databases_with_backups = PostgresDatabase.query.join(VpsServer).join(BackupJob).all()
+            return render_template('backups/restore_db.html', 
                                  databases=databases_with_backups)
         
         # Execute restore
@@ -234,10 +234,46 @@ def restore():
         else:
             flash(message, 'danger')
     
-    # Get databases that have backup jobs (one-to-one relationship)
-    databases_with_backups = PostgresDatabase.query.join(BackupJob).all()
-    return render_template('backups/restore.html', 
+    # Get databases that have backup jobs (through server relationship)
+    databases_with_backups = PostgresDatabase.query.join(VpsServer).join(BackupJob).all()
+    return render_template('backups/restore_db.html', 
                          databases=databases_with_backups)
+
+
+@backups_bp.route('/restore-cluster', methods=['GET', 'POST'])
+def restore_cluster():
+    """Cluster restore - restore entire PostgreSQL clusters."""
+    if request.method == 'POST':
+        # Validate form data
+        is_valid, errors, validated_data = UnifiedValidationService.validate_restore_form_data(request.form)
+        
+        if not is_valid:
+            UnifiedValidationService.flash_validation_errors(errors)
+            # Get servers that have backup jobs for cluster restore
+            servers_with_backups = VpsServer.query.join(BackupJob).all()
+            return render_template('backups/restore_cluster.html', 
+                                 servers=servers_with_backups)
+        
+        # Execute restore
+        restore_service = BackupRestoreService()
+        success, message = restore_service.execute_restore(validated_data)
+        
+        if success:
+            flash(message, 'success')
+            return redirect(url_for('backups.restore_logs'))
+        else:
+            flash(message, 'danger')
+    
+    # Get servers that have backup jobs for cluster restore
+    servers_with_backups = VpsServer.query.join(BackupJob).all()
+    return render_template('backups/restore_cluster.html', 
+                         servers=servers_with_backups)
+
+
+@backups_bp.route('/restore', methods=['GET', 'POST'])
+def restore():
+    """Legacy restore route - redirects to database restore."""
+    return redirect(url_for('backups.restore_db'))
 
 
 @backups_bp.route('/restore_logs')
@@ -384,7 +420,8 @@ def api_backup_recovery_points(backup_job_id):
         return jsonify({'error': 'Date parameter is required'}), 400
     
     # Get the database associated with this backup job
-    database = backup_job.database
+    # Get the first database on the server for display purposes
+    database = backup_job.server.databases[0] if backup_job.server.databases else None
     if not database:
         return jsonify({'error': 'No database associated with this backup job'}), 404
     

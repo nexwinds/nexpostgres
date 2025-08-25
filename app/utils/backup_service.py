@@ -567,7 +567,7 @@ class BackupRestoreService:
             
             pg_manager = BackupService.create_postgres_manager(ssh)
             logger.info("Created postgres manager, calling list_backups")
-            backups = pg_manager.list_backups(database.name)
+            backups = pg_manager.list_backups()
             
             logger.info(f"list_backups returned: {len(backups) if backups else 0} backups")
             if backups:
@@ -642,7 +642,7 @@ class BackupRestoreService:
         return restore_log
     
     @staticmethod
-    def _execute_restore_operation(database, backup_name, recovery_time, restore_log):
+    def _execute_restore_operation(database, backup_name, recovery_time, restore_log, restore_type='database'):
         """Execute restore operation using WAL-G.
         
         Args:
@@ -650,15 +650,17 @@ class BackupRestoreService:
             backup_name: Name of backup to restore
             recovery_time: Recovery time (optional)
             restore_log: RestoreLog object to update
+            restore_type: Type of restore ('database' or 'cluster')
             
         Returns:
             tuple: (success, message)
         """
         def restore_operation(pg_manager):
-            # Use database-specific restore for individual database operations
+            # Use the specified restore type
             success, log_output = pg_manager.restore_database(
+                database.name,
                 backup_name,
-                restore_type='database'
+                restore_type=restore_type
             )
             
             # Update restore log
@@ -788,12 +790,16 @@ class BackupRestoreService:
                 use_recovery_time
             )
             
+            # Get restore type from validated data
+            restore_type = validated_data.get('restore_type', 'database')
+            
             # Execute restore using WAL-G
             success, message = self._execute_restore_operation(
                 database, 
                 backup_name, 
                 recovery_time, 
-                restore_log
+                restore_log,
+                restore_type
             )
             
             return success, message

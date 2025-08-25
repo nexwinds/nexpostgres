@@ -73,7 +73,7 @@
                     {% for job in storage.backup_jobs %}
                     <tr>
                         <td>{{ job.name }}</td>
-                        <td>{{ job.database.name }}</td>
+                        <td>Server-wide backup</td>
 
                         <td><code>{{ job.cron_expression }}</code></td>
                         <td>
