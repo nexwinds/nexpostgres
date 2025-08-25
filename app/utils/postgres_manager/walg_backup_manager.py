@@ -243,17 +243,16 @@ class WalgBackupManager:
         
         return True, "PostgreSQL archiving configured successfully for WAL-G"
     
-    def create_backup(self, backup_name: str, enable_partial_restore: bool = True) -> Tuple[bool, str]:
+    def create_backup(self, backup_name: str) -> Tuple[bool, str]:
         """Create a backup with a specific name (WAL-G uses timestamps).
         
         Args:
             backup_name: Backup name (used for logging, WAL-G uses timestamps)
-            enable_partial_restore: Whether to enable metadata collection for partial restore
             
         Returns:
             tuple: (success, message)
         """
-        self.logger.info(f"Creating backup '{backup_name}' using WAL-G (partial restore enabled: {enable_partial_restore})...")
+        self.logger.info(f"Creating backup '{backup_name}' using WAL-G (full cluster backup)...")
         
         # Get data directory
         data_dir = self.config_manager.get_data_directory()
@@ -263,21 +262,14 @@ class WalgBackupManager:
         # Source WAL-G environment
         env_file = os.path.join(PostgresConstants.WALG['config_dir'], 'walg.env')
         
-        # Perform backup using bash to handle 'source' command
-        if enable_partial_restore:
-            # Enable metadata collection for partial restore functionality
-            backup_cmd = f"bash -c 'source {env_file} && wal-g backup-push {data_dir} --file-metadata'"
-            self.logger.info("WAL-G backup with file metadata collection enabled for partial restore support")
-        else:
-            # Standard cluster backup without metadata collection
-            backup_cmd = f"bash -c 'source {env_file} && wal-g backup-push {data_dir}'"
-            self.logger.info("WAL-G standard cluster backup (no partial restore metadata)")
+        # WAL-G always creates full cluster backups
+        backup_cmd = f"bash -c 'source {env_file} && wal-g backup-push {data_dir}'"
+        self.logger.info("WAL-G full cluster backup")
         
         result = self.system_utils.execute_as_postgres_user(backup_cmd)
         
         if result['exit_code'] == 0:
-            backup_type = "with partial restore support" if enable_partial_restore else "standard cluster"
-            return True, f"Backup '{backup_name}' completed successfully ({backup_type})"
+            return True, f"Backup '{backup_name}' completed successfully (full cluster backup)"
         
         error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
         return False, f"Backup '{backup_name}' failed: {error_msg}"
@@ -317,17 +309,16 @@ class WalgBackupManager:
             error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
             return False, f"Failed to delete backup '{backup_name}': {error_msg}"
     
-    def perform_backup(self, db_name: str, enable_partial_restore: bool = True) -> Tuple[bool, str]:
+    def perform_backup(self, db_name: str) -> Tuple[bool, str]:
         """Perform a backup using WAL-G.
         
         Args:
             db_name: Database name (used for logging only - WAL-G backs up entire cluster)
-            enable_partial_restore: Whether to enable metadata collection for partial restore
             
         Returns:
             tuple: (success, message)
         """
-        self.logger.info(f"Performing WAL-G cluster backup (triggered by database '{db_name}', partial restore enabled: {enable_partial_restore})...")
+        self.logger.info(f"Performing WAL-G cluster backup (triggered by database '{db_name}')...")
         
         # Get data directory
         data_dir = self.config_manager.get_data_directory()
@@ -339,21 +330,13 @@ class WalgBackupManager:
         
         # WAL-G performs cluster-level backup of entire data directory
         # This includes ALL databases in the PostgreSQL cluster, not just the specified db_name
-        if enable_partial_restore:
-            # Enable metadata collection for partial restore functionality
-            # This allows WAL-G to restore specific databases using --restore-only flag
-            backup_cmd = f"bash -c 'source {env_file} && wal-g backup-push {data_dir} --file-metadata'"
-            self.logger.info("WAL-G backup with file metadata collection enabled for partial restore support")
-        else:
-            # Standard cluster backup without metadata collection
-            backup_cmd = f"bash -c 'source {env_file} && wal-g backup-push {data_dir}'"
-            self.logger.info("WAL-G standard cluster backup (no partial restore metadata)")
+        backup_cmd = f"bash -c 'source {env_file} && wal-g backup-push {data_dir}'"
+        self.logger.info("WAL-G full cluster backup")
         
         result = self.system_utils.execute_as_postgres_user(backup_cmd)
         
         if result['exit_code'] == 0:
-            backup_type = "with partial restore support" if enable_partial_restore else "standard cluster"
-            return True, f"WAL-G {backup_type} backup completed successfully"
+            return True, "WAL-G cluster backup completed successfully"
         
         error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
         return False, f"WAL-G cluster backup failed: {error_msg}"
@@ -417,18 +400,17 @@ class WalgBackupManager:
         self.logger.info(f"[WALGBackupManager] Returning {len(backups)} backups")
         return backups
     
-    def restore_database(self, db_name: str, backup_name: str = None, use_partial_restore: bool = True) -> Tuple[bool, str]:
+    def restore_database(self, db_name: str, backup_name: str = None) -> Tuple[bool, str]:
         """Restore a database from backup using WAL-G.
         
         Args:
-            db_name: Database name
+            db_name: Database name (for logging only - WAL-G restores full cluster)
             backup_name: Specific backup to restore (LATEST if None)
-            use_partial_restore: Whether to use WAL-G's partial restore feature for single database
             
         Returns:
             tuple: (success, message)
         """
-        self.logger.info(f"Restoring database {db_name} using WAL-G (partial restore: {use_partial_restore})...")
+        self.logger.info(f"Restoring database {db_name} using WAL-G (full cluster restore)...")
         
         # Stop PostgreSQL
         success, message = self.system_utils.stop_service('postgresql')
@@ -449,15 +431,9 @@ class WalgBackupManager:
         # Build restore command using bash to handle 'source' command
         backup_target = backup_name or 'LATEST'
         
-        if use_partial_restore:
-            # Use WAL-G's partial restore feature to restore only the specified database
-            # This requires files metadata with database names data (collected during local backup)
-            restore_cmd = f"bash -c 'source {env_file} && wal-g backup-fetch {data_dir} {backup_target} --restore-only={db_name} --reverse-unpack --skip-redundant-tars'"
-            self.logger.info(f"Using WAL-G partial restore for database '{db_name}'")
-        else:
-            # Full cluster restore (original behavior)
-            restore_cmd = f"bash -c 'source {env_file} && wal-g backup-fetch {data_dir} {backup_target}'"
-            self.logger.info("Using WAL-G full cluster restore")
+        # WAL-G always performs full cluster restore
+        restore_cmd = f"bash -c 'source {env_file} && wal-g backup-fetch {data_dir} {backup_target}'"
+        self.logger.info("Using WAL-G full cluster restore")
         
         # Perform restore
         self.logger.info(f"Executing restore command: {restore_cmd}")
@@ -466,12 +442,6 @@ class WalgBackupManager:
         if result['exit_code'] != 0:
             error_msg = result.get('stderr', '').strip() or result.get('stdout', '').strip() or 'Unknown error'
             self.logger.error(f"Restore command failed with exit code {result['exit_code']}: {error_msg}")
-            
-            # If partial restore failed, try fallback to full cluster restore
-            if use_partial_restore and "--restore-only" in restore_cmd:
-                self.logger.warning(f"Partial restore failed for database '{db_name}', attempting full cluster restore as fallback...")
-                return self.restore_database(db_name, backup_name, use_partial_restore=False)
-            
             return False, f"Restore failed: {error_msg}"
         
         # Start PostgreSQL (WAL replay will happen automatically)
@@ -479,8 +449,7 @@ class WalgBackupManager:
         if not success:
             return False, f"Restore completed but failed to start PostgreSQL: {message}"
         
-        restore_type = "partial" if use_partial_restore else "full cluster"
-        return True, f"Database {db_name} restored successfully using {restore_type} restore"
+        return True, f"Database {db_name} restored successfully using full cluster restore"
     
     def cleanup_old_backups(self, db_name: str, retention_count: int = None) -> Tuple[bool, str]:
         """Clean up old backups using WAL-G retention policy.

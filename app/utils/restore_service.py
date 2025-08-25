@@ -489,6 +489,13 @@ class RestoreService:
                         
                         # Update the database name to match what was actually restored
                         database_name = target_db
+                        
+                        # Update the database record in application database to match restored database
+                        database_record = PostgresDatabase.query.get(database_id)
+                        if database_record and database_record.name != target_db:
+                            restore_log.log_output += f"Updating database record name from '{database_record.name}' to '{target_db}' to match restored database\n"
+                            database_record.name = target_db
+                            db.session.commit()
                     
                     # Create only the application user for the existing database
                     user_success, user_message = DatabaseService.execute_with_postgres(
@@ -504,25 +511,13 @@ class RestoreService:
                     restore_log.log_output += f"Application user '{username}' created with full permissions on restored database '{target_db}'\n"
                     restore_log.log_output += "WAL-G cluster restore completed - existing tables and data maintained\n"
                 else:
-                    # No user databases found in cluster backup - create new one
-                    restore_log.log_output += "No user databases found in WAL-G cluster backup (only system databases restored).\n"
-                    restore_log.log_output += "This indicates the backup was taken when no user databases existed on the source server.\n"
-                    restore_log.log_output += f"Creating new database '{database_name}' as fallback...\n"
-                    
-                    success, message = DatabaseService.execute_with_postgres(
-                        target_server, 
-                        'Database creation',
-                        DatabaseService.create_database_operation,
-                        database_name, username, password
-                    )
-                    
-                    if not success:
-                        raise Exception(f"Failed to create database: {message}")
-                    
-                    database_created = True
-                    restore_log.log_output += f"Database '{database_name}' created successfully with postgres superuser ownership\n"
-                    restore_log.log_output += f"Application user '{username}' configured with full permissions\n"
-                    restore_log.log_output += "Following WAL-G best practices - no ownership transfer needed during restoration\n"
+                    # No user databases found in cluster backup - this indicates an empty backup
+                    error_msg = f"WAL-G cluster restore completed but no user databases found. This indicates the backup was empty or contained only system databases. Cannot restore database '{database_name}' from an empty backup."
+                    restore_log.log_output += f"ERROR: {error_msg}\n"
+                    restore_log.log_output += "Available databases after restore: only system databases (postgres, template0, template1)\n"
+                    restore_log.log_output += "Solution: Ensure the source database contains user data before creating backups.\n"
+                    db.session.commit()
+                    raise Exception(error_msg)
                 
                 db.session.commit()
                 

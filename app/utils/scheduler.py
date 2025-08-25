@@ -99,7 +99,7 @@ def execute_backup(job_id, manual=False):
         logger.info(f"Executing {backup_type} backup job {job.id}...")
                 
         # Execute the backup (always incremental) with partial restore metadata collection enabled
-        success, log_output = pg_manager.perform_backup(job.database.name, enable_partial_restore=True)
+        success, log_output = pg_manager.perform_backup(job.database.name)
         message = "Backup completed successfully" if success else f"Backup failed: {log_output}"
         logger.info(f"Backup job {job.name} (ID: {job.id}): {message}")
         
